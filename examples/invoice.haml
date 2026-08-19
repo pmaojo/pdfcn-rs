@@ -1,0 +1,18 @@
+%DocumentLayout(size="a4")
+  %Header(title="Invoice {{ invoice.number }}" subtitle="{{ invoice.date }}")
+    - if invoice.paid
+      %Badge(variant="success" label="Paid")
+    - else
+      %Badge(variant="destructive" label="Unpaid")
+
+  %Card(title="Bill To")
+    %p {{ customer.name }}
+    %p.text-sm {{ customer.email }}
+
+  %InvoiceTable(rows={{ invoice.items }} columns={{ invoice.columns }})
+
+  .flex.justify-between.mt-4
+    %p Subtotal: {{ invoice.subtotal }}
+    %p Total: {{ invoice.total }}
+
+  %SignatureBlock(name="{{ customer.name }}" label="Customer signature")

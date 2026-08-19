@@ -1,0 +1,20 @@
+[package]
+name = "pdfcn-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "napi-rs bindings so a Next.js app can call pdfcn-core directly"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pdfcn-core = { workspace = true }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+napi-build = "2"
