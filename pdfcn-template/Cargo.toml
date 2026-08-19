@@ -1,0 +1,16 @@
+[package]
+name = "pdfcn-template"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Context evaluation: {{ interpolation }}, - for / - if over the pdfcn AST"
+
+[dependencies]
+pdfcn-parser = { workspace = true }
+minijinja = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

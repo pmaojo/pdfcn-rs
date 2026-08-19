@@ -1,0 +1,22 @@
+{
+  "invoice": {
+    "number": "INV-1042",
+    "date": "2026-08-19",
+    "paid": false,
+    "subtotal": "$180.00",
+    "total": "$194.40",
+    "columns": [
+      { "key": "description", "label": "Description" },
+      { "key": "qty", "label": "Qty" },
+      { "key": "price", "label": "Price" }
+    ],
+    "items": [
+      { "description": "Consulting", "qty": "4h", "price": "$120.00" },
+      { "description": "Hosting", "qty": "1", "price": "$60.00" }
+    ]
+  },
+  "customer": {
+    "name": "Ada Lovelace",
+    "email": "ada@example.com"
+  }
+}

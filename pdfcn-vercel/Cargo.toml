@@ -1,0 +1,20 @@
+[package]
+name = "pdfcn-vercel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "AWS Lambda / Vercel Rust runtime handler for /api/generate-pdf"
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"
+
+[dependencies]
+pdfcn-core = { workspace = true }
+lambda_http = { workspace = true }
+lambda_runtime = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

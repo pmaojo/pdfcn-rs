@@ -1,0 +1,121 @@
+# vord Agent Permission Policy
+#
+# Governs what an autonomous coding agent (Claude Code, and any host wired to
+# `vord hook check`) is allowed to write. This is not the quality gate: the
+# gate asks "is this project releasable?", this asks "may this one write
+# land?" — and answers before the bytes reach disk.
+#
+# Verify any change here with:  vord hook check <file>
+
+[agent]
+enabled = true
+
+# Deny a write introducing a finding at or above this severity.
+# info | minor | major | critical | blocker
+block_at_or_above = "critical"
+
+# Rules an agent may never introduce, whatever severity the quality profile
+# gives them. This is the list that makes an agent policy different from a
+# severity threshold: an agent writing a shell sink is categorically riskier
+# than a human doing it under review, even when the rule scores as a warning.
+blocking_rules = [
+  "ai:llm-output-injection",
+  "owasp:command-execution",
+  "owasp:eval-usage",
+  "python:subprocess-shell-true",
+  "php:eval-usage",
+  "php:command-execution",
+]
+
+# Rules that report but never deny. The escape hatch for a rule that is noisy
+# in this repository — outranks both the blocking list and the threshold.
+# Also where to opt into rules that are not AST findings, e.g.
+# "supply-chain:new-dependency" (flags a package.json/requirements.txt
+# dependency an agent's write adds that was not there before — never denies
+# by default, since most new dependencies are legitimate), or the
+# gate-gaming rules "ai:suppression-added" (a new #[allow(...)]/eslint-disable/
+# noqa/nolint/coverage-exclusion this write introduces) and "ai:test-skipped"
+# (a test newly marked #[ignore]/skip in this write) — never denies by
+# default, since a suppression or a skipped test is sometimes the right call
+# and this is the mechanism to surface it for human review rather than ban it
+# outright. The same applies to the two BDD-evidence rules, which fire on a
+# .feature file whose @covers(...) tag claims more than the scenarios under
+# it prove: "bdd:unverified-scenario" (the block carrying the tag has no
+# When/Then pair, or is a Scenario Outline with no Examples row) and
+# "bdd:overbroad-covers" (the glob is `**` or a synonym). Neither claim is
+# ever credited as evidence by [[gherkin_required]] below whatever this list
+# says — listing them here only decides whether writing one is *reported*.
+# "bdd:uncovered-public-api" is the soft-gate counterpart to
+# [[gherkin_required]]: it fires repo-wide (not only under a configured
+# glob) when a write adds a new top-level public function (Rust/Go only —
+# see the rule's own doc comment for why) to a file no @covers(...) claim
+# names. Never denies on its own; list it here to have it reported, or in
+# blocking_rules to require coverage before the write lands.
+advisory_rules = []
+
+# Rules that block like `blocking_rules`, but a human can lift the block for
+# one specific write with `vord hook approve <token>` (the token is printed
+# in the denial). Use this for findings that are too risky to let an agent
+# resolve unsupervised but are not always wrong — a blanket block would just
+# get the policy edited to remove the rule.
+escalate_rules = []
+
+# Stricter threshold for a path vord has already seen an agent write to (or
+# attempt to write to) before — tracked automatically in
+# .vord-provenance.json, no manual "mark this file as AI-generated" step
+# required. Only the threshold tightens here; blocking_rules/escalate_rules/
+# advisory_rules above apply the same regardless of a path's provenance.
+[agent.ai_touched]
+block_at_or_above = "major"
+
+# Paths an agent may not touch at all, with no finding required. Delete any
+# entry that does not fit how this repository works; an agent that cannot do
+# its job will be given a wider blast radius by whoever is annoyed enough.
+[[protected_path]]
+pattern = ".github/workflows/**"
+reason = "CI definitions gate every other control; changes need human review."
+
+[[protected_path]]
+pattern = "**/*.tf"
+reason = "Terraform changes can rewrite IAM and networking; human review required."
+
+[[protected_path]]
+pattern = "vord-policy.toml"
+reason = "This is the rulebook an agent is judged against; an agent that can edit its own referee is not governed by one."
+
+[[protected_path]]
+pattern = "vord.toml"
+reason = "Quality-gate thresholds and exclusions live here; loosening them is a quieter way to make a gate pass than fixing the code it flags."
+
+# Requires at least one Gherkin scenario tagged `@covers(<glob>)` somewhere
+# in the repository's .feature files before an agent may write to a matching
+# path — vord reads the scenario's structure, it does not run it. The tag
+# alone is not evidence: it counts only when the block carrying it has a
+# When/Then pair (an Examples row too, for a Scenario Outline) and the glob
+# is narrower than `**`, so the gate cannot be lifted by writing a tag over
+# an empty feature file. Commented out
+# by default: unlike protected_path, turning this on immediately denies every
+# matching write until real .feature coverage exists, so it needs the
+# repository to already have (or be ready to add) BDD scenarios, not just a
+# glob. Uncomment and adjust once that coverage is in place.
+#
+# [[gherkin_required]]
+# pattern = "core/domain/**"
+# reason = "Domain logic changes must be described by a Gherkin scenario before an agent may land them."
+
+# Requires the repository's test/acceptance suite to have run and passed
+# since a matching path was last written, checked when the agent's session
+# ends (Stop) rather than per-write — a single write cannot attest a suite
+# result, only a completed run can. `vord hook` watches every `Bash` command
+# for a substring match against `test_command_patterns` below (or the
+# built-in per-ecosystem defaults when that list is empty) and clears the
+# pending set the moment one runs without a visibly nonzero exit code.
+# Writing a passing Gherkin scenario (above) is not enough on its own: this
+# is what actually proves the code does what the scenario says. Commented
+# out by default for the same reason as gherkin_required: turning it on
+# immediately blocks session end until a test run happens, which needs a
+# working test command in place, not just a glob.
+#
+# [[test_required]]
+# pattern = "core/domain/**"
+# reason = "Domain logic changes must be proven by a passing test run before the agent may finish."

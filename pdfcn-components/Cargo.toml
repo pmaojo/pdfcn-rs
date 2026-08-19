@@ -1,0 +1,15 @@
+[package]
+name = "pdfcn-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Shadcn-style preconfigured UI component registry (DocumentLayout, Card, Table, Badge, ...)"
+
+[dependencies]
+pdfcn-template = { workspace = true }
+maud = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]

@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "pdfcn-parser",
+    "pdfcn-template",
+    "pdfcn-components",
+    "pdfcn-styles",
+    "pdfcn-core",
+    "pdfcn-cli",
+    "pdfcn-vercel",
+    "pdfcn-node",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/pmaojo/pdfcn-rs"
+rust-version = "1.82"
+
+[workspace.dependencies]
+pdfcn-parser = { path = "pdfcn-parser", version = "0.1.0" }
+pdfcn-template = { path = "pdfcn-template", version = "0.1.0" }
+pdfcn-components = { path = "pdfcn-components", version = "0.1.0" }
+pdfcn-styles = { path = "pdfcn-styles", version = "0.1.0" }
+pdfcn-core = { path = "pdfcn-core", version = "0.1.0" }
+
+winnow = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
+maud = "0.26"
+lightningcss = "1.0.0-alpha.60"
+printpdf = { version = "0.12", default-features = false, features = ["html"] }
+clap = { version = "4", features = ["derive"] }
+notify = "6"
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net"] }
+thiserror = "1"
+anyhow = "1"
+lambda_http = "0.13"
+lambda_runtime = "0.13"
+napi = { version = "2", default-features = false, features = ["napi4"] }
+napi-derive = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

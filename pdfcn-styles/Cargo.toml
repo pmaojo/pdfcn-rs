@@ -1,0 +1,13 @@
+[package]
+name = "pdfcn-styles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Zero-Node Tailwind-style utility scanner and print-safe CSS bundler"
+
+[dependencies]
+lightningcss = { workspace = true }
+
+[dev-dependencies]

@@ -1,0 +1,8 @@
+# vord configuration for clean Rust project
+[profile]
+name = "recommended"
+
+[rules]
+"rust:disallow-unwrap-expect" = "major"
+"rust:disallow-panic-macros" = "major"
+"naming:rust-convention" = "minor"
