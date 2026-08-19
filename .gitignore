@@ -25,3 +25,4 @@ target
 .vord-circuit-breaker.json
 .vord-loop-guard.json
 .vord-provenance.json
+.vord-audit.jsonl
