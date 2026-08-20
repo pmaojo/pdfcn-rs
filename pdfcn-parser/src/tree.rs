@@ -1,21 +1,42 @@
+use std::fmt;
+
 use crate::ast::{Attr, AttrValue, Document, Node};
 use crate::lexer::{self, LineHead};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ParseError {
-    #[error("line {line}: unexpected indentation (expected {expected}, found {found})")]
     UnexpectedIndent {
         line: usize,
         expected: usize,
         found: usize,
     },
-    #[error("line {line}: unknown directive '- {keyword}'")]
     UnknownDirective { line: usize, keyword: String },
-    #[error("line {line}: malformed '- for' directive, expected 'for <var> in <expr>'")]
     MalformedFor { line: usize },
-    #[error("indentation must use spaces only (tabs found at line {line})")]
     TabIndent { line: usize },
 }
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedIndent { line, expected, found } => write!(
+                f,
+                "line {line}: unexpected indentation (expected {expected}, found {found})"
+            ),
+            ParseError::UnknownDirective { line, keyword } => {
+                write!(f, "line {line}: unknown directive '- {keyword}'")
+            }
+            ParseError::MalformedFor { line } => write!(
+                f,
+                "line {line}: malformed '- for' directive, expected 'for <var> in <expr>'"
+            ),
+            ParseError::TabIndent { line } => {
+                write!(f, "indentation must use spaces only (tabs found at line {line})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 struct Cursor<'a> {
     lines: &'a [(usize, usize, &'a str)], // (indent, source_line_no, content)

@@ -9,7 +9,6 @@ description = "Indentation-based HAML-like parser for pdfcn templates"
 
 [dependencies]
 winnow = { workspace = true }
-thiserror = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

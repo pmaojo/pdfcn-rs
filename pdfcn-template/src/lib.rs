@@ -3,6 +3,8 @@
 //! `- include` partials, using `minijinja` purely as an expression engine
 //! (no `.jinja` template files, no I/O of its own).
 
+use std::fmt;
+
 use minijinja::Environment;
 use pdfcn_parser::{Attr, AttrValue, Document, Node};
 use serde_json::Value as JsonValue;
@@ -51,18 +53,40 @@ impl PartialLoader for NoPartials {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum EvalError {
-    #[error("expression error in '{expr}': {source}")]
     Expr {
         expr: String,
-        #[source]
         source: minijinja::Error,
     },
-    #[error("'- for {binding} in {iterable}' did not evaluate to a list")]
     NotIterable { binding: String, iterable: String },
-    #[error("partial '{0}' could not be loaded")]
     PartialNotFound(String),
+}
+
+impl fmt::Display for EvalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EvalError::Expr { expr, source } => {
+                write!(f, "expression error in '{expr}': {source}")
+            }
+            EvalError::NotIterable { binding, iterable } => write!(
+                f,
+                "'- for {binding} in {iterable}' did not evaluate to a list"
+            ),
+            EvalError::PartialNotFound(path) => {
+                write!(f, "partial '{path}' could not be loaded")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EvalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            EvalError::Expr { source, .. } => Some(source),
+            EvalError::NotIterable { .. } | EvalError::PartialNotFound(_) => None,
+        }
+    }
 }
 
 fn is_truthy(value: &JsonValue) -> bool {
