@@ -3,9 +3,11 @@
 //! No Chromium, no dynamic system dependencies (NFR-3) — the whole
 //! request/response cycle is `pdfcn-core` plus this thin HTTP adapter.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lambda_http::{run, service_fn, Body, Error, Request, RequestPayloadExt, Response};
-use pdfcn_core::{render, NoPartials, Orientation, PageConfig, PageSize};
+use pdfcn_core::{render_with_fonts, NoPartials, Orientation, PageConfig, PageSize};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Deserialize)]
 struct PageConfigDto {
@@ -56,6 +58,12 @@ struct GenerateRequest {
     /// Filename suggested via Content-Disposition.
     #[serde(default = "default_filename")]
     filename: String,
+    /// Caller-supplied fonts: family name -> base64-encoded TTF/OTF bytes.
+    /// Embedded alongside (and, per family name, overriding) the built-in
+    /// typefaces, so `template` can use `font-family: "<name>"` for any key
+    /// given here -- e.g. a client's brand font.
+    #[serde(default)]
+    fonts: std::collections::HashMap<String, String>,
 }
 
 fn default_data() -> serde_json::Value {
@@ -86,7 +94,23 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
         .map(PageConfigDto::into_page_config)
         .unwrap_or_default();
 
-    match render(&req.template, &req.data, &page, &NoPartials) {
+    let mut fonts: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for (family, b64) in &req.fonts {
+        match STANDARD.decode(b64) {
+            Ok(bytes) => {
+                fonts.insert(family.clone(), bytes);
+            }
+            Err(e) => {
+                return Ok(Response::builder()
+                    .status(400)
+                    .body(Body::from(format!(
+                        "invalid base64 for font \"{family}\": {e}"
+                    )))?)
+            }
+        }
+    }
+
+    match render_with_fonts(&req.template, &req.data, &page, &NoPartials, &fonts) {
         Ok(bytes) => Ok(Response::builder()
             .status(200)
             .header("Content-Type", "application/pdf")

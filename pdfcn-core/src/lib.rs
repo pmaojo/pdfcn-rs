@@ -10,8 +10,69 @@ pub use pdfcn_template::{NoPartials, PartialLoader};
 
 use std::path::{Path, PathBuf};
 
-use printpdf::{GeneratePdfOptions, PdfDocument, PdfSaveOptions};
+use printpdf::{Base64OrRaw, GeneratePdfOptions, PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
+
+/// The built-in document typefaces, embedded so PDF generation has no
+/// dependency on fonts being installed on the host (NFR-3): the render path
+/// stays a single static binary regardless of what fonts the deploy target
+/// happens to ship. Inter is shadcn/ui's own default UI typeface (FR-2's
+/// "shadcn look and feel" goal), paired with a serif and a monospace family
+/// for document bodies that need one. All three are Google Fonts, Open Font
+/// License (redistributable/embeddable) -- see each family's `OFL.txt` under
+/// `assets/fonts/`.
+///
+/// `render_pdf`/`render` use only these. A caller with its own typeface
+/// (brand fonts, a client's house font) uses `render_pdf_with_fonts`/
+/// `render_with_fonts` instead, passing `family name -> TTF/OTF bytes`;
+/// custom fonts are added alongside the built-ins (a custom entry with the
+/// same family name shadows the built-in one), and the document's CSS
+/// selects a family the normal way (`font-family: "My Brand Font"`).
+const BUILTIN_FONTS: &[(&str, &[u8])] = &[
+    ("Inter", include_bytes!("../assets/fonts/inter/Inter-Regular.ttf")),
+    ("Inter Bold", include_bytes!("../assets/fonts/inter/Inter-Bold.ttf")),
+    ("Inter Italic", include_bytes!("../assets/fonts/inter/Inter-Italic.ttf")),
+    (
+        "Inter Bold Italic",
+        include_bytes!("../assets/fonts/inter/Inter-BoldItalic.ttf"),
+    ),
+    (
+        "Source Serif 4",
+        include_bytes!("../assets/fonts/source-serif-4/SourceSerif4-Regular.ttf"),
+    ),
+    (
+        "Source Serif 4 Bold",
+        include_bytes!("../assets/fonts/source-serif-4/SourceSerif4-Bold.ttf"),
+    ),
+    (
+        "Source Serif 4 Italic",
+        include_bytes!("../assets/fonts/source-serif-4/SourceSerif4-Italic.ttf"),
+    ),
+    (
+        "Source Serif 4 Bold Italic",
+        include_bytes!("../assets/fonts/source-serif-4/SourceSerif4-BoldItalic.ttf"),
+    ),
+    (
+        "JetBrains Mono",
+        include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"),
+    ),
+    (
+        "JetBrains Mono Bold",
+        include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf"),
+    ),
+    (
+        "JetBrains Mono Italic",
+        include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-Italic.ttf"),
+    ),
+    (
+        "JetBrains Mono Bold Italic",
+        include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf"),
+    ),
+];
+
+/// The default document font-family, set on `body` by [`html_render::wrap_document`].
+pub const DEFAULT_FONT_FAMILY: &str = "Inter";
 
 /// Resolves `- include "partials/x.haml"` against a base directory on disk.
 pub struct FsPartialLoader {
@@ -55,7 +116,23 @@ pub fn render_html(
 /// Renders a complete HTML document (as produced by [`render_html`]) to PDF
 /// bytes in memory (FR-4), honoring `page`'s size/orientation/margins. Pure
 /// Rust: no headless browser, no external process, Vercel-safe (NFR-3).
+/// Uses only the built-in typefaces ([`BUILTIN_FONTS`]); for a document that
+/// needs a caller-supplied font (a brand typeface), use
+/// [`render_pdf_with_fonts`].
 pub fn render_pdf(html: &str, page: &PageConfig) -> Result<Vec<u8>, CoreError> {
+    render_pdf_with_fonts(html, page, &BTreeMap::new())
+}
+
+/// Like [`render_pdf`], but `custom_fonts` (family name -> TTF/OTF bytes) is
+/// embedded alongside the built-in typefaces, so the document's CSS can
+/// reference `font-family: "<name>"` for any family name used as a key. A
+/// custom entry sharing a built-in family name (e.g. `"Inter"`) overrides
+/// that built-in weight/style rather than adding a duplicate.
+pub fn render_pdf_with_fonts(
+    html: &str,
+    page: &PageConfig,
+    custom_fonts: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, CoreError> {
     let (width_mm, height_mm) = page.page_size_mm();
     let options = GeneratePdfOptions {
         page_width: Some(width_mm),
@@ -66,29 +143,45 @@ pub fn render_pdf(html: &str, page: &PageConfig) -> Result<Vec<u8>, CoreError> {
         margin_left: Some(page.margin_mm),
         ..Default::default()
     };
+    let mut fonts = BTreeMap::new();
+    for (family, bytes) in BUILTIN_FONTS {
+        fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));
+    }
+    for (family, bytes) in custom_fonts {
+        fonts.insert(family.clone(), Base64OrRaw::Raw(bytes.clone()));
+    }
+
     let mut warnings = Vec::new();
-    let doc = PdfDocument::from_html(
-        html,
-        &Default::default(),
-        &Default::default(),
-        &options,
-        &mut warnings,
-    )
-    .map_err(CoreError::Render)?;
+    let doc = PdfDocument::from_html(html, &Default::default(), &fonts, &options, &mut warnings)
+        .map_err(CoreError::Render)?;
 
     let mut save_warnings = Vec::new();
     Ok(doc.save(&PdfSaveOptions::default(), &mut save_warnings))
 }
 
 /// End-to-end: `.haml` source + data context + page config -> PDF bytes.
+/// Uses only the built-in typefaces; see [`render_with_fonts`] for a
+/// caller-supplied font.
 pub fn render(
     source: &str,
     data: &JsonValue,
     page: &PageConfig,
     loader: &dyn PartialLoader,
 ) -> Result<Vec<u8>, CoreError> {
+    render_with_fonts(source, data, page, loader, &BTreeMap::new())
+}
+
+/// Like [`render`], but `custom_fonts` (family name -> TTF/OTF bytes) is
+/// embedded alongside the built-in typefaces. See [`render_pdf_with_fonts`].
+pub fn render_with_fonts(
+    source: &str,
+    data: &JsonValue,
+    page: &PageConfig,
+    loader: &dyn PartialLoader,
+    custom_fonts: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, CoreError> {
     let html = render_html(source, data, loader)?;
-    render_pdf(&html, page)
+    render_pdf_with_fonts(&html, page, custom_fonts)
 }
 
 /// Convenience for the CLI: reads `template_path` and `data_path` from
