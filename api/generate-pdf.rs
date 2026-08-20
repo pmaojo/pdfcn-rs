@@ -7,7 +7,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
-use pdfcn_core::{render_with_fonts, NoPartials, Orientation, PageConfig, PageSize};
+use pdfcn_core::{render_with_assets, NoPartials, Orientation, PageConfig, PageSize};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use vercel_runtime::{run, service_fn, Error, Request, Response};
@@ -67,6 +67,13 @@ struct GenerateRequest {
     /// given here -- e.g. a client's brand font.
     #[serde(default)]
     fonts: std::collections::HashMap<String, String>,
+    /// Caller-supplied images: `<img src="...">` value -> base64-encoded
+    /// JPEG/PNG bytes. `template` references a key via
+    /// `%img(src="<key>")` (or plain `<img src="<key>">`); no network
+    /// fetch happens at render time (NFR-3), so the caller must resolve
+    /// and embed the bytes itself.
+    #[serde(default)]
+    images: std::collections::HashMap<String, String>,
 }
 
 fn default_data() -> serde_json::Value {
@@ -117,7 +124,21 @@ fn handle_body(body_bytes: &[u8]) -> Result<Response<Vec<u8>>, Error> {
         }
     }
 
-    match render_with_fonts(&req.template, &req.data, &page, &NoPartials, &fonts) {
+    let mut images: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for (src, b64) in &req.images {
+        match STANDARD.decode(b64) {
+            Ok(bytes) => {
+                images.insert(src.clone(), bytes);
+            }
+            Err(e) => {
+                return Ok(Response::builder()
+                    .status(400)
+                    .body(format!("invalid base64 for image \"{src}\": {e}").into_bytes())?)
+            }
+        }
+    }
+
+    match render_with_assets(&req.template, &req.data, &page, &NoPartials, &fonts, &images) {
         Ok(bytes) => Ok(Response::builder()
             .status(200)
             .header("Content-Type", "application/pdf")

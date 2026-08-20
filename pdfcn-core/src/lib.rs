@@ -162,6 +162,20 @@ pub fn render_pdf_with_fonts(
     page: &PageConfig,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, CoreError> {
+    render_pdf_with_assets(html, page, custom_fonts, &BTreeMap::new())
+}
+
+/// Like [`render_pdf_with_fonts`], but `images` (the `<img src="...">` value
+/// -> raw image bytes, JPEG/PNG) is embedded alongside the document, so an
+/// `%img(src="cover.jpg")` element resolves to that image rather than a
+/// broken-image placeholder. Matches `custom_fonts`' "supply the bytes
+/// yourself" convention -- no network access at render time (NFR-3).
+pub fn render_pdf_with_assets(
+    html: &str,
+    page: &PageConfig,
+    custom_fonts: &BTreeMap<String, Vec<u8>>,
+    images: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, CoreError> {
     let (width_mm, height_mm) = page.page_size_mm();
     let options = GeneratePdfOptions {
         page_width: Some(width_mm),
@@ -184,10 +198,15 @@ pub fn render_pdf_with_fonts(
     }
     let pool = font_pool(&raw_fonts);
 
+    let mut image_map: BTreeMap<String, Base64OrRaw> = BTreeMap::new();
+    for (src, bytes) in images {
+        image_map.insert(src.clone(), Base64OrRaw::Raw(bytes.clone()));
+    }
+
     let mut warnings = Vec::new();
     let doc = PdfDocument::from_html_with_cache(
         html,
-        &Default::default(),
+        &image_map,
         &fonts,
         &options,
         &mut warnings,
@@ -220,8 +239,21 @@ pub fn render_with_fonts(
     loader: &dyn PartialLoader,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, CoreError> {
+    render_with_assets(source, data, page, loader, custom_fonts, &BTreeMap::new())
+}
+
+/// Like [`render_with_fonts`], but also embeds `images` (see
+/// [`render_pdf_with_assets`]).
+pub fn render_with_assets(
+    source: &str,
+    data: &JsonValue,
+    page: &PageConfig,
+    loader: &dyn PartialLoader,
+    custom_fonts: &BTreeMap<String, Vec<u8>>,
+    images: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, CoreError> {
     let html = render_html(source, data, loader)?;
-    render_pdf_with_fonts(&html, page, custom_fonts)
+    render_pdf_with_assets(&html, page, custom_fonts, images)
 }
 
 /// Convenience for the CLI: reads `template_path` and `data_path` from

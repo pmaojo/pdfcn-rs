@@ -1,0 +1,43 @@
+{
+  "product": {
+    "name": "pdfcn-rs",
+    "tagline": "HAML-to-PDF, zero Chromium, one static binary",
+    "status": "Live",
+    "description": "A shadcn-styled document engine that compiles an indentation-based template plus a JSON data context straight to PDF bytes in memory — no headless browser, no external process, safe to run inside a Vercel Function.",
+    "tags": ["Rust", "Serverless", "Pure-Rust PDF", "No Chromium"],
+    "author": "pelayo.mao@gmail.com"
+  },
+  "stats": [
+    { "label": "Cold start", "value": "<50ms" },
+    { "label": "Binary size", "value": "~9MB" },
+    { "label": "Dependencies", "value": "0 system" }
+  ],
+  "features": [
+    { "name": "HAML-like templates", "description": "Indentation syntax, no closing tags, {{ interpolation }}, - for / - if / - include.", "available": true },
+    { "name": "Shadcn-style components", "description": "%Card, %Badge, %InvoiceTable, %Grid and friends, pre-styled out of the box.", "available": true },
+    { "name": "Tailwind-style utilities", "description": "Only the classes actually used are emitted into the stylesheet.", "available": true },
+    { "name": "Embedded images", "description": "<img src=\"key\"> resolves against caller-supplied bytes — no network fetch at render time.", "available": true },
+    { "name": "Custom fonts", "description": "Bring your own brand typeface as base64 TTF/OTF, embedded alongside the built-ins.", "available": true },
+    { "name": "Streaming SVG export", "description": "Planned — not shipped yet.", "available": false }
+  ],
+  "gallery": [
+    { "src": "mountains.jpg", "caption": "Layout engine: printpdf + azul" },
+    { "src": "desk.jpg", "caption": "Runs great on Vercel Functions" },
+    { "src": "city.jpg", "caption": "Deterministic pagination" }
+  ],
+  "pricing": {
+    "rows": [
+      { "plan": "Self-hosted", "price": "$0", "notes": "MIT licensed" },
+      { "plan": "Vercel Function", "price": "$0", "notes": "Fits the free tier easily" }
+    ],
+    "columns": [
+      { "key": "plan", "label": "Plan" },
+      { "key": "price", "label": "Price" },
+      { "key": "notes", "label": "Notes" }
+    ],
+    "total": "$0.00"
+  },
+  "team": [
+    { "name": "Pelayo Mao", "role": "Author" }
+  ]
+}
