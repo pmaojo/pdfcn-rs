@@ -34,7 +34,7 @@ cargo --version
 # (large) dependency tree from source, which is by far the slowest single
 # step in this script.
 if ! command -v cargo-lambda >/dev/null 2>&1; then
-  curl --proto '=https' --tlsv1.2 -sSf https://cargo-lambda.info/install.sh | sh
+  curl --proto '=https' --tlsv1.2 -sSfL https://cargo-lambda.info/install.sh | sh
 fi
 
 # cargo-lambda cross-links against Lambda's Amazon Linux 2 glibc using zig,
