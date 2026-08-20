@@ -5,27 +5,96 @@
 //! `InvoiceTable`'s `rows`) expects a JSON-encoded string, the same "data
 //! island" convention as an HTML `data-*` attribute.
 
+mod alert;
+mod avatar;
+mod form_field;
+mod nav;
+mod progress;
+
+use std::fmt;
+
 use maud::{html, Markup};
 use pdfcn_template::ResolvedAttr;
 use serde_json::Value as JsonValue;
 
-fn attr<'a>(attrs: &'a [ResolvedAttr], name: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(attrs: &'a [ResolvedAttr], name: &str) -> Option<&'a str> {
     attrs
         .iter()
         .find(|a| a.name == name)
         .map(|a| a.value.as_str())
 }
 
-fn attr_or<'a>(attrs: &'a [ResolvedAttr], name: &str, default: &'a str) -> &'a str {
+pub(crate) fn attr_or<'a>(attrs: &'a [ResolvedAttr], name: &str, default: &'a str) -> &'a str {
     attr(attrs, name).unwrap_or(default)
 }
 
+/// shadcn/ui components whose entire purpose is interaction (open/close,
+/// hover, focus-trap, portal) and that therefore have no meaningful static
+/// print rendering. Distinguished from "unknown component name" in
+/// [`render`] so a caller sees a clear rejection instead of a generic
+/// unknown-component error.
+const INTERACTIVE_ONLY: &[&str] = &[
+    "Dialog",
+    "AlertDialog",
+    "Sheet",
+    "Drawer",
+    "Popover",
+    "Tooltip",
+    "HoverCard",
+    "DropdownMenu",
+    "ContextMenu",
+    "Menubar",
+    "NavigationMenu",
+    "Command",
+    "Combobox",
+    "Sonner",
+    "Toast",
+    "Resizable",
+    "ScrollArea",
+    "Sidebar",
+    "Form",
+];
+
+/// A component name that is deliberately unsupported because its shadcn
+/// meaning is inherently interactive and has no static-print equivalent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteractiveOnlyComponent {
+    pub component: String,
+}
+
+impl fmt::Display for InteractiveOnlyComponent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: interactive-only, unsupported in static PDF output",
+            self.component
+        )
+    }
+}
+
+impl std::error::Error for InteractiveOnlyComponent {}
+
 /// Expands a component instance (`%InvoiceTable`, `%Badge`, ...) into its
 /// underlying markup. `children` is the already-rendered markup of the
-/// component's child nodes. Returns `None` for an unknown component name,
-/// so the caller can decide how to handle it (error, or pass through).
-pub fn render(name: &str, attrs: &[ResolvedAttr], children: Markup) -> Option<Markup> {
-    match name {
+/// component's child nodes.
+///
+/// - `Ok(Some(markup))`: a known, supported component.
+/// - `Ok(None)`: an unknown component name.
+/// - `Err(_)`: a component that shadcn defines but that is deliberately
+///   unsupported because it's interactive-only (see [`INTERACTIVE_ONLY`]) —
+///   distinct from "unknown" so callers can surface a clear message instead
+///   of silently falling through.
+pub fn render(
+    name: &str,
+    attrs: &[ResolvedAttr],
+    children: Markup,
+) -> Result<Option<Markup>, InteractiveOnlyComponent> {
+    if INTERACTIVE_ONLY.contains(&name) {
+        return Err(InteractiveOnlyComponent {
+            component: name.to_string(),
+        });
+    }
+    Ok(match name {
         "DocumentLayout" => Some(document_layout(attrs, children)),
         "Header" => Some(header(attrs, children)),
         "Card" => Some(card(attrs, children)),
@@ -35,8 +104,19 @@ pub fn render(name: &str, attrs: &[ResolvedAttr], children: Markup) -> Option<Ma
         "Separator" => Some(separator(attrs)),
         "SignatureBlock" => Some(signature_block(attrs)),
         "InvoiceTable" => Some(invoice_table(attrs)),
+        "Alert" => Some(alert::alert(attrs, children)),
+        "Avatar" => Some(avatar::avatar(attrs)),
+        "Input" => Some(form_field::input(attrs)),
+        "Textarea" => Some(form_field::textarea(attrs)),
+        "Select" => Some(form_field::select(attrs)),
+        "Label" => Some(form_field::label(attrs, children)),
+        "Checkbox" => Some(form_field::checkbox(attrs)),
+        "RadioItem" => Some(form_field::radio_item(attrs)),
+        "Progress" => Some(progress::progress(attrs)),
+        "Breadcrumb" => Some(nav::breadcrumb(attrs)),
+        "Pagination" => Some(nav::pagination(attrs)),
         _ => None,
-    }
+    })
 }
 
 fn document_layout(attrs: &[ResolvedAttr], children: Markup) -> Markup {
@@ -67,7 +147,7 @@ fn header(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let title = attr(attrs, "title");
     html! {
-        div class="card border rounded-lg p-4 break-inside-avoid" {
+        div class="card rounded-lg border bg-card text-card-foreground shadow-sm p-4 break-inside-avoid" {
             @if let Some(t) = title {
                 h2 class="text-lg font-semibold mb-2" { (t) }
             }
@@ -78,8 +158,14 @@ fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 
 fn table(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let variant = attr_or(attrs, "variant", "default");
+    let variant_class = match variant {
+        "striped" => " table-striped",
+        "bordered" => " table-bordered",
+        "compact" => " table-compact",
+        _ => "",
+    };
     html! {
-        table class={ "w-full border" (if variant == "striped" { " table-striped" } else { "" }) } {
+        table class={ "table w-full border" (variant_class) } {
             (children)
         }
     }
@@ -96,10 +182,11 @@ fn grid(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 
 fn badge_classes(variant: &str) -> &'static str {
     match variant {
-        "outline" => "border border-slate-300 text-slate-700",
-        "destructive" => "bg-red-600 text-white",
-        "success" => "bg-green-600 text-white",
-        _ => "bg-slate-900 text-white",
+        "outline" => "border border-input text-foreground",
+        "destructive" => "border-transparent bg-destructive text-destructive-foreground",
+        "success" => "border-transparent bg-green-600 text-white",
+        "secondary" => "border-transparent bg-secondary text-secondary-foreground",
+        _ => "border-transparent bg-primary text-primary-foreground",
     }
 }
 
@@ -107,7 +194,7 @@ fn badge(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let variant = attr_or(attrs, "variant", "default");
     let label = attr(attrs, "label");
     html! {
-        span class={ "badge inline-block rounded-full px-2 py-0.5 text-xs font-medium " (badge_classes(variant)) } {
+        span class={ "badge inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold " (badge_classes(variant)) } {
             @if let Some(l) = label {
                 (l)
             }
@@ -117,7 +204,7 @@ fn badge(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 }
 
 fn separator(_attrs: &[ResolvedAttr]) -> Markup {
-    html! { hr class="my-4 border-t border-slate-200"; }
+    html! { div role="separator" class="separator shrink-0 bg-border h-px w-full my-4"; }
 }
 
 fn signature_block(attrs: &[ResolvedAttr]) -> Markup {
@@ -211,20 +298,52 @@ mod tests {
 
     #[test]
     fn badge_uses_variant_classes() {
-        let out = render("Badge", &[a("variant", "destructive")], html! {}).unwrap();
-        assert!(out.into_string().contains("bg-red-600"));
+        let out = render("Badge", &[a("variant", "destructive")], html! {})
+            .unwrap()
+            .unwrap();
+        assert!(out.into_string().contains("bg-destructive"));
     }
 
     #[test]
     fn invoice_table_renders_rows_from_json() {
         let rows = a("rows", r#"[{"item":"Widget","qty":"2"}]"#);
-        let out = render("InvoiceTable", &[rows], html! {}).unwrap().into_string();
+        let out = render("InvoiceTable", &[rows], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
         assert!(out.contains("Widget"));
         assert!(out.contains("break-inside-avoid"));
     }
 
     #[test]
-    fn unknown_component_returns_none() {
-        assert!(render("NotAComponent", &[], html! {}).is_none());
+    fn unknown_component_returns_ok_none() {
+        assert!(render("NotAComponent", &[], html! {}).unwrap().is_none());
+    }
+
+    #[test]
+    fn table_variants_extend_beyond_default_and_striped() {
+        let bordered = render("Table", &[a("variant", "bordered")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(bordered.contains("table-bordered"));
+
+        let compact = render("Table", &[a("variant", "compact")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(compact.contains("table-compact"));
+    }
+
+    #[test]
+    fn interactive_only_components_are_rejected_explicitly() {
+        for name in ["Dialog", "Tooltip", "DropdownMenu", "Popover", "Sonner"] {
+            let err = render(name, &[], html! {}).unwrap_err();
+            let message = err.to_string();
+            assert!(
+                message.contains("interactive-only, unsupported in static PDF output"),
+                "unexpected message for {name}: {message}"
+            );
+        }
     }
 }

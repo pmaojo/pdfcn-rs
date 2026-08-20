@@ -135,6 +135,23 @@ pub fn resolve(class: &str) -> Option<String> {
     if let Some(rest) = class.strip_prefix("gap-") {
         return spacing_decls(&["gap"], rest);
     }
+    if let Some(rest) = class.strip_prefix("min-h-") {
+        return spacing_decls(&["min-height"], rest);
+    }
+    if let Some(rest) = class.strip_prefix("h-") {
+        return match rest {
+            "full" => Some("height:100%".to_string()),
+            "screen" => Some("height:100vh".to_string()),
+            _ => spacing_decls(&["height"], rest),
+        };
+    }
+    if let Some(rest) = class.strip_prefix("w-") {
+        return match rest {
+            "full" => Some("width:100%".to_string()),
+            "screen" => Some("width:100vw".to_string()),
+            _ => spacing_decls(&["width"], rest),
+        };
+    }
     if let Some(rest) = class.strip_prefix("text-") {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
@@ -195,9 +212,10 @@ pub fn resolve(class: &str) -> Option<String> {
         "justify-center" => Some("justify-content:center"),
         "justify-between" => Some("justify-content:space-between"),
         "justify-end" => Some("justify-content:flex-end"),
-        "w-full" => Some("width:100%"),
-        "h-full" => Some("height:100%"),
-        "w-screen" => Some("width:100vw"),
+        "inline-flex" => Some("display:inline-flex"),
+        "relative" => Some("position:relative"),
+        "overflow-hidden" => Some("overflow:hidden"),
+        "object-cover" => Some("object-fit:cover"),
         "text-left" => Some("text-align:left"),
         "text-center" => Some("text-align:center"),
         "text-right" => Some("text-align:right"),
@@ -209,6 +227,9 @@ pub fn resolve(class: &str) -> Option<String> {
         "break-inside-avoid" => Some("break-inside:avoid;page-break-inside:avoid"),
         "break-before-page" => Some("break-before:page"),
         "break-after-page" => Some("break-after:page"),
+        "shrink-0" => Some("flex-shrink:0"),
+        "table-bordered" => Some("border-width:2px;border-style:solid"),
+        "table-compact" => Some("font-size:0.75rem"),
         _ => None,
     };
     literal.map(str::to_string)
@@ -247,6 +268,19 @@ mod tests {
         assert_eq!(resolve("bg-zinc-100").as_deref(), Some("background-color:#f4f4f5"));
         assert_eq!(resolve("bg-neutral-500").as_deref(), Some("background-color:#737373"));
         assert_eq!(resolve("bg-stone-800").as_deref(), Some("background-color:#292524"));
+    }
+
+    /// The new component modules (Alert/Avatar/form fields/nav) lean on
+    /// height/width/min-height utilities that previously only existed as a
+    /// couple of hardcoded literals (`w-full`, `h-full`).
+    #[test]
+    fn resolves_height_and_width_utilities() {
+        assert_eq!(resolve("h-10").as_deref(), Some("height:2.5rem"));
+        assert_eq!(resolve("w-10").as_deref(), Some("width:2.5rem"));
+        assert_eq!(resolve("h-px").as_deref(), Some("height:1px"));
+        assert_eq!(resolve("min-h-16").as_deref(), Some("min-height:4rem"));
+        assert_eq!(resolve("w-full").as_deref(), Some("width:100%"));
+        assert_eq!(resolve("h-full").as_deref(), Some("height:100%"));
     }
 
     #[test]

@@ -136,7 +136,7 @@ pub fn render_html(
 ) -> Result<String, CoreError> {
     let doc = pdfcn_parser::parse_document(source)?;
     let resolved = pdfcn_template::evaluate(&doc, data, loader)?;
-    let body = html_render::render_body(&resolved);
+    let body = html_render::render_body(&resolved)?;
     let body_html = body.clone().into_string();
     let stylesheet = pdfcn_styles::build_stylesheet(&body_html);
     Ok(html_render::wrap_document(&body, &stylesheet))
@@ -311,5 +311,40 @@ mod tests {
         let data = json!({ "total": "$42.00" });
         let bytes = render(source, &data, &PageConfig::default(), &NoPartials).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    /// Wave 0's shadcn tokens (semantic theme colors, full neutral/accent
+    /// scales, radius/shadow scales) resolve to plain CSS declarations, but
+    /// the pipeline still has to carry that CSS through `lightningcss`
+    /// minification and `printpdf`'s HTML/CSS layout engine end to end.
+    /// This is the sanity check the "Wave 0" scoping asked for before Wave 1
+    /// component fidelity can be trusted on top of it.
+    #[test]
+    fn layout_engine_renders_new_token_css_to_pdf() {
+        let source = concat!(
+            "%DocumentLayout\n",
+            "  %Card(title=\"Report\")\n",
+            "    %Badge(variant=\"destructive\" label=\"Overdue\")\n",
+            "    %p.bg-primary.text-primary-foreground.shadow-lg.rounded-2xl.bg-zinc-100 Body\n",
+            "    %Separator\n",
+        );
+        let html = render_html(source, &json!({}), &NoPartials).unwrap();
+        // Every Wave 0 token class made it into the emitted stylesheet as a
+        // real declaration, not silently dropped by the minifier.
+        assert!(html.contains("background-color"));
+        assert!(html.contains("border-radius:1rem"));
+        assert!(html.contains("box-shadow"));
+
+        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    #[test]
+    fn interactive_only_component_is_rejected_with_an_explicit_error() {
+        let source = "%Dialog";
+        let err = render_html(source, &json!({}), &NoPartials).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("interactive-only, unsupported in static PDF output"));
     }
 }
