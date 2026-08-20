@@ -179,6 +179,10 @@
   .status-row.err .dot { background: var(--err); }
   .status-row.busy .dot { background: #d97706; animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.3; } }
+  .preview-actions { margin-left: auto; display: none; gap: 0.9rem; }
+  .preview-actions.show { display: flex; }
+  .preview-actions a { color: #1d4ed8; text-decoration: none; font-weight: 500; }
+  .preview-actions a:hover { text-decoration: underline; }
   .error-box {
     margin-top: 0.6rem;
     background: #fef2f2;
@@ -264,6 +268,10 @@
         <div class="status-row" id="status-row">
           <span class="dot"></span>
           <span id="status-text">Idle</span>
+          <span class="preview-actions" id="preview-actions">
+            <a id="open-link" href="#" target="_blank" rel="noopener">Open in new tab</a>
+            <a id="download-link" href="#" download="sandbox.pdf">Download</a>
+          </span>
         </div>
         <div class="error-box" id="error-box"></div>
       </div>
@@ -382,6 +390,9 @@
     var statusRow = document.getElementById('status-row');
     var statusText = document.getElementById('status-text');
     var errorBox = document.getElementById('error-box');
+    var previewActions = document.getElementById('preview-actions');
+    var openLink = document.getElementById('open-link');
+    var downloadLink = document.getElementById('download-link');
 
     var currentObjectUrl = null;
     var debounceTimer = null;
@@ -469,6 +480,9 @@
             previewFrame.appendChild(iframe);
           }
           iframe.src = url;
+          openLink.href = url;
+          downloadLink.href = url;
+          previewActions.classList.add('show');
           if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
           currentObjectUrl = url;
           setStatus('ok', 'Rendered ' + new Date().toLocaleTimeString());
