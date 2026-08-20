@@ -24,7 +24,7 @@ process spawning — built to run inside a Vercel Function / AWS Lambda.
 | `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
 | `pdfcn-core` | Orchestrates the pipeline; HTML → PDF via `printpdf`'s pure-Rust HTML/CSS layout engine |
 | `pdfcn-cli` | `pdfcn new / add / build / dev` |
-| `pdfcn-vercel` | `lambda_http` handler for `/api/generate-pdf` |
+| `api/generate-pdf.rs` | `vercel_runtime` handler for `/api/generate-pdf`, auto-built by Vercel's built-in Rust runtime |
 | `pdfcn-node` | `napi-rs` bindings for calling the core directly from Next.js |
 
 ## CLI

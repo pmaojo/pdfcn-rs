@@ -1,9 +1,7 @@
-//! FR-5: a native `/api/generate-pdf` handler for Vercel Functions
-//! (cargo-lambda-compatible: builds to a `bootstrap` binary run under
-//! Vercel's `vercel_runtime` executable protocol, not the AWS Lambda
-//! Runtime API -- Vercel's actual invocation contract for a Rust
-//! function binds an HTTP server to a port it supplies, it does not
-//! poll the AWS Lambda Runtime API). No Chromium, no dynamic system
+//! FR-5: a native `/api/generate-pdf` handler for Vercel Functions.
+//! Vercel auto-builds every `[[bin]]` target under `api/` via its built-in
+//! Rust runtime (https://vercel.com/docs/functions/runtimes/rust) -- no
+//! vercel.json, no custom build script. No Chromium, no dynamic system
 //! dependencies (NFR-3) -- the whole request/response cycle is
 //! `pdfcn-core` plus this thin HTTP adapter.
 
