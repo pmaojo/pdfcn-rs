@@ -5,13 +5,27 @@
 # what `cargo lambda build` (and pdfcn-vercel's own [[bin]] name = "bootstrap")
 # already produce. No Docker, no headless browser: a single static binary
 # (NFR-2/NFR-3).
-set -euo pipefail
+set -euxo pipefail
 
-if ! command -v rustup >/dev/null 2>&1; then
-  curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+# Don't rely on sourcing `$HOME/.cargo/env` — Vercel's build image may
+# already carry a toolchain installed to a different CARGO_HOME than we'd
+# assume, and `command -v rustup` can be true without that file existing.
+# Check for `cargo` directly and always prepend cargo's bin dir to PATH,
+# whether or not we end up installing anything below.
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+cargo_bin_dir="$CARGO_HOME"
+cargo_bin_dir+=/bin
+PATH=$cargo_bin_dir:$PATH
+export PATH
+
+if ! command -v cargo >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+  sh /tmp/rustup-init.sh -y --default-toolchain stable --profile minimal
 fi
-# shellcheck disable=SC1091
-source "$HOME/.cargo/env"
+
+rustc --version
+cargo --version
 
 if ! command -v cargo-lambda >/dev/null 2>&1; then
   cargo install cargo-lambda --locked
