@@ -31,6 +31,25 @@ if ! command -v cargo-lambda >/dev/null 2>&1; then
   cargo install cargo-lambda --locked
 fi
 
+# cargo-lambda cross-links against Lambda's Amazon Linux 2 glibc using zig,
+# so it needs zig on PATH even when the build host is already Linux/x86_64 —
+# without it, `cargo lambda build` refuses to run.
+if ! command -v zig >/dev/null 2>&1; then
+  if command -v npm >/dev/null 2>&1; then
+    npm install -g @ziglang/cli
+  elif command -v pip3 >/dev/null 2>&1; then
+    # `pip3 install ziglang` doesn't add a `zig` shim to PATH — it ships the
+    # real binary at .../site-packages/ziglang/zig, so PATH must point there.
+    pip3 install ziglang
+    zig_pkg_dir="$(python3 -c 'import ziglang, os; print(os.path.dirname(ziglang.__file__))')"
+    PATH="$zig_pkg_dir:$PATH"
+    export PATH
+  else
+    echo "error: zig is not installed and neither npm nor pip3 is available to install it" >&2
+    exit 1
+  fi
+fi
+
 cargo lambda build --release -p pdfcn-vercel
 
 OUT=".vercel/output"
