@@ -64,6 +64,16 @@ fn lookup<'a>(table: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
     table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 
+/// Resolves a color-utility suffix (the part after `bg-`/`text-`/`border-`)
+/// against, in order: the hand-picked palette, shadcn's semantic theme
+/// tokens, then the full Tailwind/shadcn scales. The palette and theme
+/// tokens keep winning where they overlap with a scale entry.
+fn resolve_color(key: &str) -> Option<&'static str> {
+    lookup(PALETTE, key)
+        .or_else(|| tokens::color(key))
+        .or_else(|| tokens::scale_color(key))
+}
+
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
     let value = lookup(SPACING, scale)?;
     Some(
@@ -129,31 +139,28 @@ pub fn resolve(class: &str) -> Option<String> {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
         }
-        if let Some(color) = lookup(PALETTE, rest).or_else(|| tokens::color(rest)) {
+        if let Some(color) = resolve_color(rest) {
             return Some(format!("color:{color}"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("bg-") {
-        let color = lookup(PALETTE, rest).or_else(|| tokens::color(rest))?;
+        let color = resolve_color(rest)?;
         return Some(format!("background-color:{color}"));
     }
     if let Some(rest) = class.strip_prefix("border-") {
-        if let Some(color) = lookup(PALETTE, rest).or_else(|| tokens::color(rest)) {
+        if let Some(color) = resolve_color(rest) {
             return Some(format!("border-color:{color}"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("rounded-") {
-        let value = match rest {
-            "sm" => "0.125rem",
-            "md" => "0.375rem",
-            "lg" => "0.5rem",
-            "xl" => "0.75rem",
-            "full" => "9999px",
-            _ => return None,
-        };
+        let value = tokens::radius(rest)?;
         return Some(format!("border-radius:{value}"));
+    }
+    if let Some(rest) = class.strip_prefix("shadow-") {
+        let value = tokens::shadow(rest)?;
+        return Some(format!("box-shadow:{value}"));
     }
     if let Some(rest) = class.strip_prefix("grid-cols-") {
         let n: u32 = rest.parse().ok()?;
@@ -232,5 +239,24 @@ mod tests {
     #[test]
     fn palette_colors_still_win_over_tokens() {
         assert_eq!(resolve("bg-red-600").as_deref(), Some("background-color:#dc2626"));
+    }
+
+    #[test]
+    fn resolves_the_full_neutral_and_accent_scales() {
+        assert_eq!(resolve("bg-slate-950").as_deref(), Some("background-color:#020617"));
+        assert_eq!(resolve("bg-zinc-100").as_deref(), Some("background-color:#f4f4f5"));
+        assert_eq!(resolve("bg-neutral-500").as_deref(), Some("background-color:#737373"));
+        assert_eq!(resolve("bg-stone-800").as_deref(), Some("background-color:#292524"));
+    }
+
+    #[test]
+    fn resolves_the_shadow_and_radius_scales() {
+        assert!(resolve("shadow-sm").is_some());
+        assert!(resolve("shadow-md").is_some());
+        assert!(resolve("shadow-lg").is_some());
+        assert!(resolve("shadow-xl").is_some());
+        assert_ne!(resolve("shadow-sm"), resolve("shadow-xl"));
+        assert_eq!(resolve("rounded-2xl").as_deref(), Some("border-radius:1rem"));
+        assert_eq!(resolve("rounded-3xl").as_deref(), Some("border-radius:1.5rem"));
     }
 }
