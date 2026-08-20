@@ -1,20 +1,28 @@
 use maud::{html, Markup};
 use pdfcn_template::Resolved;
 
+use crate::CoreError;
+
 /// Renders a resolved document tree to `maud` markup, expanding component
 /// nodes through the `pdfcn-components` registry (FR-2). An unknown
 /// component name is rendered as an inert, visibly-marked placeholder
-/// rather than silently dropped.
-pub fn render_body(nodes: &[Resolved]) -> Markup {
-    html! {
-        @for node in nodes {
-            (render_node(node))
-        }
+/// rather than silently dropped; a deliberately-unsupported, interactive-only
+/// component (Dialog, Tooltip, ...) is rejected with an explicit error
+/// instead.
+pub fn render_body(nodes: &[Resolved]) -> Result<Markup, CoreError> {
+    let mut rendered = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        rendered.push(render_node(node)?);
     }
+    Ok(html! {
+        @for node in &rendered {
+            (node)
+        }
+    })
 }
 
-fn render_node(node: &Resolved) -> Markup {
-    match node {
+fn render_node(node: &Resolved) -> Result<Markup, CoreError> {
+    Ok(match node {
         Resolved::Text(text) => html! { (text) },
         Resolved::Element {
             tag,
@@ -24,6 +32,10 @@ fn render_node(node: &Resolved) -> Markup {
             children,
         } => {
             let class_attr = classes.join(" ");
+            let mut rendered_children = Vec::with_capacity(children.len());
+            for child in children {
+                rendered_children.push(render_node(child)?);
+            }
             html! {
                 (maud::PreEscaped(format!("<{tag}")))
                 @if let Some(id) = id {
@@ -36,8 +48,8 @@ fn render_node(node: &Resolved) -> Markup {
                     (maud::PreEscaped(format!(" {}=\"", a.name)))(a.value)(maud::PreEscaped("\""))
                 }
                 (maud::PreEscaped(">"))
-                @for child in children {
-                    (render_node(child))
+                @for child in &rendered_children {
+                    (child)
                 }
                 (maud::PreEscaped(format!("</{tag}>")))
             }
@@ -47,16 +59,18 @@ fn render_node(node: &Resolved) -> Markup {
             attrs,
             children,
         } => {
-            let inner = render_body(children);
-            pdfcn_components::render(name, attrs, inner).unwrap_or_else(|| {
-                html! {
+            let inner = render_body(children)?;
+            match pdfcn_components::render(name, attrs, inner) {
+                Ok(Some(markup)) => markup,
+                Ok(None) => html! {
                     div class="pdfcn-unknown-component" data-component=(name) {
                         "Unknown component: " (name)
                     }
-                }
-            })
+                },
+                Err(rejected) => return Err(CoreError::Render(rejected.to_string())),
+            }
         }
-    }
+    })
 }
 
 /// Wraps a rendered body and a stylesheet into a complete HTML document.
