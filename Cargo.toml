@@ -44,9 +44,15 @@ base64 = "0.22"
 napi = { version = "2", default-features = false, features = ["napi4"] }
 napi-derive = "2"
 
+# TEMPORARY: strip=false + debug=1 (line-tables-only) so RUST_BACKTRACE=full
+# (see vercel-build.sh's .vc-config.json) produces a symbolized, file:line
+# stack trace for the /api/generate-pdf 500 instead of raw hex addresses.
+# Revert to strip=true, drop `debug`, once that crash is root-caused --
+# this meaningfully grows the deployed binary and slows cold starts.
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
+strip = false
+debug = 1
