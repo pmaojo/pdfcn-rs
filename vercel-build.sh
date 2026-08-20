@@ -71,10 +71,7 @@ cat > "$FUNC_DIR/.vc-config.json" <<'EOF'
   "runtime": "provided.al2023",
   "handler": "bootstrap",
   "launcherType": "Native",
-  "architecture": "x86_64",
-  "environment": {
-    "RUST_BACKTRACE": "full"
-  }
+  "architecture": "x86_64"
 }
 EOF
 
