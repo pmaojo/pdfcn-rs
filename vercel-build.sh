@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Builds pdfcn-vercel as a Lambda-compatible "bootstrap" binary and assembles
 # a Vercel Build Output API v3 directory by hand — Vercel has no native Rust
-# runtime, but it does run any "provided.al2" Lambda binary, which is exactly
-# what `cargo lambda build` (and pdfcn-vercel's own [[bin]] name = "bootstrap")
-# already produce. No Docker, no headless browser: a single static binary
-# (NFR-2/NFR-3).
+# runtime, but it does run any "provided.al2023" Lambda binary, which is
+# exactly what `cargo lambda build` (and pdfcn-vercel's own [[bin]] name =
+# "bootstrap") already produce. No Docker, no headless browser: a single
+# static binary (NFR-2/NFR-3).
 set -euxo pipefail
 
 # Don't rely on sourcing `$HOME/.cargo/env` — Vercel's build image may
@@ -62,7 +62,7 @@ chmod +x "$FUNC_DIR/bootstrap"
 
 cat > "$FUNC_DIR/.vc-config.json" <<'EOF'
 {
-  "runtime": "provided.al2",
+  "runtime": "provided.al2023",
   "handler": "bootstrap",
   "launcherType": "Native"
 }
