@@ -7,9 +7,38 @@ members = [
     "pdfcn-styles",
     "pdfcn-core",
     "pdfcn-cli",
-    "pdfcn-vercel",
     "pdfcn-node",
 ]
+
+# Vercel's built-in Rust support auto-discovers a `[[bin]]` target for every
+# file under `api/` when its Cargo.toml lives at the project root -- no
+# vercel.json, no custom build script (see
+# https://vercel.com/docs/functions/runtimes/rust and
+# vercel/examples/rust/hello-world). This workspace root therefore doubles
+# as the package for that function.
+[package]
+name = "pdfcn-vercel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Vercel Rust Function for /api/generate-pdf"
+publish = false
+
+[[bin]]
+name = "generate-pdf"
+path = "api/generate-pdf.rs"
+
+[dependencies]
+pdfcn-core = { workspace = true }
+vercel_runtime = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"

@@ -1,4 +1,0 @@
-{
-  "buildCommand": "bash vercel-build.sh",
-  "framework": null
-}
