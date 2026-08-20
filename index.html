@@ -5,30 +5,513 @@
 <title>pdfcn-rs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 720px; margin: 4rem auto; padding: 0 1.5rem; color: #0f172a; }
-  h1 { margin-bottom: 0.25rem; }
-  code, pre { background: #f1f5f9; border-radius: 4px; }
-  code { padding: 0.1rem 0.35rem; }
-  pre { padding: 1rem; overflow-x: auto; }
-  .badge { display: inline-block; background: #0f172a; color: #fff; border-radius: 9999px; padding: 0.15rem 0.6rem; font-size: 0.75rem; }
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --border: #e2e8f0;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --accent: #0f172a;
+    --accent-ink: #ffffff;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+    --ok: #16a34a;
+    --err: #dc2626;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  h1 { margin: 0.4rem 0 0.25rem; font-size: 1.9rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 0.75rem; }
+  p { color: var(--ink); }
+  .lede { color: var(--muted); max-width: 640px; }
+  code {
+    background: #eef2f7;
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: var(--radius);
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .badge {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-radius: 9999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+  }
+  a { color: #1d4ed8; }
+
+  /* ---------- sandbox ---------- */
+  .sandbox {
+    margin-top: 2.5rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px -20px rgba(15, 23, 42, 0.18);
+  }
+  .sandbox-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .sandbox-head .lede { margin: 0.2rem 0 0; font-size: 0.9rem; }
+  .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  button, select {
+    font: inherit;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--ink);
+    padding: 0.45rem 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.05s;
+  }
+  button:hover, select:hover { border-color: #cbd5e1; }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.primary:hover { background: #1e293b; }
+  button:disabled { opacity: 0.55; cursor: progress; }
+  select { padding: 0.4rem 0.6rem; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .editors { display: flex; flex-direction: column; gap: 1.25rem; }
+  .field label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+  textarea {
+    width: 100%;
+    resize: vertical;
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #1e293b;
+    border-radius: var(--radius);
+    padding: 0.85rem 1rem;
+    font: 13px/1.6 "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+    tab-size: 2;
+  }
+  textarea:focus { outline: 2px solid #94a3b8; outline-offset: 1px; }
+  #haml-editor { height: 260px; }
+  #json-editor { height: 180px; }
+
+  .preview-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 460px;
+  }
+  .preview-frame {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+    overflow: hidden;
+    position: relative;
+    min-height: 460px;
+  }
+  .preview-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .preview-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 1rem;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    min-height: 1.2rem;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .status-row.ok .dot { background: var(--ok); }
+  .status-row.err .dot { background: var(--err); }
+  .status-row.busy .dot { background: #d97706; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  .error-box {
+    margin-top: 0.6rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.82rem;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    display: none;
+  }
+  .error-box.show { display: block; }
+
+  /* ---------- docs ---------- */
+  .docs { margin-top: 2.5rem; }
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.55rem 0.75rem; vertical-align: top; border-bottom: 1px solid var(--border); }
+  thead th { background: #f1f5f9; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, .docs p code { white-space: nowrap; }
 </style>
 </head>
 <body>
   <span class="badge">live</span>
   <h1>pdfcn-rs</h1>
-  <p>HAML-like templates + Shadcn-style components + Tailwind-style utility
+  <p class="lede">HAML-like templates + Shadcn-style components + Tailwind-style utility
   classes, compiled to PDF bytes in memory. Pure Rust, no headless browser,
   running as a Vercel Function.</p>
 
-  <h2>POST /api/generate-pdf</h2>
-  <pre>curl -X POST https://pdfcn-rs.vercel.app/api/generate-pdf \
+  <h2 style="margin-top:2rem">POST /api/generate-pdf</h2>
+  <pre><code>curl -X POST https://pdfcn-rs.vercel.app/api/generate-pdf \
   -H "Content-Type: application/json" \
   -d '{
     "template": "%h1 Invoice\n%p Total: {{ total }}",
     "data": { "total": "$42.00" }
   }' \
-  --output invoice.pdf</pre>
+  --output invoice.pdf</code></pre>
 
   <p>Source: <a href="https://github.com/pmaojo/pdfcn-rs">github.com/pmaojo/pdfcn-rs</a></p>
+
+  <section class="sandbox">
+    <div class="sandbox-head">
+      <div>
+        <h2 style="margin-bottom:0.15rem">Try it live</h2>
+        <p class="lede">Edit the template and data, then generate — this calls
+        <code>/api/generate-pdf</code> on this deployment and renders the PDF
+        it returns.</p>
+      </div>
+      <div class="toolbar">
+        <select id="example-select">
+          <option value="invoice">Invoice example</option>
+          <option value="minimal">Minimal example</option>
+        </select>
+        <button id="reset-btn" type="button">Reset</button>
+        <button id="generate-btn" type="button" class="primary">Generate PDF</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="editors">
+        <div class="field">
+          <label for="haml-editor">Template (.haml)</label>
+          <textarea id="haml-editor" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label for="json-editor">Data (.json)</label>
+          <textarea id="json-editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="preview-pane">
+        <label style="font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:0.4rem;display:block;">Preview</label>
+        <div class="preview-frame" id="preview-frame">
+          <div class="preview-placeholder" id="preview-placeholder">Generating the first PDF…</div>
+        </div>
+        <div class="status-row" id="status-row">
+          <span class="dot"></span>
+          <span id="status-text">Idle</span>
+        </div>
+        <div class="error-box" id="error-box"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="docs">
+    <h2>Request reference</h2>
+    <p class="lede">Full body accepted by <code>POST /api/generate-pdf</code>. Only <code>template</code> is required.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>template</code></td><td>string</td><td>—</td><td>HAML-like template source (see syntax below).</td></tr>
+          <tr><td><code>data</code></td><td>object</td><td><code>{}</code></td><td>JSON context resolved against <code>{{ ... }}</code> interpolations.</td></tr>
+          <tr><td><code>page.size</code></td><td><code>"a4" | "letter" | "WxH"</code></td><td><code>"a4"</code></td><td>Custom sizes take millimeters, e.g. <code>"210x297"</code>.</td></tr>
+          <tr><td><code>page.orientation</code></td><td><code>"portrait" | "landscape"</code></td><td><code>"portrait"</code></td><td>Page orientation.</td></tr>
+          <tr><td><code>page.margin_mm</code></td><td>number</td><td>engine default</td><td>Uniform page margin in millimeters.</td></tr>
+          <tr><td><code>filename</code></td><td>string</td><td><code>"document.pdf"</code></td><td>Suggested name via <code>Content-Disposition</code>.</td></tr>
+          <tr><td><code>fonts</code></td><td>object</td><td><code>{}</code></td><td>Map of family name → base64 TTF/OTF bytes. Reference via <code>font-family: "&lt;name&gt;"</code>.</td></tr>
+          <tr><td><code>images</code></td><td>object</td><td><code>{}</code></td><td>Map of <code>src</code> key → base64 JPEG/PNG bytes. No network fetch happens at render time — embed bytes yourself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:0.75rem">Responses: <code>200</code> with <code>application/pdf</code> bytes on success,
+    <code>400</code> for a missing/invalid JSON body, <code>422</code> with a plain-text <code>render error: …</code> message
+    when the template or data is invalid.</p>
+
+    <h2 style="margin-top:2rem">Template syntax</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Syntax</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>%tag</code></td><td>Element, e.g. <code>%h1</code>, <code>%p</code>. Indentation nests children — no closing tags.</td></tr>
+          <tr><td><code>.class-name</code></td><td>A bare div with that class; chain classes like <code>.flex.gap-2</code> (Tailwind-style utilities).</td></tr>
+          <tr><td><code>%tag.class(attr="value")</code></td><td>Tag plus classes plus attributes in parentheses.</td></tr>
+          <tr><td><code>{{ path.to.value }}</code></td><td>Interpolates from <code>data</code>; also valid inside attribute values.</td></tr>
+          <tr><td><code>- if cond</code> / <code>- else</code></td><td>Conditional branch on a truthy value from <code>data</code>.</td></tr>
+          <tr><td><code>- for x in list</code></td><td>Repeats the indented block once per item, binding <code>x</code>.</td></tr>
+          <tr><td><code>- include "name"</code></td><td>Inlines a caller-supplied partial (requires a <code>Partials</code> resolver on the embedding side; the HTTP API uses <code>NoPartials</code>).</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="margin-top:2rem">Built-in components</h2>
+    <p class="lede">Shadcn-style, pre-styled, used the same way as any <code>%tag</code>:</p>
+    <p>
+      <code>DocumentLayout</code> <code>Header</code> <code>Card</code> <code>Table</code> <code>Grid</code>
+      <code>Badge</code> <code>Separator</code> <code>SignatureBlock</code> <code>InvoiceTable</code>
+      <code>Alert</code> <code>Avatar</code> <code>Input</code> <code>Textarea</code> <code>Select</code>
+      <code>Label</code> <code>Checkbox</code> <code>RadioItem</code> <code>Progress</code>
+      <code>Breadcrumb</code> <code>Pagination</code>
+    </p>
+  </section>
+
+  <script>
+  (function () {
+    var EXAMPLES = {
+      invoice: {
+        haml: [
+          '%DocumentLayout(size="a4")',
+          '  %Header(title="Invoice {{ invoice.number }}" subtitle="{{ invoice.date }}")',
+          '    - if invoice.paid',
+          '      %Badge(variant="success" label="Paid")',
+          '    - else',
+          '      %Badge(variant="destructive" label="Unpaid")',
+          '',
+          '  %Card(title="Bill To")',
+          '    %p {{ customer.name }}',
+          '    %p.text-sm {{ customer.email }}',
+          '',
+          '  %InvoiceTable(rows={{ invoice.items }} columns={{ invoice.columns }})',
+          '',
+          '  .flex.justify-between.mt-4',
+          '    %p Subtotal: {{ invoice.subtotal }}',
+          '    %p Total: {{ invoice.total }}',
+          '',
+          '  %SignatureBlock(name="{{ customer.name }}" label="Customer signature")',
+          ''
+        ].join('\n'),
+        json: JSON.stringify({
+          invoice: {
+            number: 'INV-1042',
+            date: '2026-08-19',
+            paid: false,
+            subtotal: '$180.00',
+            total: '$194.40',
+            columns: [
+              { key: 'description', label: 'Description' },
+              { key: 'qty', label: 'Qty' },
+              { key: 'price', label: 'Price' }
+            ],
+            items: [
+              { description: 'Consulting', qty: '4h', price: '$120.00' },
+              { description: 'Hosting', qty: '1', price: '$60.00' }
+            ]
+          },
+          customer: { name: 'Ada Lovelace', email: 'ada@example.com' }
+        }, null, 2)
+      },
+      minimal: {
+        haml: '%h1 Invoice\n%p Total: {{ total }}',
+        json: JSON.stringify({ total: '$42.00' }, null, 2)
+      }
+    };
+
+    var hamlEditor = document.getElementById('haml-editor');
+    var jsonEditor = document.getElementById('json-editor');
+    var generateBtn = document.getElementById('generate-btn');
+    var resetBtn = document.getElementById('reset-btn');
+    var exampleSelect = document.getElementById('example-select');
+    var previewFrame = document.getElementById('preview-frame');
+    var previewPlaceholder = document.getElementById('preview-placeholder');
+    var statusRow = document.getElementById('status-row');
+    var statusText = document.getElementById('status-text');
+    var errorBox = document.getElementById('error-box');
+
+    var currentObjectUrl = null;
+    var debounceTimer = null;
+    var inFlight = false;
+    var pendingRerun = false;
+
+    function loadExample(name) {
+      var ex = EXAMPLES[name] || EXAMPLES.invoice;
+      hamlEditor.value = ex.haml;
+      jsonEditor.value = ex.json;
+    }
+
+    function setStatus(kind, text) {
+      statusRow.className = 'status-row' + (kind ? ' ' + kind : '');
+      statusText.textContent = text;
+    }
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.classList.add('show');
+    }
+
+    function clearError() {
+      errorBox.textContent = '';
+      errorBox.classList.remove('show');
+    }
+
+    function enableTabIndent(el) {
+      el.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab') return;
+        e.preventDefault();
+        var start = el.selectionStart, end = el.selectionEnd;
+        el.value = el.value.slice(0, start) + '  ' + el.value.slice(end);
+        el.selectionStart = el.selectionEnd = start + 2;
+      });
+    }
+    enableTabIndent(hamlEditor);
+    enableTabIndent(jsonEditor);
+
+    function generate() {
+      if (inFlight) {
+        pendingRerun = true;
+        return;
+      }
+
+      var template = hamlEditor.value;
+      var dataRaw = jsonEditor.value.trim();
+      var data;
+      try {
+        data = dataRaw === '' ? {} : JSON.parse(dataRaw);
+      } catch (err) {
+        setStatus('err', 'Invalid JSON');
+        showError('JSON parse error: ' + err.message);
+        return;
+      }
+
+      clearError();
+      setStatus('busy', 'Generating…');
+      generateBtn.disabled = true;
+      inFlight = true;
+
+      fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template: template,
+          data: data,
+          filename: 'sandbox.pdf'
+        })
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.text().then(function (text) {
+              throw new Error(text || ('HTTP ' + res.status));
+            });
+          }
+          return res.blob();
+        })
+        .then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          previewPlaceholder.style.display = 'none';
+          var iframe = previewFrame.querySelector('iframe');
+          if (!iframe) {
+            iframe = document.createElement('iframe');
+            previewFrame.appendChild(iframe);
+          }
+          iframe.src = url;
+          if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+          currentObjectUrl = url;
+          setStatus('ok', 'Rendered ' + new Date().toLocaleTimeString());
+        })
+        .catch(function (err) {
+          setStatus('err', 'Render failed');
+          showError(err.message || String(err));
+        })
+        .finally(function () {
+          inFlight = false;
+          generateBtn.disabled = false;
+          if (pendingRerun) {
+            pendingRerun = false;
+            generate();
+          }
+        });
+    }
+
+    function scheduleGenerate() {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(generate, 700);
+    }
+
+    hamlEditor.addEventListener('input', scheduleGenerate);
+    jsonEditor.addEventListener('input', scheduleGenerate);
+    generateBtn.addEventListener('click', function () {
+      window.clearTimeout(debounceTimer);
+      generate();
+    });
+    resetBtn.addEventListener('click', function () {
+      loadExample(exampleSelect.value);
+      window.clearTimeout(debounceTimer);
+      generate();
+    });
+    exampleSelect.addEventListener('change', function () {
+      loadExample(exampleSelect.value);
+      window.clearTimeout(debounceTimer);
+      generate();
+    });
+
+    loadExample('invoice');
+    generate();
+  })();
+  </script>
 </body>
 </html>
