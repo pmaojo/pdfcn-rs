@@ -7,13 +7,15 @@
 # static binary (NFR-2/NFR-3).
 set -euxo pipefail
 
-# Don't rely on sourcing `$HOME/.cargo/env` — Vercel's build image may
-# already carry a toolchain installed to a different CARGO_HOME than we'd
-# assume, and `command -v rustup` can be true without that file existing.
-# Check for `cargo` directly and always prepend cargo's bin dir to PATH,
-# whether or not we end up installing anything below.
-export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+# Everything under .vercel/cache survives between deploys (Vercel restores
+# it before the build and persists it after) — pointing the toolchain,
+# cargo registry/git checkouts, and build artifacts in there turns every
+# build after the first into an incremental one instead of a from-scratch
+# rustup install + full workspace compile every single time.
+CACHE_DIR="$PWD/.vercel/cache"
+export CARGO_HOME="${CARGO_HOME:-$CACHE_DIR/cargo-home}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$CACHE_DIR/rustup-home}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$CACHE_DIR/target}"
 cargo_bin_dir="$CARGO_HOME"
 cargo_bin_dir+=/bin
 PATH=$cargo_bin_dir:$PATH
@@ -27,8 +29,12 @@ fi
 rustc --version
 cargo --version
 
+# The prebuilt installer drops a ready-made binary in seconds; `cargo
+# install cargo-lambda --locked` instead compiles cargo-lambda's own
+# (large) dependency tree from source, which is by far the slowest single
+# step in this script.
 if ! command -v cargo-lambda >/dev/null 2>&1; then
-  cargo install cargo-lambda --locked
+  curl --proto '=https' --tlsv1.2 -sSfL https://cargo-lambda.info/install.sh | sh
 fi
 
 # cargo-lambda cross-links against Lambda's Amazon Linux 2 glibc using zig,
@@ -50,21 +56,22 @@ if ! command -v zig >/dev/null 2>&1; then
   fi
 fi
 
-cargo lambda build --release -p pdfcn-vercel
+cargo lambda build --release --target x86_64-unknown-linux-gnu -p pdfcn-vercel
 
 OUT=".vercel/output"
 FUNC_DIR="$OUT/functions/api/generate-pdf.func"
 rm -rf "$OUT"
 mkdir -p "$FUNC_DIR" "$OUT/static"
 
-cp target/lambda/bootstrap/bootstrap "$FUNC_DIR/bootstrap"
+cp "$CARGO_TARGET_DIR/lambda/bootstrap/bootstrap" "$FUNC_DIR/bootstrap"
 chmod +x "$FUNC_DIR/bootstrap"
 
 cat > "$FUNC_DIR/.vc-config.json" <<'EOF'
 {
   "runtime": "provided.al2023",
   "handler": "bootstrap",
-  "launcherType": "Native"
+  "launcherType": "Native",
+  "architecture": "x86_64"
 }
 EOF
 
