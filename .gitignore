@@ -22,7 +22,10 @@ target
 
 # vord guardrail local runtime state (not project config)
 .vord-cache.json
+.vord-baseline.json
 .vord-circuit-breaker.json
+.vord-approvals.json
 .vord-loop-guard.json
 .vord-provenance.json
 .vord-audit.jsonl
+.vord-triage.json
