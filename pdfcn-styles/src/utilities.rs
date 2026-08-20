@@ -3,6 +3,8 @@
 //! table for every class name. Not a full Tailwind JIT — enough for
 //! document layout: spacing, flex/grid, typography, color, borders.
 
+use crate::tokens;
+
 const SPACING: &[(&str, &str)] = &[
     ("0", "0"),
     ("px", "1px"),
@@ -127,17 +129,17 @@ pub fn resolve(class: &str) -> Option<String> {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
         }
-        if let Some(color) = lookup(PALETTE, rest) {
+        if let Some(color) = lookup(PALETTE, rest).or_else(|| tokens::color(rest)) {
             return Some(format!("color:{color}"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("bg-") {
-        let color = lookup(PALETTE, rest)?;
+        let color = lookup(PALETTE, rest).or_else(|| tokens::color(rest))?;
         return Some(format!("background-color:{color}"));
     }
     if let Some(rest) = class.strip_prefix("border-") {
-        if let Some(color) = lookup(PALETTE, rest) {
+        if let Some(color) = lookup(PALETTE, rest).or_else(|| tokens::color(rest)) {
             return Some(format!("border-color:{color}"));
         }
         return None;
@@ -203,4 +205,32 @@ pub fn resolve(class: &str) -> Option<String> {
         _ => None,
     };
     literal.map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_shadcn_theme_tokens_through_color_utilities() {
+        assert_eq!(
+            resolve("bg-primary").as_deref(),
+            Some("background-color:hsl(222.2, 47.4%, 11.2%)")
+        );
+        assert_eq!(
+            resolve("text-primary-foreground").as_deref(),
+            Some("color:hsl(210, 40%, 98%)")
+        );
+        assert_eq!(
+            resolve("border-input").as_deref(),
+            Some("border-color:hsl(214.3, 31.8%, 91.4%)")
+        );
+    }
+
+    /// The literal palette must keep winning: a theme token is a fallback for
+    /// names the palette has no entry for, never an override of one.
+    #[test]
+    fn palette_colors_still_win_over_tokens() {
+        assert_eq!(resolve("bg-red-600").as_deref(), Some("background-color:#dc2626"));
+    }
 }
