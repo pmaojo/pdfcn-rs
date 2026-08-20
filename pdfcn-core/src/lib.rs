@@ -10,8 +10,19 @@ pub use pdfcn_template::{NoPartials, PartialLoader};
 
 use std::path::{Path, PathBuf};
 
-use printpdf::{GeneratePdfOptions, PdfDocument, PdfSaveOptions};
+use printpdf::{Base64OrRaw, GeneratePdfOptions, PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
+
+/// The default document font, embedded so PDF generation has no dependency
+/// on fonts being installed on the host (NFR-3). Serverless runtimes like
+/// Vercel Functions / AWS Lambda ship no system fonts at all, so relying on
+/// `printpdf`'s fontconfig-based system font scan crashes there even though
+/// it works on a developer machine with fonts installed. See
+/// `assets/fonts/LICENSE` for the embedded font's license.
+const DEFAULT_FONT: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
+const DEFAULT_FONT_BOLD: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
+const DEFAULT_FONT_FAMILY: &str = "DejaVu Sans";
 
 /// Resolves `- include "partials/x.haml"` against a base directory on disk.
 pub struct FsPartialLoader {
@@ -66,15 +77,19 @@ pub fn render_pdf(html: &str, page: &PageConfig) -> Result<Vec<u8>, CoreError> {
         margin_left: Some(page.margin_mm),
         ..Default::default()
     };
+    let mut fonts = BTreeMap::new();
+    fonts.insert(
+        DEFAULT_FONT_FAMILY.to_string(),
+        Base64OrRaw::Raw(DEFAULT_FONT.to_vec()),
+    );
+    fonts.insert(
+        format!("{DEFAULT_FONT_FAMILY} Bold"),
+        Base64OrRaw::Raw(DEFAULT_FONT_BOLD.to_vec()),
+    );
+
     let mut warnings = Vec::new();
-    let doc = PdfDocument::from_html(
-        html,
-        &Default::default(),
-        &Default::default(),
-        &options,
-        &mut warnings,
-    )
-    .map_err(CoreError::Render)?;
+    let doc = PdfDocument::from_html(html, &Default::default(), &fonts, &options, &mut warnings)
+        .map_err(CoreError::Render)?;
 
     let mut save_warnings = Vec::new();
     Ok(doc.save(&PdfSaveOptions::default(), &mut save_warnings))

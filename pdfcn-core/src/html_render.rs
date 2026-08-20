@@ -66,7 +66,10 @@ pub fn wrap_document(body: &Markup, stylesheet: &str) -> String {
         html {
             head {
                 meta charset="utf-8";
-                style { (maud::PreEscaped(stylesheet)) }
+                // Embedded fonts (see pdfcn_core::DEFAULT_FONT) are registered under
+                // this exact family name; the generic `sans-serif` fallback has
+                // nothing to resolve to on a host with no system fonts.
+                style { "body{font-family:'DejaVu Sans',sans-serif}" (maud::PreEscaped(stylesheet)) }
             }
             body {
                 (body)
