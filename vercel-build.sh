@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Builds pdfcn-vercel as a Lambda-compatible "bootstrap" binary and assembles
-# a Vercel Build Output API v3 directory by hand — Vercel has no native Rust
-# runtime, but it does run any "provided.al2023" Lambda binary, which is
-# exactly what `cargo lambda build` (and pdfcn-vercel's own [[bin]] name =
-# "bootstrap") already produce. No Docker, no headless browser: a single
-# static binary (NFR-2/NFR-3).
+# Builds pdfcn-vercel and assembles a Vercel Build Output API v3 directory
+# by hand, declaring the same "executable" / runtimeLanguage: "rust" Lambda
+# shape that Vercel's own official @vercel/rust builder produces (see
+# vercel/vercel's packages/rust/src/index.ts) -- NOT a "provided.al2023"
+# AWS Lambda emulation. The binary itself must speak Vercel's actual
+# invocation protocol for that runtime (the `vercel_runtime` crate: bind an
+# HTTP server to the port Vercel supplies), not the AWS Lambda Runtime API
+# (`lambda_http`/`lambda_runtime`, what this project used before -- that
+# mismatch was the root cause of every /api/generate-pdf 500: the process
+# never got past initializing a client for an API endpoint that isn't
+# there, hence dying in ~3ms with zero output). No Docker, no headless
+# browser: a single static binary (NFR-2/NFR-3).
 set -euxo pipefail
 
 # Everything under .vercel/cache survives between deploys (Vercel restores
@@ -56,15 +62,11 @@ if ! command -v zig >/dev/null 2>&1; then
   fi
 fi
 
-# musl (not gnu): a fully static binary has no glibc symbol-version
-# dependency at all, so it can't hit "error while loading shared
-# libraries" if Vercel's provided.al2023 sandbox's glibc differs from
-# whatever zig's cross-linker targeted for a -gnu build. That failure
-# mode is silent and instant (OS-level exec failure, before the Rust
-# runtime -- let alone RUST_BACKTRACE -- ever starts), which matches
-# what /api/generate-pdf was doing: every invocation failed in ~3ms
-# with zero stdout/stderr.
-cargo lambda build --release --target x86_64-unknown-linux-musl -p pdfcn-vercel
+# gnu (not musl): matches the target triple Vercel's own @vercel/rust
+# builder cross-compiles with (via `zigbuild --target
+# x86_64-unknown-linux-gnu`), which is the proven-working path for the
+# "executable" runtime -- see vercel/vercel's packages/rust/src/index.ts.
+cargo lambda build --release --target x86_64-unknown-linux-gnu -p pdfcn-vercel
 
 OUT=".vercel/output"
 FUNC_DIR="$OUT/functions/api/generate-pdf.func"
@@ -76,9 +78,9 @@ chmod +x "$FUNC_DIR/bootstrap"
 
 cat > "$FUNC_DIR/.vc-config.json" <<'EOF'
 {
-  "runtime": "provided.al2023",
+  "runtime": "executable",
+  "runtimeLanguage": "rust",
   "handler": "bootstrap",
-  "launcherType": "Native",
   "architecture": "x86_64"
 }
 EOF

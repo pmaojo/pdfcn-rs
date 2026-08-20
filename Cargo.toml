@@ -38,8 +38,9 @@ notify = "6"
 axum = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net"] }
 anyhow = "1"
-lambda_http = "0.13"
-lambda_runtime = "0.13"
+vercel_runtime = "2"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["full"] }
 base64 = "0.22"
 napi = { version = "2", default-features = false, features = ["napi4"] }
 napi-derive = "2"

@@ -13,8 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 pdfcn-core = { workspace = true }
-lambda_http = { workspace = true }
-lambda_runtime = { workspace = true }
+vercel_runtime = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
