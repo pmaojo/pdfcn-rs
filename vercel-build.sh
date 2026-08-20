@@ -56,7 +56,15 @@ if ! command -v zig >/dev/null 2>&1; then
   fi
 fi
 
-cargo lambda build --release --target x86_64-unknown-linux-gnu -p pdfcn-vercel
+# musl (not gnu): a fully static binary has no glibc symbol-version
+# dependency at all, so it can't hit "error while loading shared
+# libraries" if Vercel's provided.al2023 sandbox's glibc differs from
+# whatever zig's cross-linker targeted for a -gnu build. That failure
+# mode is silent and instant (OS-level exec failure, before the Rust
+# runtime -- let alone RUST_BACKTRACE -- ever starts), which matches
+# what /api/generate-pdf was doing: every invocation failed in ~3ms
+# with zero stdout/stderr.
+cargo lambda build --release --target x86_64-unknown-linux-musl -p pdfcn-vercel
 
 OUT=".vercel/output"
 FUNC_DIR="$OUT/functions/api/generate-pdf.func"
