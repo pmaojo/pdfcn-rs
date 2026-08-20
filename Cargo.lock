@@ -1930,6 +1930,7 @@ dependencies = [
 name = "pdfcn-vercel"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "lambda_http",
  "lambda_runtime",
  "pdfcn-core",
