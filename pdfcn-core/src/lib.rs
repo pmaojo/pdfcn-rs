@@ -9,10 +9,13 @@ pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_template::{NoPartials, PartialLoader};
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use printpdf::html::rust_fontconfig::{FcFontCache, FcParseFontBytes};
+use printpdf::html::SharedFontPool;
 use printpdf::{Base64OrRaw, GeneratePdfOptions, PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The built-in document typefaces, embedded so PDF generation has no
 /// dependency on fonts being installed on the host (NFR-3): the render path
@@ -73,6 +76,32 @@ const BUILTIN_FONTS: &[(&str, &[u8])] = &[
 
 /// The default document font-family, set on `body` by [`html_render::wrap_document`].
 pub const DEFAULT_FONT_FAMILY: &str = "Inter";
+
+/// Builds a font pool from raw font bytes with **no system font scan**.
+///
+/// `printpdf::PdfDocument::from_html` builds one internally (via
+/// `rust_fontconfig::FcFontCache::build()`, a real filesystem scan for
+/// installed fonts) whenever no `font_pool` is supplied -- on every single
+/// render call, since nothing here reuses it across calls. On a sandboxed
+/// serverless filesystem that scan can hang indefinitely rather than fail
+/// fast (this is what made `/api/generate-pdf` hang in production). Every
+/// family this pipeline needs is already embedded ([`BUILTIN_FONTS`] plus
+/// any caller-supplied font), so there is nothing for a system scan to add:
+/// starting from an empty `FcFontCache` and registering only those bytes
+/// removes the filesystem dependency entirely (NFR-3), at the cost of no
+/// system-font fallback for a glyph none of the embedded fonts cover.
+fn font_pool(fonts: &BTreeMap<String, &[u8]>) -> SharedFontPool {
+    let fc_cache = FcFontCache::default();
+    for (name, bytes) in fonts {
+        if let Some(parsed) = FcParseFontBytes(bytes, name) {
+            fc_cache.with_memory_fonts(parsed);
+        }
+    }
+    SharedFontPool {
+        fc_cache: Arc::new(fc_cache),
+        parsed_fonts: Arc::new(Mutex::new(HashMap::new())),
+    }
+}
 
 /// Resolves `- include "partials/x.haml"` against a base directory on disk.
 pub struct FsPartialLoader {
@@ -144,16 +173,27 @@ pub fn render_pdf_with_fonts(
         ..Default::default()
     };
     let mut fonts = BTreeMap::new();
+    let mut raw_fonts: BTreeMap<String, &[u8]> = BTreeMap::new();
     for (family, bytes) in BUILTIN_FONTS {
         fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));
+        raw_fonts.insert(family.to_string(), bytes);
     }
     for (family, bytes) in custom_fonts {
         fonts.insert(family.clone(), Base64OrRaw::Raw(bytes.clone()));
+        raw_fonts.insert(family.clone(), bytes);
     }
+    let pool = font_pool(&raw_fonts);
 
     let mut warnings = Vec::new();
-    let doc = PdfDocument::from_html(html, &Default::default(), &fonts, &options, &mut warnings)
-        .map_err(CoreError::Render)?;
+    let doc = PdfDocument::from_html_with_cache(
+        html,
+        &Default::default(),
+        &fonts,
+        &options,
+        &mut warnings,
+        Some(pool),
+    )
+    .map_err(CoreError::Render)?;
 
     let mut save_warnings = Vec::new();
     Ok(doc.save(&PdfSaveOptions::default(), &mut save_warnings))
