@@ -181,6 +181,14 @@ fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     }
 }
 
+/// Audited against shadcn/ui's real `components/ui/table.tsx`: it wraps
+/// `<table>` in a `relative w-full overflow-auto` scroll container and
+/// gives the table itself `w-full caption-bottom text-sm` -- pdfcn keeps
+/// `border border-border` on top of that (already a Wave 0 token, not a
+/// hand-picked color) since there's no separate `TableRow` component here
+/// to carry shadcn's own per-row `border-b`, and a document table with no
+/// visible grid lines at all would be a regression for pdfcn's print/
+/// invoice use case.
 fn table(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let variant = attr_or(attrs, "variant", "default");
     let variant_class = match variant {
@@ -190,8 +198,10 @@ fn table(attrs: &[ResolvedAttr], children: Markup) -> Markup {
         _ => "",
     };
     html! {
-        table class={ "table w-full border border-border" (variant_class) } {
-            (children)
+        div class="relative w-full overflow-auto" {
+            table class={ "table w-full caption-bottom text-sm border border-border" (variant_class) } {
+                (children)
+            }
         }
     }
 }
@@ -423,6 +433,21 @@ mod tests {
     #[test]
     fn unknown_component_returns_ok_none() {
         assert!(render("NotAComponent", &[], html! {}).unwrap().is_none());
+    }
+
+    #[test]
+    fn table_wrapper_matches_shadcns_real_anatomy() {
+        // Real shadcn Table wraps in a scrollable `relative w-full
+        // overflow-auto` div, and the `<table>` itself carries `w-full
+        // caption-bottom text-sm` -- audited against shadcn/ui's actual
+        // `components/ui/table.tsx`, not just pdfcn's hand-picked classes.
+        let out = render("Table", &[], html! { "rows" })
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.starts_with(r#"<div class="relative w-full overflow-auto">"#));
+        assert!(out.contains("caption-bottom"));
+        assert!(out.contains("text-sm"));
     }
 
     #[test]

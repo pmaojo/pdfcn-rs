@@ -313,6 +313,8 @@ pub fn resolve(class: &str) -> Option<String> {
         "sticky" => Some("position:sticky"),
         "static" => Some("position:static"),
         "overflow-hidden" => Some("overflow:hidden"),
+        "overflow-auto" => Some("overflow:auto"),
+        "caption-bottom" => Some("caption-side:bottom"),
         "text-left" => Some("text-align:left"),
         "text-center" => Some("text-align:center"),
         "text-right" => Some("text-align:right"),

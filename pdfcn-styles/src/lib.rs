@@ -15,6 +15,13 @@ table { border-collapse: collapse; width: 100%; }
 tr, .card { break-inside: avoid; page-break-inside: avoid; }
 "#;
 
+/// `table-striped`'s zebra effect needs a `:nth-child` selector, which
+/// `utilities::resolve()` can't express (it maps one class to one flat
+/// declaration applied to that exact class selector). Emitted as its own
+/// rule, only when the class is actually used, same as every other class.
+const TABLE_STRIPED_RULE: &str =
+    ".table-striped tr:nth-child(even){background-color:hsl(210, 40%, 96.1%)}\n";
+
 /// Scans `class="..."` attributes in already-rendered HTML and returns the
 /// distinct utility class names referenced, in the order first seen.
 pub fn extract_classes(html: &str) -> BTreeSet<String> {
@@ -41,6 +48,9 @@ pub fn build_stylesheet(html: &str) -> String {
             let escaped = css_escape_class(class);
             css.push_str(&format!(".{escaped}{{{decl}}}\n"));
         }
+    }
+    if classes.contains("table-striped") {
+        css.push_str(TABLE_STRIPED_RULE);
     }
     minify(&css).unwrap_or(css)
 }
@@ -96,5 +106,20 @@ mod tests {
         let css = build_stylesheet("<div></div>");
         assert!(css.contains("@page"));
         assert!(css.to_lowercase().contains("break-inside"));
+    }
+
+    /// `table-striped` previously named a variant that resolved to no CSS
+    /// declaration at all (`utilities::resolve` had no entry for it), so
+    /// choosing it rendered identically to the default table -- a silent,
+    /// untested drift. Zebra striping needs a `:nth-child` selector, which
+    /// `resolve()`'s one-class-one-flat-declaration shape can't express, so
+    /// this is emitted as its own rule rather than through `resolve()`.
+    #[test]
+    fn table_striped_class_actually_renders_zebra_striping() {
+        let css = build_stylesheet(r#"<table class="table-striped"><tr></tr></table>"#);
+        assert!(
+            css.contains("nth-child"),
+            "table-striped must emit an nth-child zebra rule, got: {css}"
+        );
     }
 }
