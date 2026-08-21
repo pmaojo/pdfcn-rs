@@ -416,6 +416,13 @@ fn emit_element(s: &str, e: &Element, inject: &[String], inner_html: &str, out: 
 /// `gap` work despite the layout engine ignoring the CSS declaration.
 /// Markup with no `gap-*` usage passes through byte-for-byte unchanged.
 pub fn rewrite_gaps(html: &str) -> String {
+    // Fast path: injected classes are always `mr-*`/`mb-*`, so a document
+    // with no `gap-` anywhere (the common case) can skip the scan-and-rebuild
+    // entirely. A false positive (the literal text "gap-" in prose) just
+    // falls through to the normal lossless rewrite.
+    if !html.contains("gap-") {
+        return html.to_string();
+    }
     rewrite_scope(html, &ChildSpacing::default())
 }
 

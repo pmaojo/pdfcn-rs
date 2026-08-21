@@ -10,7 +10,7 @@ pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use printpdf::html::rust_fontconfig::{FcFontCache, FcParseFontBytes};
 use printpdf::html::SharedFontPool;
@@ -102,6 +102,25 @@ fn font_pool(fonts: &BTreeMap<String, &[u8]>) -> SharedFontPool {
         fc_cache: Arc::new(fc_cache),
         parsed_fonts: Arc::new(Mutex::new(HashMap::new())),
     }
+}
+
+/// The built-in-only font pool, built once per process and shared by every
+/// render that doesn't bring custom fonts. `printpdf`'s `SharedFontPool` is
+/// designed for exactly this: its `parsed_fonts` map fills lazily during a
+/// layout pass and is reused by every later pass sharing the pool, so
+/// rebuilding the pool per render (as this used to) re-parses all twelve
+/// embedded TTFs on every single document. Server-side callers rendering in
+/// a loop pay the font-parse cost once instead of per request.
+static BUILTIN_FONT_POOL: OnceLock<SharedFontPool> = OnceLock::new();
+
+fn builtin_font_pool() -> &'static SharedFontPool {
+    BUILTIN_FONT_POOL.get_or_init(|| {
+        let raw: BTreeMap<String, &[u8]> = BUILTIN_FONTS
+            .iter()
+            .map(|(name, bytes)| (name.to_string(), *bytes))
+            .collect();
+        font_pool(&raw)
+    })
 }
 
 /// Resolves `- include "partials/x.haml"` against a base directory on disk.
@@ -210,7 +229,14 @@ pub fn render_pdf_with_assets(
         fonts.insert(family.clone(), Base64OrRaw::Raw(bytes.clone()));
         raw_fonts.insert(family.clone(), bytes);
     }
-    let pool = font_pool(&raw_fonts);
+    let pool = if custom_fonts.is_empty() {
+        // Shared per-process pool: font parse results accumulate in its
+        // `parsed_fonts` cache across renders instead of being thrown away
+        // (see `builtin_font_pool`).
+        builtin_font_pool().clone()
+    } else {
+        font_pool(&raw_fonts)
+    };
 
     let mut image_map: BTreeMap<String, Base64OrRaw> = BTreeMap::new();
     for (src, bytes) in &prepared_images {
