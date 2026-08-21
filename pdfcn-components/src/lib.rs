@@ -162,6 +162,23 @@ fn header(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 /// `display:flex`/`inline-flex` component like `%Badge` (directly or
 /// nested) -- both trigger a renderer bug where the composed element keeps
 /// its pre-absolute static position instead of moving to the corner.
+///
+/// Audited against shadcn/ui's real `components/ui/card.tsx`: the outer
+/// wrapper's `rounded-lg border border-border bg-card text-card-foreground
+/// shadow-sm` matches shadcn's own base classes exactly (`border-border`
+/// spelled out is the same Wave 0 token the bare `border` would resolve to
+/// -- kept explicit for the same reason documented on `table`). What
+/// doesn't match 1:1 is deliberate: shadcn splits `CardHeader` (title,
+/// `text-2xl font-semibold leading-none tracking-tight`) from `CardContent`
+/// (`p-6 pt-0`) as separate padded regions, while pdfcn flattens both into
+/// one `card-body p-4` with a `text-lg font-semibold` title -- there's no
+/// `%CardHeader`/`%CardContent`/`%CardFooter` split here. Matching
+/// shadcn's `text-2xl` literally would make the title compete visually
+/// with card body content that's often itself `text-2xl` (e.g. a stat
+/// card's value), which is a real regression for pdfcn's denser
+/// print/invoice layouts, not a defect. See task 15 (revisit flattened
+/// static components) for whether the header/content split is worth
+/// adding.
 fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let title = attr(attrs, "title");
     let image = attr(attrs, "image");
@@ -215,9 +232,25 @@ fn grid(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     }
 }
 
+/// Audited against shadcn/ui's real `components/ui/badge.tsx`: `outline`
+/// there is just `text-foreground` -- the surrounding border color comes
+/// from the base class's bare `border` (which already resolves to the
+/// `border-border` token), not from a color explicitly picked for badges.
+/// pdfcn previously added `border-input` on top, which is both redundant
+/// (duplicates the base class's `border`) and the wrong semantic token --
+/// `input` is shadcn's form-control border color, not a general-purpose
+/// one, and a badge is not a form control.
+///
+/// `success` has no shadcn upstream equivalent (real shadcn ships only
+/// `default`/`secondary`/`destructive`/`outline`); pdfcn adds it because
+/// invoice/document status badges ("Paid", "OK") are a real print use case
+/// shadcn's own component set doesn't anticipate. It's sourced from the
+/// Wave 0 `green` accent scale (`tokens::scale_color`), not a hand-picked
+/// hex, so it stays consistent with the rest of the token system even
+/// though the variant itself is a pdfcn-only extension.
 fn badge_classes(variant: &str) -> &'static str {
     match variant {
-        "outline" => "border border-input text-foreground",
+        "outline" => "text-foreground",
         "destructive" => "border-transparent bg-destructive text-destructive-foreground",
         "success" => "border-transparent bg-green-600 text-white",
         "secondary" => "border-transparent bg-secondary text-secondary-foreground",
@@ -248,8 +281,24 @@ fn badge(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     }
 }
 
-fn separator(_attrs: &[ResolvedAttr]) -> Markup {
-    html! { div role="separator" class="separator shrink-0 bg-border h-px w-full my-4"; }
+/// Audited against shadcn/ui's real `components/ui/separator.tsx`: it
+/// supports `orientation` (`horizontal`'s `h-px w-full` vs `vertical`'s
+/// `h-full w-px`) and forwards a caller `className` -- pdfcn's version
+/// previously ignored every attribute, hardcoding horizontal-only with no
+/// way to extend or override it, unlike `%Card`/`%Badge` which both
+/// support `class`. The `my-4` default vertical rhythm has no shadcn
+/// upstream equivalent (real Separator carries no margin of its own,
+/// leaving spacing entirely to the caller's `className`); pdfcn keeps it
+/// as the default here since every existing `%Separator` use relies on it
+/// for section spacing in a print document, but a caller can now override
+/// or extend it via `class`.
+fn separator(attrs: &[ResolvedAttr]) -> Markup {
+    let vertical = attr_or(attrs, "orientation", "horizontal") == "vertical";
+    let dim = if vertical { "h-full w-px" } else { "h-px w-full my-4" };
+    let extra = attr_or(attrs, "class", "");
+    html! {
+        div role="separator" class={ "separator shrink-0 bg-border " (dim) " " (extra) };
+    }
 }
 
 fn signature_block(attrs: &[ResolvedAttr]) -> Markup {
@@ -347,6 +396,45 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(out.into_string().contains("bg-destructive"));
+    }
+
+    #[test]
+    fn badge_outline_variant_matches_shadcns_real_classes() {
+        // shadcn's own outline variant is just `text-foreground` -- the
+        // border comes from the base class's bare `border`, not a
+        // form-control `border-input` token pdfcn previously added.
+        let out = render("Badge", &[a("variant", "outline")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("text-foreground"));
+        assert!(!out.contains("border-input"));
+    }
+
+    #[test]
+    fn separator_defaults_to_horizontal() {
+        let out = render("Separator", &[], html! {}).unwrap().unwrap().into_string();
+        assert!(out.contains("h-px w-full"));
+        assert!(!out.contains("h-full w-px"));
+    }
+
+    #[test]
+    fn separator_supports_vertical_orientation() {
+        let out = render("Separator", &[a("orientation", "vertical")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("h-full w-px"));
+        assert!(!out.contains("h-px w-full"));
+    }
+
+    #[test]
+    fn separator_class_attribute_appends_to_its_own_root_element() {
+        let out = render("Separator", &[a("class", "mt-8")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("mt-8"));
     }
 
     #[test]
