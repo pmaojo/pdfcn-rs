@@ -257,7 +257,13 @@ pub fn render_with_assets(
 }
 
 /// Convenience for the CLI: reads `template_path` and `data_path` from
-/// disk, using the template's directory as the base for `- include`.
+/// disk, using the template's directory as the base for `- include`. Every
+/// `<img src="...">` (from `%img` or a component like `%Card`'s `image`
+/// attribute) whose `src` is a relative filesystem path -- not `http(s):`
+/// or `data:`, which this pipeline never fetches (NFR-3) -- is read from
+/// disk relative to `template_path`'s directory and embedded automatically,
+/// so `pdfcn build` composes real images into the PDF without the caller
+/// having to call the lower-level `render_with_assets` API by hand.
 pub fn render_files(
     template_path: &Path,
     data_path: &Path,
@@ -277,14 +283,106 @@ pub fn render_files(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let loader = FsPartialLoader::new(base_dir);
-    render(&source, &data, page, &loader)
+    let loader = FsPartialLoader::new(base_dir.clone());
+    let html = render_html(&source, &data, &loader)?;
+    let images = load_local_images(&html, &base_dir);
+    render_pdf_with_assets(&html, page, &BTreeMap::new(), &images)
+}
+
+/// Extracts every `src="..."` value from `<img ...>` tags in already
+/// -rendered HTML. Hand-rolled rather than a regex crate dependency: `html`
+/// is our own `maud` output, so `<img` tags are well-formed and attribute
+/// values don't contain a literal `>` or unescaped `"`.
+fn img_srcs(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel) = html[search_from..].find("<img") {
+        let tag_start = search_from + rel;
+        let tag_end = html[tag_start..]
+            .find('>')
+            .map(|i| tag_start + i)
+            .unwrap_or(html.len());
+        let tag = &html[tag_start..tag_end];
+        if let Some(src_rel) = tag.find("src=\"") {
+            let val_start = src_rel + "src=\"".len();
+            if let Some(val_len) = tag[val_start..].find('"') {
+                out.push(tag[val_start..val_start + val_len].to_string());
+            }
+        }
+        search_from = (tag_end + 1).min(html.len());
+        if tag_end >= html.len() {
+            break;
+        }
+    }
+    out
+}
+
+/// Reads every local (non-`http(s)`, non-`data:`) image `src` referenced in
+/// `html` from disk, relative to `base_dir`. A `src` that isn't found on
+/// disk is silently left unresolved (same convention as an unknown utility
+/// class: it degrades, it doesn't fail the render) -- `printpdf` renders it
+/// as a broken-image placeholder.
+fn load_local_images(html: &str, base_dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut images = BTreeMap::new();
+    for src in img_srcs(html) {
+        if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(base_dir.join(&src)) {
+            images.insert(src, bytes);
+        }
+    }
+    images
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn img_srcs_extracts_every_image_source_in_document_order() {
+        let html = concat!(
+            r#"<div><img class="a" src="cover.jpg" alt=""><p>x</p>"#,
+            r#"<img src="https://example.com/x.png"></div>"#,
+        );
+        assert_eq!(
+            img_srcs(html),
+            vec!["cover.jpg".to_string(), "https://example.com/x.png".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_local_images_skips_remote_and_data_uri_sources() {
+        let html = concat!(
+            r#"<img src="https://example.com/a.png">"#,
+            r#"<img src="data:image/png;base64,AAAA">"#,
+            r#"<img src="does-not-exist-on-disk.png">"#,
+        );
+        let images = load_local_images(html, Path::new("."));
+        assert!(images.is_empty());
+    }
+
+    #[test]
+    fn load_local_images_reads_a_relative_src_from_the_base_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "pdfcn-core-test-{}-{}",
+            std::process::id(),
+            "load_local_images_reads_a_relative_src_from_the_base_dir"
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cover.png"), b"not-really-a-png-just-bytes").unwrap();
+
+        let html = r#"<img src="cover.png">"#;
+        let images = load_local_images(html, &dir);
+
+        assert_eq!(
+            images.get("cover.png").map(Vec::as_slice),
+            Some(b"not-really-a-png-just-bytes".as_slice())
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn renders_html_with_component_and_styles() {

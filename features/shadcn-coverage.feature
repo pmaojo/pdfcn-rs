@@ -102,6 +102,37 @@ Feature: shadcn/ui look-and-feel coverage — closing the design-token and compo
     When rendered
     Then the emitted markup shows "Page 3 of 12" styled with shadcn's Pagination anatomy
 
+  # Wave 2 — composing real images anywhere on the page, not just inline in
+  # document flow: a %Card cover photo, an overlay pinned to a corner via
+  # absolute positioning, and the CLI actually embedding the bytes.
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario: Resolving absolute/fixed positioning, offsets, and z-index
+    Given the utility resolver is asked for "absolute", "top-4", "-top-2", "inset-0" and "z-10"
+    When each class is resolved
+    Then it returns the matching "position", "top"/"right"/"bottom"/"left", and "z-index" declarations
+    And a leading "-" on an offset class produces a negative value
+
+  @covers(pdfcn-components/src/lib.rs)
+  Scenario: Rendering a Card with a full-bleed cover image
+    Given a "%Card(title=\"Trail Runner\" image=\"sneaker.png\")" component instance
+    When rendered
+    Then the emitted markup places an "<img>" above the card body, sized to fill the card's width
+    And the card wrapper is "relative" and "overflow-hidden" so a child can be clipped to its rounded corners
+
+  @covers(pdfcn-components/src/lib.rs)
+  Scenario: Composing a badge over a Card's image via absolute positioning
+    Given a "%Card(image=\"sneaker.png\")" instance whose children include a ".absolute.top-2.right-2.z-10" wrapper around a "%Badge"
+    When rendered
+    Then the badge markup is nested inside the card body in the document
+    But it positions against the whole card (image included), not just the padded body, because the card is the nearest "relative" ancestor
+
+  @covers(pdfcn-core/src/lib.rs)
+  Scenario: `pdfcn build` embeds local images referenced by a relative src
+    Given a template with an "<img src=\"sneaker.png\">" and a "sneaker.png" file next to it on disk
+    When the template is built to PDF via render_files
+    Then the image bytes are read from disk and embedded as a PDF image XObject
+    And an "http(s):" or "data:" src is left alone, matching the "no network fetch at render time" guarantee
+
   # The boundary: interactive-only shadcn primitives get a clear rejection,
   # not a silent no-op, so the gap is documented in behavior, not just prose.
   @covers(pdfcn-components/src/lib.rs)

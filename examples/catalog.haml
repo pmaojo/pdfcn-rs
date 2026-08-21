@@ -1,0 +1,13 @@
+%DocumentLayout(size="a4")
+  %Header(title="{{ store.name }}" subtitle="{{ store.tagline }}")
+
+  .grid.grid-cols-2.gap-4
+    - for product in products
+      %Card(title="{{ product.name }}" image="{{ product.image }}" image-alt="{{ product.name }}")
+        - if product.discount
+          .absolute.top-2.right-2.z-10
+            %Badge(variant="destructive" label="{{ product.discount }}")
+        %p.text-sm.text-slate-500.mb-2 {{ product.description }}
+        .flex.justify-between.items-center.mt-2
+          %p.text-lg.font-bold {{ product.price }}
+          %Badge(variant="outline" label="In stock")

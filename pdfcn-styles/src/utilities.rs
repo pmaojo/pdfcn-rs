@@ -60,6 +60,18 @@ const PALETTE: &[(&str, &str)] = &[
     ("transparent", "transparent"),
 ];
 
+/// Fractional/edge-to-edge values `top-*`/`inset-*`/etc. accept in addition
+/// to the spacing scale (Tailwind's inset scale mixes both).
+const INSET_FRACTIONS: &[(&str, &str)] = &[
+    ("1/2", "50%"),
+    ("1/3", "33.333333%"),
+    ("2/3", "66.666667%"),
+    ("1/4", "25%"),
+    ("2/4", "50%"),
+    ("3/4", "75%"),
+    ("full", "100%"),
+];
+
 fn lookup<'a>(table: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
     table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
@@ -76,6 +88,37 @@ fn resolve_color(key: &str) -> Option<&'static str> {
 
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
     let value = lookup(SPACING, scale)?;
+    Some(
+        props
+            .iter()
+            .map(|p| format!("{p}:{value}"))
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
+}
+
+/// Whether `class` (with any leading `-` already stripped) names an offset
+/// utility -- used to decide whether a leading `-` means "negative offset"
+/// versus being part of some other, unrelated class name.
+fn is_offset_class(class: &str) -> bool {
+    class.starts_with("top-")
+        || class.starts_with("right-")
+        || class.starts_with("bottom-")
+        || class.starts_with("left-")
+        || class.starts_with("inset-")
+}
+
+/// Resolves an offset (`top-*`, `inset-*`, ...) suffix to the spacing
+/// scale, plus the fractional/`full` values Tailwind's inset scale adds on
+/// top of it. `negative` pulls an absolutely-positioned overlay -- a badge,
+/// a price tag -- half off an edge (`-top-2`).
+fn inset_decls(props: &[&str], key: &str, negative: bool) -> Option<String> {
+    let value = lookup(SPACING, key).or_else(|| lookup(INSET_FRACTIONS, key))?;
+    let value = if negative && value != "0" {
+        format!("-{value}")
+    } else {
+        value.to_string()
+    };
     Some(
         props
             .iter()
@@ -152,6 +195,57 @@ pub fn resolve(class: &str) -> Option<String> {
             _ => spacing_decls(&["width"], rest),
         };
     }
+    // A negative offset (`-top-2`, pulling an overlay half off an edge) puts
+    // the `-` before the property name, not after it like every other
+    // negative Tailwind utility would -- strip it once here so the prefix
+    // checks below see the same `<prop>-<scale>` shape either way.
+    let (offset_negative, offset_class) = match class.strip_prefix('-') {
+        Some(rest) if is_offset_class(rest) => (true, rest),
+        _ => (false, class),
+    };
+    if let Some(rest) = offset_class.strip_prefix("inset-x-") {
+        return inset_decls(&["left", "right"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("inset-y-") {
+        return inset_decls(&["top", "bottom"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("inset-") {
+        return inset_decls(&["top", "right", "bottom", "left"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("top-") {
+        return inset_decls(&["top"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("right-") {
+        return inset_decls(&["right"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("bottom-") {
+        return inset_decls(&["bottom"], rest, offset_negative);
+    }
+    if let Some(rest) = offset_class.strip_prefix("left-") {
+        return inset_decls(&["left"], rest, offset_negative);
+    }
+    if let Some(rest) = class.strip_prefix("z-") {
+        return match rest {
+            "auto" => Some("z-index:auto".to_string()),
+            n => n.parse::<i32>().ok().map(|v| format!("z-index:{v}")),
+        };
+    }
+    if let Some(rest) = class.strip_prefix("object-") {
+        let literal = match rest {
+            "contain" => "object-fit:contain",
+            "cover" => "object-fit:cover",
+            "fill" => "object-fit:fill",
+            "none" => "object-fit:none",
+            "scale-down" => "object-fit:scale-down",
+            "top" => "object-position:top",
+            "bottom" => "object-position:bottom",
+            "center" => "object-position:center",
+            "left" => "object-position:left",
+            "right" => "object-position:right",
+            _ => return None,
+        };
+        return Some(literal.to_string());
+    }
     if let Some(rest) = class.strip_prefix("text-") {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
@@ -214,8 +308,11 @@ pub fn resolve(class: &str) -> Option<String> {
         "justify-end" => Some("justify-content:flex-end"),
         "inline-flex" => Some("display:inline-flex"),
         "relative" => Some("position:relative"),
+        "absolute" => Some("position:absolute"),
+        "fixed" => Some("position:fixed"),
+        "sticky" => Some("position:sticky"),
+        "static" => Some("position:static"),
         "overflow-hidden" => Some("overflow:hidden"),
-        "object-cover" => Some("object-fit:cover"),
         "text-left" => Some("text-align:left"),
         "text-center" => Some("text-align:center"),
         "text-right" => Some("text-align:right"),
@@ -281,6 +378,44 @@ mod tests {
         assert_eq!(resolve("min-h-16").as_deref(), Some("min-height:4rem"));
         assert_eq!(resolve("w-full").as_deref(), Some("width:100%"));
         assert_eq!(resolve("h-full").as_deref(), Some("height:100%"));
+    }
+
+    /// Composing an image overlay (a badge/price tag pinned to a corner of a
+    /// picture, or to anywhere on the page) needs absolute/fixed positioning
+    /// plus offsets and stacking order — not just `relative`.
+    #[test]
+    fn resolves_absolute_positioning_and_offsets() {
+        assert_eq!(resolve("absolute").as_deref(), Some("position:absolute"));
+        assert_eq!(resolve("fixed").as_deref(), Some("position:fixed"));
+        assert_eq!(resolve("top-4").as_deref(), Some("top:1rem"));
+        assert_eq!(resolve("right-2").as_deref(), Some("right:0.5rem"));
+        assert_eq!(resolve("left-0").as_deref(), Some("left:0"));
+        assert_eq!(resolve("bottom-full").as_deref(), Some("bottom:100%"));
+        assert_eq!(resolve("-top-2").as_deref(), Some("top:-0.5rem"));
+        assert_eq!(
+            resolve("inset-0").as_deref(),
+            Some("top:0;right:0;bottom:0;left:0")
+        );
+        assert_eq!(
+            resolve("inset-x-4").as_deref(),
+            Some("left:1rem;right:1rem")
+        );
+    }
+
+    #[test]
+    fn resolves_z_index_stacking() {
+        assert_eq!(resolve("z-10").as_deref(), Some("z-index:10"));
+        assert_eq!(resolve("z-50").as_deref(), Some("z-index:50"));
+        assert_eq!(resolve("z-auto").as_deref(), Some("z-index:auto"));
+        assert_eq!(resolve("z-nope"), None);
+    }
+
+    #[test]
+    fn resolves_object_fit_and_position_for_composed_images() {
+        assert_eq!(resolve("object-cover").as_deref(), Some("object-fit:cover"));
+        assert_eq!(resolve("object-contain").as_deref(), Some("object-fit:contain"));
+        assert_eq!(resolve("object-top").as_deref(), Some("object-position:top"));
+        assert_eq!(resolve("object-center").as_deref(), Some("object-position:center"));
     }
 
     #[test]

@@ -61,7 +61,7 @@ serde_yaml = "0.9"
 minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
 maud = "0.26"
 lightningcss = "1.0.0-alpha.60"
-printpdf = { version = "0.12", default-features = false, features = ["html"] }
+printpdf = { version = "0.12", default-features = false, features = ["html", "png", "jpeg"] }
 clap = { version = "4", features = ["derive"] }
 notify = "6"
 axum = "0.7"

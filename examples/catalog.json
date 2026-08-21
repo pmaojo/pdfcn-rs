@@ -1,0 +1,36 @@
+{
+  "store": {
+    "name": "Trailhead Outfitters",
+    "tagline": "Autumn 2026 catalog"
+  },
+  "products": [
+    {
+      "name": "Trail Runner",
+      "image": "assets/catalog/sneaker.png",
+      "price": "$89.00",
+      "discount": "-20%",
+      "description": "Grippy lugged sole, breathable mesh upper."
+    },
+    {
+      "name": "Summit Pack 28L",
+      "image": "assets/catalog/backpack.png",
+      "price": "$129.00",
+      "discount": null,
+      "description": "Roll-top, hydration sleeve, rain cover included."
+    },
+    {
+      "name": "Field Watch",
+      "image": "assets/catalog/watch.png",
+      "price": "$210.00",
+      "discount": "-15%",
+      "description": "Sapphire crystal, 100m water resistance."
+    },
+    {
+      "name": "Trail Headphones",
+      "image": "assets/catalog/headphones.png",
+      "price": "$59.00",
+      "discount": null,
+      "description": "Bone-conduction, 10h battery, IPX6."
+    }
+  ]
+}

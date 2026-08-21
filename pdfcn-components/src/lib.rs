@@ -144,14 +144,26 @@ fn header(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     }
 }
 
+/// `image` (optional): a full-bleed cover image above the card body — the
+/// shadcn "product card" composition. The outer wrapper carries `relative`
+/// + `overflow-hidden`, so a child marked `.absolute` (a `%Badge` used as a
+/// price tag or a "sale" corner ribbon) composes on top of the image —
+/// positioned against the whole card, not just the padded body — while
+/// still being clipped to the card's rounded corners.
 fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let title = attr(attrs, "title");
+    let image = attr(attrs, "image");
     html! {
-        div class="card rounded-lg border bg-card text-card-foreground shadow-sm p-4 break-inside-avoid" {
-            @if let Some(t) = title {
-                h2 class="text-lg font-semibold mb-2" { (t) }
+        div class="card relative overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm break-inside-avoid" {
+            @if let Some(src) = image {
+                img class="card-image w-full h-48 object-cover" src=(src) alt=(attr_or(attrs, "image-alt", ""));
             }
-            (children)
+            div class="card-body p-4" {
+                @if let Some(t) = title {
+                    h2 class="text-lg font-semibold mb-2" { (t) }
+                }
+                (children)
+            }
         }
     }
 }
@@ -313,6 +325,50 @@ mod tests {
             .into_string();
         assert!(out.contains("Widget"));
         assert!(out.contains("break-inside-avoid"));
+    }
+
+    #[test]
+    fn card_with_image_renders_a_full_bleed_cover_photo() {
+        let out = render(
+            "Card",
+            &[a("title", "Trail Runner"), a("image", "sneaker.png"), a("image-alt", "Trail Runner shoe")],
+            html! {},
+        )
+        .unwrap()
+        .unwrap()
+        .into_string();
+        assert!(out.contains("<img"));
+        assert!(out.contains(r#"src="sneaker.png""#));
+        assert!(out.contains(r#"alt="Trail Runner shoe""#));
+        assert!(out.contains("object-cover"));
+        // The card wrapper must be a positioning root so an absolutely
+        // positioned child (a price badge) overlays the image correctly.
+        assert!(out.contains("relative"));
+        assert!(out.contains("overflow-hidden"));
+    }
+
+    #[test]
+    fn card_without_image_omits_the_img_tag() {
+        let out = render("Card", &[a("title", "Overview")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(!out.contains("<img"));
+    }
+
+    #[test]
+    fn card_composes_an_absolutely_positioned_badge_over_its_image() {
+        let badge = render("Badge", &[a("variant", "destructive"), a("label", "-20%")], html! {})
+            .unwrap()
+            .unwrap();
+        let overlay = html! { div class="absolute top-2 right-2 z-10" { (badge) } };
+        let out = render("Card", &[a("image", "sneaker.png")], overlay)
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("card-image"));
+        assert!(out.contains("absolute top-2 right-2 z-10"));
+        assert!(out.contains("-20%"));
     }
 
     #[test]
