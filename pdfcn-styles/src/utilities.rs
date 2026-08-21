@@ -175,6 +175,15 @@ pub fn resolve(class: &str) -> Option<String> {
     if let Some(rest) = class.strip_prefix("ml-") {
         return spacing_decls(&["margin-left"], rest);
     }
+    // Axis-specific gaps must be checked before the bare `gap-` prefix,
+    // which would otherwise swallow them (`gap-x-4` -> scale "x-4") and
+    // return None without ever reaching these branches.
+    if let Some(rest) = class.strip_prefix("gap-x-") {
+        return spacing_decls(&["column-gap"], rest);
+    }
+    if let Some(rest) = class.strip_prefix("gap-y-") {
+        return spacing_decls(&["row-gap"], rest);
+    }
     if let Some(rest) = class.strip_prefix("gap-") {
         return spacing_decls(&["gap"], rest);
     }
@@ -328,6 +337,7 @@ pub fn resolve(class: &str) -> Option<String> {
         "break-before-page" => Some("break-before:page"),
         "break-after-page" => Some("break-after:page"),
         "shrink-0" => Some("flex-shrink:0"),
+        "flex-1" => Some("flex:1 1 0%"),
         "table-bordered" => Some("border-width:2px;border-style:solid"),
         "table-compact" => Some("font-size:0.75rem"),
         _ => None,
@@ -419,6 +429,16 @@ mod tests {
         assert_eq!(resolve("object-contain").as_deref(), Some("object-fit:contain"));
         assert_eq!(resolve("object-top").as_deref(), Some("object-position:top"));
         assert_eq!(resolve("object-center").as_deref(), Some("object-position:center"));
+    }
+
+    /// Axis-specific gaps previously fell into the bare `gap-` prefix branch,
+    /// which swallowed `gap-x-4` (scale "x-4") and returned None — silently
+    /// resolving to nothing at all.
+    #[test]
+    fn resolves_axis_specific_gap_utilities() {
+        assert_eq!(resolve("gap-x-4").as_deref(), Some("column-gap:1rem"));
+        assert_eq!(resolve("gap-y-2").as_deref(), Some("row-gap:0.5rem"));
+        assert_eq!(resolve("gap-4").as_deref(), Some("gap:1rem"));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
-use pdfcn_core::{img_srcs, render_html, render_pdf_with_assets, NoPartials, Orientation, PageConfig, PageSize};
+use pdfcn_core::{img_srcs, render_html, render_pdf_with_assets, EvalError, Orientation, PageConfig, PartialLoader, PageSize};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
@@ -76,6 +76,25 @@ struct GenerateRequest {
     /// already resolved this way.
     #[serde(default)]
     images: std::collections::HashMap<String, String>,
+    /// Caller-supplied partials for `- include "name"`: partial name (as
+    /// used in the include path) -> HAML-like source. Lets one request
+    /// compose a multi-partial document without hosting any template files.
+    #[serde(default)]
+    partials: std::collections::BTreeMap<String, String>,
+}
+
+/// Resolves `- include` against a request's `partials` map.
+struct MemoryPartials {
+    partials: BTreeMap<String, pdfcn_parser::Document>,
+}
+
+impl PartialLoader for MemoryPartials {
+    fn load(&self, path: &str) -> Result<pdfcn_parser::Document, EvalError> {
+        self.partials
+            .get(path)
+            .cloned()
+            .ok_or_else(|| EvalError::PartialNotFound(path.to_string()))
+    }
 }
 
 fn default_data() -> serde_json::Value {
@@ -201,17 +220,44 @@ async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
 }
 
 async fn handler(event: Request) -> Result<Response<Vec<u8>>, Error> {
+    // Optional shared-secret gate: when PDFCN_API_KEY is set (production
+    // env vars, not sandbox .env), every request must present it in the
+    // `x-api-key` header. Unset means the endpoint stays open -- the
+    // default for the public sandbox.
+    if let Ok(expected) = std::env::var("PDFCN_API_KEY") {
+        if !expected.is_empty() && !authorized(event.headers(), &expected) {
+            return Ok(Response::builder()
+                .status(401)
+                .body(b"missing or invalid x-api-key header".to_vec())?);
+        }
+    }
     let body_bytes = event.into_body().collect().await?.to_bytes();
-    handle_body(&body_bytes).await
+    // A JSON body must be UTF-8 anyway; anything else is a 400.
+    match std::str::from_utf8(&body_bytes) {
+        Ok(body) => handle_body(body).await,
+        Err(_) => Ok(Response::builder()
+            .status(400)
+            .body(b"request body must be UTF-8 JSON".to_vec())?),
+    }
 }
 
-async fn handle_body(body_bytes: &[u8]) -> Result<Response<Vec<u8>>, Error> {
-    let req: GenerateRequest = if body_bytes.is_empty() {
+/// The auth decision, isolated from HTTP plumbing so it's testable without
+/// a live request: a request is authorized iff its `x-api-key` header
+/// equals the configured key.
+fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        == Some(expected_key)
+}
+
+async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
+    let req: GenerateRequest = if body.is_empty() {
         return Ok(Response::builder()
             .status(400)
             .body(b"missing JSON body: {\"template\": ..., \"data\": ...}".to_vec())?);
     } else {
-        match serde_json::from_slice(body_bytes) {
+        match serde_json::from_str(body) {
             Ok(req) => req,
             Err(e) => {
                 return Ok(Response::builder()
@@ -254,7 +300,31 @@ async fn handle_body(body_bytes: &[u8]) -> Result<Response<Vec<u8>>, Error> {
         }
     }
 
-    let html = match render_html(&req.template, &req.data, &NoPartials) {
+    // Partials are validated up front (a syntax error in one is a client
+    // mistake, a 400) rather than discovered mid-render as a generic
+    // partial-not-found.
+    // `+ Send`: this box lives across the image-fetch awaits below, and a
+    // non-Send local would poison the whole handler future.
+    let loader: Box<dyn PartialLoader + Send> = if req.partials.is_empty() {
+        Box::new(pdfcn_core::NoPartials)
+    } else {
+        let mut parsed = BTreeMap::new();
+        for (name, source) in &req.partials {
+            match pdfcn_parser::parse_document(source) {
+                Ok(doc) => {
+                    parsed.insert(name.clone(), doc);
+                }
+                Err(e) => {
+                    return Ok(Response::builder()
+                        .status(400)
+                        .body(format!("invalid partial \"{name}\": {e}").into_bytes())?)
+                }
+            }
+        }
+        Box::new(MemoryPartials { partials: parsed })
+    };
+
+    let html = match render_html(&req.template, &req.data, loader.as_ref()) {
         Ok(html) => html,
         Err(e) => {
             return Ok(Response::builder()
@@ -310,24 +380,77 @@ async fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    /// Test wrapper: unwraps the transport-level result so assertions can
+    /// focus on the HTTP response itself.
+    async fn handle_body(body: &str) -> Response<Vec<u8>> {
+        super::handle_body(body).await.unwrap()
+    }
+
     #[tokio::test]
     async fn generates_a_pdf_for_a_minimal_request() {
         let body =
             br#"{"template": "%h1 Invoice\n%p Total: {{ total }}", "data": {"total": "$42.00"}}"#;
-        let resp = handle_body(body).await.unwrap();
+        let resp = handle_body(std::str::from_utf8(body).unwrap()).await;
         assert_eq!(resp.status(), 200);
         assert!(resp.body().starts_with(b"%PDF"));
     }
 
     #[tokio::test]
     async fn rejects_empty_body_with_400() {
-        let resp = handle_body(b"").await.unwrap();
+        let resp = handle_body("").await;
         assert_eq!(resp.status(), 400);
+    }
+
+    /// `- include` over HTTP: a `partials` map makes one request able to
+    /// compose multiple HAML fragments, with interpolation flowing through.
+    #[tokio::test]
+    async fn request_partials_are_included_and_rendered() {
+        let body = serde_json::json!({
+            "template": "%h1 Doc\n- include \"footer\"",
+            "data": { "year": 2026 },
+            "partials": { "footer": "%p Footer {{ year }}" },
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
+        assert!(resp.body().starts_with(b"%PDF"));
+    }
+
+    #[tokio::test]
+    async fn a_syntactically_invalid_partial_is_a_400() {
+        let body = serde_json::json!({
+            "template": "%h1 Doc",
+            "partials": { "broken": "%p\n\t%span tabs rejected" },
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 400);
+        assert!(String::from_utf8_lossy(resp.body()).contains("invalid partial"));
+    }
+
+    #[tokio::test]
+    async fn an_unresolvable_include_is_a_422() {
+        let body = serde_json::json!({
+            "template": "%h1 Doc\n- include \"missing\"",
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 422);
+    }
+
+    #[test]
+    fn the_api_key_gate_requires_the_exact_header_value() {
+        let mut headers = http::HeaderMap::new();
+        assert!(!authorized(&headers, "secret"));
+        headers.insert("x-api-key", http::HeaderValue::from_static("wrong"));
+        assert!(!authorized(&headers, "secret"));
+        headers.insert("x-api-key", http::HeaderValue::from_static("secret"));
+        assert!(authorized(&headers, "secret"));
     }
 
     #[tokio::test]
     async fn rejects_invalid_json_with_400() {
-        let resp = handle_body(b"not json").await.unwrap();
+        let resp = handle_body("not json").await;
         assert_eq!(resp.status(), 400);
     }
 
@@ -337,8 +460,8 @@ mod tests {
     /// actually renders, with the images embedded, not just the CLI path.
     #[tokio::test]
     async fn sandbox_catalog_example_request_renders_with_images() {
-        let body = include_bytes!("testdata/sandbox_catalog_request.json");
-        let resp = handle_body(body).await.unwrap();
+        let body = include_str!("testdata/sandbox_catalog_request.json");
+        let resp = handle_body(body).await;
         assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
         assert!(resp.body().starts_with(b"%PDF"));
     }

@@ -1,3 +1,4 @@
+mod assets;
 mod data;
 mod error;
 mod html_render;
@@ -6,7 +7,7 @@ mod page;
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
 pub use page::{Orientation, PageConfig, PageSize};
-pub use pdfcn_template::{NoPartials, PartialLoader};
+pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -137,9 +138,14 @@ pub fn render_html(
     let doc = pdfcn_parser::parse_document(source)?;
     let resolved = pdfcn_template::evaluate(&doc, data, loader)?;
     let body = html_render::render_body(&resolved)?;
-    let body_html = body.clone().into_string();
+    // The layout engine ignores the CSS `gap` declaration, so flex/grid
+    // `gap-*` utilities are rewritten into equivalent margins on children
+    // before the stylesheet is built — which also means the injected
+    // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
+    // every other utility (see pdfcn_styles::rewrite_gaps).
+    let body_html = pdfcn_styles::rewrite_gaps(&body.into_string());
     let stylesheet = pdfcn_styles::build_stylesheet(&body_html);
-    Ok(html_render::wrap_document(&body, &stylesheet))
+    Ok(html_render::wrap_document_str(&body_html, &stylesheet))
 }
 
 /// Renders a complete HTML document (as produced by [`render_html`]) to PDF
@@ -176,6 +182,14 @@ pub fn render_pdf_with_assets(
     custom_fonts: &BTreeMap<String, Vec<u8>>,
     images: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, CoreError> {
+    // Post-render asset preparation runs here — the one choke point every
+    // entry point (CLI, HTTP API, napi bindings) funnels through — so QR
+    // placeholders get real bytes and object-fit:cover images get cropped
+    // before the layout engine ever sees them.
+    let mut prepared_images = images.clone();
+    let html = assets::prepare_assets(html, &mut prepared_images);
+    let html = html.as_str();
+
     let (width_mm, height_mm) = page.page_size_mm();
     let options = GeneratePdfOptions {
         page_width: Some(width_mm),
@@ -199,7 +213,7 @@ pub fn render_pdf_with_assets(
     let pool = font_pool(&raw_fonts);
 
     let mut image_map: BTreeMap<String, Base64OrRaw> = BTreeMap::new();
-    for (src, bytes) in images {
+    for (src, bytes) in &prepared_images {
         image_map.insert(src.clone(), Base64OrRaw::Raw(bytes.clone()));
     }
 
@@ -317,36 +331,19 @@ pub fn render_files_with_remote_images(
 }
 
 /// Extracts every `src="..."` value from `<img ...>` tags in already
-/// -rendered HTML (as produced by [`render_html`]). Hand-rolled rather than
-/// a regex crate dependency: the HTML is our own `maud` output, so `<img`
-/// tags are well-formed and attribute values don't contain a literal `>`
-/// or unescaped `"`. Public so a caller with its own async/runtime-specific
+/// -rendered HTML (as produced by [`render_html`]), in document order.
+/// Delegates to the single `<img>` scanner in [`crate::assets`] — the same
+/// parse the QR/cover-crop passes use — rather than keeping a second
+/// hand-rolled copy. Public so a caller with its own async/runtime-specific
 /// fetching (e.g. the `/api/generate-pdf` Vercel handler, which needs
 /// `tokio`-async HTTP rather than the blocking fetcher `pdfcn build` uses)
 /// can find which `http(s):` sources to resolve without reimplementing
 /// this parse.
 pub fn img_srcs(html: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut search_from = 0;
-    while let Some(rel) = html[search_from..].find("<img") {
-        let tag_start = search_from + rel;
-        let tag_end = html[tag_start..]
-            .find('>')
-            .map(|i| tag_start + i)
-            .unwrap_or(html.len());
-        let tag = &html[tag_start..tag_end];
-        if let Some(src_rel) = tag.find("src=\"") {
-            let val_start = src_rel + "src=\"".len();
-            if let Some(val_len) = tag[val_start..].find('"') {
-                out.push(tag[val_start..val_start + val_len].to_string());
-            }
-        }
-        search_from = (tag_end + 1).min(html.len());
-        if tag_end >= html.len() {
-            break;
-        }
-    }
-    out
+    assets::scan_img_tags(html)
+        .iter()
+        .filter_map(|tag| assets::attr_value(&tag.attrs, "src").map(str::to_string))
+        .collect()
 }
 
 /// Reads every image `src` referenced in `html`: a local (non-`http(s)`,
@@ -500,6 +497,37 @@ mod tests {
 
         let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    /// The layout engine ignores the CSS `gap` declaration, so render_html
+    /// rewrites flex/grid `gap-*` containers into margins on children before
+    /// building the stylesheet — `gap-2` must produce real spacing CSS
+    /// (`margin-right` on every child but the last), not a dead declaration.
+    #[test]
+    fn flex_gap_is_rewritten_into_child_margins_end_to_end() {
+        let source = ".flex.gap-2\n  %p A\n  %p B\n  %p C";
+        let html = render_html(source, &json!({}), &NoPartials).unwrap();
+        assert!(html.contains("<p class=\"mr-2\">A</p>"), "{html}");
+        assert!(html.contains("<p class=\"mr-2\">B</p>"), "{html}");
+        assert!(html.contains("<p>C</p>"), "{html}");
+        // The injected utility was picked up by the used-classes scan.
+        assert!(html.contains("margin-right"), "{html}");
+    }
+
+    #[test]
+    fn grid_gap_follows_row_geometry_end_to_end() {
+        let source = concat!(
+            ".grid.grid-cols-2.gap-3\n",
+            "  %p One\n",
+            "  %p Two\n",
+            "  %p Three\n",
+            "  %p Four",
+        );
+        let html = render_html(source, &json!({}), &NoPartials).unwrap();
+        assert!(html.contains("<p class=\"mr-3 mb-3\">One</p>"), "{html}");
+        assert!(html.contains("<p class=\"mb-3\">Two</p>"), "{html}");
+        assert!(html.contains("<p class=\"mr-3\">Three</p>"), "{html}");
+        assert!(html.contains("<p>Four</p>"), "{html}");
     }
 
     #[test]

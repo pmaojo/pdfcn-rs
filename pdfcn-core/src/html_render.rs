@@ -73,8 +73,10 @@ fn render_node(node: &Resolved) -> Result<Markup, CoreError> {
     })
 }
 
-/// Wraps a rendered body and a stylesheet into a complete HTML document.
-pub fn wrap_document(body: &Markup, stylesheet: &str) -> String {
+/// Wraps a rendered body (as an already-rendered HTML string — the shape
+/// [`crate::render_html`] works in once the gap-rewrite pass has
+/// post-processed the markup) and a stylesheet into a complete HTML document.
+pub fn wrap_document_str(body: &str, stylesheet: &str) -> String {
     html! {
         (maud::DOCTYPE)
         html {
@@ -87,7 +89,7 @@ pub fn wrap_document(body: &Markup, stylesheet: &str) -> String {
                 style { (maud::PreEscaped(format!("body{{font-family:'{}',sans-serif}}", crate::DEFAULT_FONT_FAMILY))) (maud::PreEscaped(stylesheet)) }
             }
             body {
-                (body)
+                (maud::PreEscaped(body.to_string()))
             }
         }
     }

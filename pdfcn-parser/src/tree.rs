@@ -12,6 +12,7 @@ pub enum ParseError {
     },
     UnknownDirective { line: usize, keyword: String },
     MalformedFor { line: usize },
+    MalformedSet { line: usize },
     TabIndent { line: usize },
 }
 
@@ -28,6 +29,10 @@ impl fmt::Display for ParseError {
             ParseError::MalformedFor { line } => write!(
                 f,
                 "line {line}: malformed '- for' directive, expected 'for <var> in <expr>'"
+            ),
+            ParseError::MalformedSet { line } => write!(
+                f,
+                "line {line}: malformed '- set' directive, expected 'set <name> = <expr>'"
             ),
             ParseError::TabIndent { line } => {
                 write!(f, "indentation must use spaces only (tabs found at line {line})")
@@ -125,6 +130,15 @@ impl<'a> Cursor<'a> {
             LineHead::Directive { keyword, rest } if keyword == "include" => {
                 let path = rest.trim_matches('"').to_string();
                 Ok(Node::Include { path })
+            }
+            LineHead::Directive { keyword, rest } if keyword == "set" => {
+                let (name, expr) = rest
+                    .split_once('=')
+                    .ok_or(ParseError::MalformedSet { line: line_no })?;
+                Ok(Node::Set {
+                    name: name.trim().to_string(),
+                    expr: expr.trim().to_string(),
+                })
             }
             LineHead::Directive { keyword, .. } => Err(ParseError::UnknownDirective {
                 line: line_no,

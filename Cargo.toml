@@ -32,7 +32,9 @@ path = "api/generate-pdf.rs"
 
 [dependencies]
 pdfcn-core = { workspace = true }
+pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
+http = { version = "1", default-features = false }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true }
@@ -63,6 +65,8 @@ minijinja = { version = "2", default-features = false, features = ["builtins", "
 maud = "0.26"
 lightningcss = "1.0.0-alpha.60"
 printpdf = { version = "0.12", default-features = false, features = ["html", "png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+qrcodegen = "1"
 clap = { version = "4", features = ["derive"] }
 notify = "6"
 axum = "0.7"
