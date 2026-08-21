@@ -145,16 +145,29 @@ fn header(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 }
 
 /// `image` (optional): a full-bleed cover image above the card body — the
-/// shadcn "product card" composition. The outer wrapper carries `relative`
-/// + `overflow-hidden`, so a child marked `.absolute` (a `%Badge` used as a
-/// price tag or a "sale" corner ribbon) composes on top of the image —
-/// positioned against the whole card, not just the padded body — while
-/// still being clipped to the card's rounded corners.
+/// shadcn "product card" composition. `class` (optional): extra utility
+/// classes appended to the card's own root element -- use this rather than
+/// wrapping `%Card` in another div for spacing (e.g. `class="m-2"` in a
+/// grid of cards), since an extra wrapper level between the grid and the
+/// card can throw off absolute-positioning math in the underlying
+/// `printpdf`/`azul-layout` renderer (see the `.absolute` note below).
+///
+/// The outer wrapper carries `relative` + `overflow-hidden`, so a child
+/// marked `.absolute` composes on top of the image -- positioned against
+/// the whole card, not just the padded body -- while staying clipped to
+/// the card's rounded corners. That composed child must be a plain
+/// element carrying its own styling directly (a `div` with
+/// `bg-destructive`/`rounded-full`/etc., holding its text straight away);
+/// it can't be a wrapper `div` around a further component, nor a
+/// `display:flex`/`inline-flex` component like `%Badge` (directly or
+/// nested) -- both trigger a renderer bug where the composed element keeps
+/// its pre-absolute static position instead of moving to the corner.
 fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let title = attr(attrs, "title");
     let image = attr(attrs, "image");
+    let extra = attr_or(attrs, "class", "");
     html! {
-        div class="card relative overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm break-inside-avoid" {
+        div class={ "card relative overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm break-inside-avoid " (extra) } {
             @if let Some(src) = image {
                 img class="card-image w-full h-48 object-cover" src=(src) alt=(attr_or(attrs, "image-alt", ""));
             }
@@ -202,11 +215,21 @@ fn badge_classes(variant: &str) -> &'static str {
     }
 }
 
+/// `class` (optional): extra utility classes appended to the badge's own
+/// root element -- e.g. spacing (`class="mt-2"`) or a color override for
+/// one-off use. Not a way to make a positioned badge: `%Badge` renders as
+/// `inline-flex`, which the underlying `printpdf`/`azul-layout` renderer
+/// currently mispositions whenever it (or an ancestor) is
+/// `position:absolute` -- it keeps its pre-absolute static position
+/// instead of moving to the given offset. For a badge-like overlay (a
+/// discount ribbon pinned to a `%Card` image), use a plain `div` with the
+/// badge-style utility classes directly instead of `%Badge`.
 fn badge(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let variant = attr_or(attrs, "variant", "default");
     let label = attr(attrs, "label");
+    let extra = attr_or(attrs, "class", "");
     html! {
-        span class={ "badge inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold " (badge_classes(variant)) } {
+        span class={ "badge inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold " (badge_classes(variant)) " " (extra) } {
             @if let Some(l) = label {
                 (l)
             }
@@ -357,18 +380,44 @@ mod tests {
     }
 
     #[test]
-    fn card_composes_an_absolutely_positioned_badge_over_its_image() {
-        let badge = render("Badge", &[a("variant", "destructive"), a("label", "-20%")], html! {})
-            .unwrap()
-            .unwrap();
-        let overlay = html! { div class="absolute top-2 right-2 z-10" { (badge) } };
+    fn card_composes_an_absolutely_positioned_overlay_over_its_image() {
+        // A discount ribbon: a plain element carrying `.absolute` (and its
+        // own badge-style utility classes) directly, holding its text
+        // straight away -- the pattern verified (by inspecting actual
+        // rendered PDF coordinates, not just this HTML) to position
+        // correctly against the card. Deliberately NOT `%Badge` wrapped in
+        // a `.absolute` div, and not `%Badge` given `.absolute` directly
+        // either: `%Badge` renders `display:inline-flex`, which the
+        // underlying `printpdf`/`azul-layout` renderer currently
+        // mispositions whenever it (or a sibling) sits under
+        // `position:absolute` -- it keeps its pre-absolute static
+        // position instead of moving to the given offset, landing on top
+        // of the title text instead of the image. See `card`'s doc
+        // comment for the full pattern.
+        let overlay = html! {
+            div class="absolute top-2 right-2 z-10 rounded-full bg-destructive text-white text-xs font-semibold" { "-20%" }
+        };
         let out = render("Card", &[a("image", "sneaker.png")], overlay)
             .unwrap()
             .unwrap()
             .into_string();
         assert!(out.contains("card-image"));
         assert!(out.contains("absolute top-2 right-2 z-10"));
-        assert!(out.contains("-20%"));
+        assert!(!out.contains("inline-flex"));
+    }
+
+    #[test]
+    fn card_class_attribute_appends_to_its_own_root_element() {
+        // Spacing between cards in a grid must land on `%Card`'s own root
+        // element via `class`, not a wrapper `div` around it -- an extra
+        // wrapper level between the grid and the card breaks the same
+        // absolute-positioning math referenced above.
+        let out = render("Card", &[a("class", "m-2")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("card relative overflow-hidden"));
+        assert!(out.contains("m-2"));
     }
 
     #[test]

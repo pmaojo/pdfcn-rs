@@ -48,6 +48,10 @@ enum Command {
         /// Page margin in millimeters
         #[arg(long, default_value_t = 10.0)]
         margin: f32,
+        /// Fetch `<img src="http(s)://...">` sources over the network and
+        /// embed them (opt-in: pdfcn never does this by default, see NFR-3)
+        #[arg(long, default_value_t = false)]
+        fetch_remote_images: bool,
     },
     /// Serve a live preview of the rendered document in a browser
     Dev {
@@ -74,7 +78,16 @@ fn main() -> anyhow::Result<()> {
             size,
             orientation,
             margin,
-        } => build::run(&template, &data, &out, &size, &orientation, margin),
+            fetch_remote_images,
+        } => build::run(
+            &template,
+            &data,
+            &out,
+            &size,
+            &orientation,
+            margin,
+            fetch_remote_images,
+        ),
         Command::Dev {
             template,
             data,

@@ -120,11 +120,23 @@ Feature: shadcn/ui look-and-feel coverage — closing the design-token and compo
     And the card wrapper is "relative" and "overflow-hidden" so a child can be clipped to its rounded corners
 
   @covers(pdfcn-components/src/lib.rs)
-  Scenario: Composing a badge over a Card's image via absolute positioning
-    Given a "%Card(image=\"sneaker.png\")" instance whose children include a ".absolute.top-2.right-2.z-10" wrapper around a "%Badge"
+  Scenario: Composing a discount ribbon over a Card's image via absolute positioning
+    Given a "%Card(image=\"sneaker.png\")" instance whose children include a ".absolute.top-2.right-2.z-10" element carrying its own badge-style utility classes directly (not wrapping a "%Badge")
     When rendered
-    Then the badge markup is nested inside the card body in the document
+    Then the ribbon markup is nested inside the card body in the document
     But it positions against the whole card (image included), not just the padded body, because the card is the nearest "relative" ancestor
+
+  @covers(pdfcn-components/src/lib.rs)
+  Scenario: A `%Badge` cannot be the absolutely positioned element, directly or wrapped
+    Given a "%Card" instance composing a "%Badge" as, or inside, a ".absolute" element
+    Then this is a documented renderer limitation, not a supported pattern: `%Badge` is `display:inline-flex`, and an `inline-flex` element anywhere inside a card that also has an absolutely positioned element keeps that element at its normal-flow position instead of moving it -- verified by inspecting the actual rendered PDF's content-stream coordinates, since the generated HTML/CSS looks correct either way
+    And `%Card`'s own `class` attribute (not a wrapper `div` around `%Card`) is how spacing between cards in a grid must be added, for the same reason
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario: `gap`/`gap-*` has no effect in flex or grid containers
+    Given a "display:flex" or "display:grid" container with a "gap-4" utility applied
+    Then adjacent children render flush against each other in the current `azul-layout` engine, regardless of the "gap" CSS declaration being present in the stylesheet
+    And margin on the children (e.g. "m-2") is the documented workaround
 
   @covers(pdfcn-core/src/lib.rs)
   Scenario: `pdfcn build` embeds local images referenced by a relative src

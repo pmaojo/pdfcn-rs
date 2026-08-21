@@ -264,10 +264,32 @@ pub fn render_with_assets(
 /// disk relative to `template_path`'s directory and embedded automatically,
 /// so `pdfcn build` composes real images into the PDF without the caller
 /// having to call the lower-level `render_with_assets` API by hand.
+///
+/// `http(s):` sources are left unresolved here; use
+/// [`render_files_with_remote_images`] to also resolve those, via a
+/// caller-supplied fetcher.
 pub fn render_files(
     template_path: &Path,
     data_path: &Path,
     page: &PageConfig,
+) -> Result<Vec<u8>, CoreError> {
+    render_files_with_remote_images(template_path, data_path, page, None)
+}
+
+/// Like [`render_files`], but a `src="https://..."` (or `http://`) that
+/// isn't resolved by a local file is instead passed to `fetch_remote`,
+/// which returns the image bytes (or `None` to leave it unresolved, same
+/// as a local file that isn't found). This is how a client's own image
+/// URLs (e.g. from a CMS or a stock-photo host) get composed into a PDF
+/// without a manual base64-encode-and-embed round trip -- while keeping
+/// [`render_pdf`]/[`render_with_assets`] themselves free of any network
+/// access (NFR-3): only a caller who explicitly supplies `fetch_remote`
+/// (the CLI's `--fetch-remote-images`, opt-in) makes outbound requests.
+pub fn render_files_with_remote_images(
+    template_path: &Path,
+    data_path: &Path,
+    page: &PageConfig,
+    fetch_remote: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
 ) -> Result<Vec<u8>, CoreError> {
     let source = std::fs::read_to_string(template_path)
         .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
@@ -285,7 +307,7 @@ pub fn render_files(
         .unwrap_or_default();
     let loader = FsPartialLoader::new(base_dir.clone());
     let html = render_html(&source, &data, &loader)?;
-    let images = load_local_images(&html, &base_dir);
+    let images = load_images(&html, &base_dir, fetch_remote);
     render_pdf_with_assets(&html, page, &BTreeMap::new(), &images)
 }
 
@@ -317,15 +339,28 @@ fn img_srcs(html: &str) -> Vec<String> {
     out
 }
 
-/// Reads every local (non-`http(s)`, non-`data:`) image `src` referenced in
-/// `html` from disk, relative to `base_dir`. A `src` that isn't found on
-/// disk is silently left unresolved (same convention as an unknown utility
-/// class: it degrades, it doesn't fail the render) -- `printpdf` renders it
-/// as a broken-image placeholder.
-fn load_local_images(html: &str, base_dir: &Path) -> BTreeMap<String, Vec<u8>> {
+/// Reads every image `src` referenced in `html`: a local (non-`http(s)`,
+/// non-`data:`) path from disk relative to `base_dir`, or -- when
+/// `fetch_remote` is given -- an `http(s):` source via that callback. A
+/// `src` left unresolved either way (not found on disk, no fetcher given,
+/// or the fetcher returns `None`) is silently skipped (same convention as
+/// an unknown utility class: it degrades, it doesn't fail the render) --
+/// `printpdf` renders it as a broken-image placeholder. `data:` sources are
+/// always skipped here since `printpdf` resolves those itself.
+fn load_images(
+    html: &str,
+    base_dir: &Path,
+    fetch_remote: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
+) -> BTreeMap<String, Vec<u8>> {
     let mut images = BTreeMap::new();
     for src in img_srcs(html) {
-        if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
+        if src.starts_with("data:") {
+            continue;
+        }
+        if src.starts_with("http://") || src.starts_with("https://") {
+            if let Some(bytes) = fetch_remote.and_then(|fetch| fetch(&src)) {
+                images.insert(src, bytes);
+            }
             continue;
         }
         if let Ok(bytes) = std::fs::read(base_dir.join(&src)) {
@@ -353,28 +388,28 @@ mod tests {
     }
 
     #[test]
-    fn load_local_images_skips_remote_and_data_uri_sources() {
+    fn load_images_skips_remote_and_data_uri_sources_without_a_fetcher() {
         let html = concat!(
             r#"<img src="https://example.com/a.png">"#,
             r#"<img src="data:image/png;base64,AAAA">"#,
             r#"<img src="does-not-exist-on-disk.png">"#,
         );
-        let images = load_local_images(html, Path::new("."));
+        let images = load_images(html, Path::new("."), None);
         assert!(images.is_empty());
     }
 
     #[test]
-    fn load_local_images_reads_a_relative_src_from_the_base_dir() {
+    fn load_images_reads_a_relative_src_from_the_base_dir() {
         let dir = std::env::temp_dir().join(format!(
             "pdfcn-core-test-{}-{}",
             std::process::id(),
-            "load_local_images_reads_a_relative_src_from_the_base_dir"
+            "load_images_reads_a_relative_src_from_the_base_dir"
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("cover.png"), b"not-really-a-png-just-bytes").unwrap();
 
         let html = r#"<img src="cover.png">"#;
-        let images = load_local_images(html, &dir);
+        let images = load_images(html, &dir, None);
 
         assert_eq!(
             images.get("cover.png").map(Vec::as_slice),
@@ -382,6 +417,26 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_images_uses_the_fetcher_for_http_s_sources_and_skips_data_uris() {
+        let html = concat!(
+            r#"<img src="https://example.com/a.png">"#,
+            r#"<img src="data:image/png;base64,AAAA">"#,
+            r#"<img src="https://example.com/missing.png">"#,
+        );
+        let fetch = |src: &str| -> Option<Vec<u8>> {
+            (src == "https://example.com/a.png").then(|| b"fetched-bytes".to_vec())
+        };
+        let images = load_images(html, Path::new("."), Some(&fetch));
+
+        assert_eq!(
+            images.get("https://example.com/a.png").map(Vec::as_slice),
+            Some(b"fetched-bytes".as_slice())
+        );
+        assert!(!images.contains_key("data:image/png;base64,AAAA"));
+        assert!(!images.contains_key("https://example.com/missing.png"));
     }
 
     #[test]
