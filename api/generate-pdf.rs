@@ -183,4 +183,16 @@ mod tests {
         let resp = handle_body(b"not json").unwrap();
         assert_eq!(resp.status(), 400);
     }
+
+    /// The index.html sandbox's "Catalog example (images)" sends exactly
+    /// this shape (template + data + a base64 `images` map) to
+    /// `/api/generate-pdf`. This pins that the browser sandbox's request
+    /// actually renders, with the images embedded, not just the CLI path.
+    #[test]
+    fn sandbox_catalog_example_request_renders_with_images() {
+        let body = include_bytes!("testdata/sandbox_catalog_request.json");
+        let resp = handle_body(body).unwrap();
+        assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
+        assert!(resp.body().starts_with(b"%PDF"));
+    }
 }
