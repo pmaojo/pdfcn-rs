@@ -1,5 +1,8 @@
+mod gap;
 mod tokens;
 mod utilities;
+
+pub use gap::rewrite_gaps;
 
 use std::collections::BTreeSet;
 

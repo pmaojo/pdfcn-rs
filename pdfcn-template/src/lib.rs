@@ -182,9 +182,27 @@ fn with_binding(ctx: &JsonValue, binding: &str, item: JsonValue) -> JsonValue {
     }
 }
 
+/// The per-iteration `loop` binding exposed to `- for` bodies, mirroring
+/// Jinja's `loop` variable: `{{ loop.index1 }}` (1-based), `{{ loop.index0 }}`,
+/// `{{ loop.first }}`, `{{ loop.last }}` and `{{ loop.length }}`.
+fn loop_binding(index: usize, length: usize) -> JsonValue {
+    serde_json::json!({
+        "index0": index,
+        "index1": index + 1,
+        "first": index == 0,
+        "last": index + 1 == length,
+        "length": length,
+    })
+}
+
+/// Evaluates a node list against `ctx`. Takes `&mut` because `- set` binds
+/// a value into the context for every node after it; nested scopes (loop
+/// bodies, included partials) work on their own mutable copy derived from
+/// the enclosing context, so a `- set` inside a loop iteration is scoped to
+/// that iteration — matching Jinja's scoping.
 fn evaluate_nodes(
     nodes: &[Node],
-    ctx: &JsonValue,
+    ctx: &mut JsonValue,
     env: &Environment,
     loader: &dyn PartialLoader,
 ) -> Result<Vec<Resolved>, EvalError> {
@@ -226,9 +244,13 @@ fn evaluate_nodes(
                         iterable: iterable.clone(),
                     });
                 };
-                for item in items {
-                    let child_ctx = with_binding(ctx, binding, item);
-                    out.extend(evaluate_nodes(body, &child_ctx, env, loader)?);
+                let length = items.len();
+                for (index, item) in items.into_iter().enumerate() {
+                    let mut child_ctx = with_binding(ctx, binding, item);
+                    if let Some(map) = child_ctx.as_object_mut() {
+                        map.insert("loop".to_string(), loop_binding(index, length));
+                    }
+                    out.extend(evaluate_nodes(body, &mut child_ctx, env, loader)?);
                 }
             }
             Node::If {
@@ -253,6 +275,14 @@ fn evaluate_nodes(
                 let partial = loader.load(path)?;
                 out.extend(evaluate_nodes(&partial, ctx, env, loader)?);
             }
+            Node::Set { name, expr } => {
+                let value = eval_expr(expr, ctx, env)?;
+                if let JsonValue::Object(map) = ctx {
+                    map.insert(name.clone(), value);
+                }
+                // A non-object context has nowhere to bind; like an unknown
+                // utility class this degrades rather than fails the render.
+            }
         }
     }
     Ok(out)
@@ -266,7 +296,9 @@ pub fn evaluate(
     loader: &dyn PartialLoader,
 ) -> Result<Vec<Resolved>, EvalError> {
     let env = Environment::new();
-    evaluate_nodes(document, context, &env, loader)
+    // `- set` mutates the context; the caller's value stays untouched.
+    let mut ctx = context.clone();
+    evaluate_nodes(document, &mut ctx, &env, loader)
 }
 
 #[cfg(test)]
@@ -298,6 +330,84 @@ mod tests {
         let ctx = json!({ "items": ["a", "b", "c"] });
         let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
         assert_eq!(resolved.len(), 3);
+    }
+
+    /// `- for` exposes Jinja's `loop` variable so bodies can render row
+    /// numbers, zebra decisions and last-item special cases without the
+    /// caller precomputing indexes into the data.
+    #[test]
+    fn for_loop_exposes_loop_metadata() {
+        let doc = parse_document(
+            concat!(
+                "- for item in items\n",
+                "  %li(class=\"row\") #{{ loop.index1 }}/{{ loop.length }} {{ item }}",
+            ),
+        )
+        .unwrap();
+        let ctx = json!({ "items": ["a", "b"] });
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        let text_of = |r: &Resolved| match r {
+            Resolved::Element { children, .. } => match &children[0] {
+                Resolved::Text(t) => t.clone(),
+                other => panic!("expected Text, got {other:?}"),
+            },
+            other => panic!("expected Element, got {other:?}"),
+        };
+        assert_eq!(text_of(&resolved[0]), "#1/2 a");
+        assert_eq!(text_of(&resolved[1]), "#2/2 b");
+    }
+
+    #[test]
+    fn for_loop_first_and_last_flags() {
+        let doc = parse_document(
+            "- for x in xs\n  %li\n    - if loop.first\n      %span FIRST",
+        )
+        .unwrap();
+        let ctx = json!({ "xs": [1, 2] });
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        // Only the first iteration emits the FIRST span.
+        let span_count = resolved
+            .iter()
+            .filter(|r| matches!(r, Resolved::Element { children, .. }
+                if children.iter().any(|c| matches!(c,
+                    Resolved::Element { tag, .. } if tag == "span"))))
+            .count();
+        assert_eq!(span_count, 1);
+    }
+
+    /// `- set` binds an expression into the context for subsequent siblings.
+    #[test]
+    fn set_binds_a_value_for_later_nodes() {
+        let doc = parse_document(
+            concat!(
+                "- set total = price * qty\n",
+                "%p Total: {{ total }}",
+            ),
+        )
+        .unwrap();
+        let ctx = json!({ "price": 12, "qty": 4 });
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        match &resolved[0] {
+            Resolved::Element { children, .. } => {
+                assert_eq!(children[0], Resolved::Text("Total: 48".into()));
+            }
+            other => panic!("expected Element, got {other:?}"),
+        }
+    }
+
+    /// minijinja filters were always reachable through the expression engine;
+    /// pin that they work through both interpolation and attributes.
+    #[test]
+    fn minijinja_filters_work_in_interpolations() {
+        let doc = parse_document("%p {{ name | upper }} has {{ items | length }} items").unwrap();
+        let ctx = json!({ "name": "ada", "items": [1, 2, 3] });
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        match &resolved[0] {
+            Resolved::Element { children, .. } => {
+                assert_eq!(children[0], Resolved::Text("ADA has 3 items".into()));
+            }
+            other => panic!("expected Element, got {other:?}"),
+        }
     }
 
     #[test]

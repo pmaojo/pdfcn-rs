@@ -49,6 +49,9 @@ pub enum Node {
     },
     /// `- include "partials/footer.haml"`
     Include { path: String },
+    /// `- set name = expr` — binds `expr`'s value to `name` in the context
+    /// for everything after this line (siblings and their descendants).
+    Set { name: String, expr: String },
 }
 
 pub type Document = Vec<Node>;

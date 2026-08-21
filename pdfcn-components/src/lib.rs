@@ -7,9 +7,11 @@
 
 mod alert;
 mod avatar;
+mod chart;
 mod form_field;
 mod nav;
 mod progress;
+mod qrcode;
 
 use std::fmt;
 
@@ -115,6 +117,8 @@ pub fn render(
         "Progress" => Some(progress::progress(attrs)),
         "Breadcrumb" => Some(nav::breadcrumb(attrs)),
         "Pagination" => Some(nav::pagination(attrs)),
+        "QRCode" => Some(qrcode::qrcode(attrs)),
+        "BarChart" => Some(chart::bar_chart(attrs)),
         _ => None,
     })
 }
