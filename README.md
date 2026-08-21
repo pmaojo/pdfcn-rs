@@ -93,11 +93,9 @@ price tag) while staying clipped to the card's rounded corners:
 That relies on the same positioning utilities every other element can use
 to sit anywhere on the page, not just inside a card — `absolute` / `fixed`
 / `relative`, `top-*` / `right-*` / `bottom-*` / `left-*` / `inset-*`
-(including negative offsets like `-top-2`), and `z-*` for stacking order —
-plus `object-cover` / `object-contain` / `object-{top,bottom,center,left,right}`
-for how an image fills its box. `examples/catalog.haml` is a worked example:
-a product grid of `%Card`s with real cover photos and an overlaid discount
-badge.
+(including negative offsets like `-top-2`), and `z-*` for stacking order.
+`examples/catalog.haml` is a worked example: a product grid of `%Card`s
+with real cover photos and an overlaid discount badge.
 
 **Two rules for `.absolute` to actually land where you put it,** both
 learned the hard way from `printpdf`/`azul-layout`'s early-stage layout
@@ -116,6 +114,15 @@ solver, not obvious from the CSS alone:
   attribute, not on a wrapper `div` around `%Card` — an extra ancestor
   level between the grid and the card breaks the same positioning math.
 
+- A grid row that might not fit on the current page (e.g. many products at
+  `%Grid(cols="2")`) needs its own `.break-inside-avoid` wrapper per row,
+  rather than one `%Grid` around every item — a row that has to fragment
+  across a page boundary gets laid out with a wildly inflated height
+  instead of moving cleanly to the next page. Group the data into rows
+  ahead of time (`examples/catalog.json`'s `rows: [[...], [...]]`) and loop
+  `- for row in rows` around a `.grid.grid-cols-2.break-inside-avoid` per
+  row, as `examples/catalog.haml` does.
+
 Both are demonstrated in `examples/catalog.haml`.
 
 ## Known limitations
@@ -126,6 +133,21 @@ Both are demonstrated in `examples/catalog.haml`.
   Use margin on the items instead (`examples/catalog.haml` gives each
   `%Card` `class="m-2"` rather than `gap-4` on the grid).
 - **`.absolute` + `inline-flex` (i.e. `%Badge`).** See the two rules above.
+- **A `%Grid` row that fragments across a page boundary renders with a
+  hugely inflated height** instead of the row cleanly moving to the next
+  page. See the row-grouping note above for the workaround.
+- **`box-shadow` has no effect.** `shadow-sm`/`shadow-md`/etc. resolve to a
+  real CSS declaration, but the renderer doesn't paint it — cards render
+  flat, without a drop shadow.
+- **`object-fit` has no effect.** An image is scaled to exactly fill its
+  box on both axes (not cropped to cover, nor letterboxed to contain), so
+  a source image whose aspect ratio doesn't already match its box stretches
+  slightly. Pick a source image close to the box's aspect ratio (a `%Card`
+  image is `w-full h-48`) to keep the distortion imperceptible.
+- **`border-radius` needs a `px` value, not `rem`.** `pdfcn-styles`'
+  `rounded-*` scale already emits `px` for this reason; a hand-written
+  `style="border-radius:0.5rem"` renders square corners; `style="border-radius:8px"`
+  renders the real rounded corners.
 
 ## Design notes
 

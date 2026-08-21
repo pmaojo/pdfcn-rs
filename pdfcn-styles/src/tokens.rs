@@ -193,14 +193,20 @@ pub fn scale_color(name: &str) -> Option<&'static str> {
 }
 
 /// shadcn's radius scale, keyed by the Tailwind `rounded-*` suffix (`sm`
-/// through `3xl`).
+/// through `3xl`). In `px`, not the equivalent `rem` (`0.5rem`, ...):
+/// `printpdf`/`azul-layout`'s CSS parser silently treats a `rem`-unit
+/// `border-radius` as `0` (verified: `8px` renders real rounded corners,
+/// both `.5rem` and `0.5rem` render square ones) -- `px` is the one unit
+/// this specific property renders correctly with, even though `rem` works
+/// fine for every other property (padding, margin, font-size, ...) this
+/// project uses it for.
 const RADIUS: &[(&str, &str)] = &[
-    ("sm", "0.125rem"),
-    ("md", "0.375rem"),
-    ("lg", "0.5rem"),
-    ("xl", "0.75rem"),
-    ("2xl", "1rem"),
-    ("3xl", "1.5rem"),
+    ("sm", "2px"),
+    ("md", "6px"),
+    ("lg", "8px"),
+    ("xl", "12px"),
+    ("2xl", "16px"),
+    ("3xl", "24px"),
     ("full", "9999px"),
 ];
 

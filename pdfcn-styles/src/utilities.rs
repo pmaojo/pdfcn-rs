@@ -319,7 +319,8 @@ pub fn resolve(class: &str) -> Option<String> {
         "italic" => Some("font-style:italic"),
         "uppercase" => Some("text-transform:uppercase"),
         "border" => Some("border-width:1px;border-style:solid"),
-        "rounded" => Some("border-radius:0.25rem"),
+        // px, not the equivalent 0.25rem: see the comment on `tokens::RADIUS`.
+        "rounded" => Some("border-radius:4px"),
         "shadow" => Some("box-shadow:0 1px 3px rgba(0,0,0,0.1)"),
         "break-inside-avoid" => Some("break-inside:avoid;page-break-inside:avoid"),
         "break-before-page" => Some("break-before:page"),
@@ -425,7 +426,7 @@ mod tests {
         assert!(resolve("shadow-lg").is_some());
         assert!(resolve("shadow-xl").is_some());
         assert_ne!(resolve("shadow-sm"), resolve("shadow-xl"));
-        assert_eq!(resolve("rounded-2xl").as_deref(), Some("border-radius:1rem"));
-        assert_eq!(resolve("rounded-3xl").as_deref(), Some("border-radius:1.5rem"));
+        assert_eq!(resolve("rounded-2xl").as_deref(), Some("border-radius:16px"));
+        assert_eq!(resolve("rounded-3xl").as_deref(), Some("border-radius:24px"));
     }
 }

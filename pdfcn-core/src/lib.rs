@@ -276,6 +276,11 @@ pub fn render_files(
     render_files_with_remote_images(template_path, data_path, page, None)
 }
 
+/// A caller-supplied `http(s):` image fetcher for
+/// [`render_files_with_remote_images`]: given a `src` URL, returns its
+/// bytes, or `None` to leave that `<img>` unresolved.
+pub type RemoteImageFetcher = dyn Fn(&str) -> Option<Vec<u8>>;
+
 /// Like [`render_files`], but a `src="https://..."` (or `http://`) that
 /// isn't resolved by a local file is instead passed to `fetch_remote`,
 /// which returns the image bytes (or `None` to leave it unresolved, same
@@ -289,7 +294,7 @@ pub fn render_files_with_remote_images(
     template_path: &Path,
     data_path: &Path,
     page: &PageConfig,
-    fetch_remote: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
+    fetch_remote: Option<&RemoteImageFetcher>,
 ) -> Result<Vec<u8>, CoreError> {
     let source = std::fs::read_to_string(template_path)
         .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
@@ -312,10 +317,15 @@ pub fn render_files_with_remote_images(
 }
 
 /// Extracts every `src="..."` value from `<img ...>` tags in already
-/// -rendered HTML. Hand-rolled rather than a regex crate dependency: `html`
-/// is our own `maud` output, so `<img` tags are well-formed and attribute
-/// values don't contain a literal `>` or unescaped `"`.
-fn img_srcs(html: &str) -> Vec<String> {
+/// -rendered HTML (as produced by [`render_html`]). Hand-rolled rather than
+/// a regex crate dependency: the HTML is our own `maud` output, so `<img`
+/// tags are well-formed and attribute values don't contain a literal `>`
+/// or unescaped `"`. Public so a caller with its own async/runtime-specific
+/// fetching (e.g. the `/api/generate-pdf` Vercel handler, which needs
+/// `tokio`-async HTTP rather than the blocking fetcher `pdfcn build` uses)
+/// can find which `http(s):` sources to resolve without reimplementing
+/// this parse.
+pub fn img_srcs(html: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut search_from = 0;
     while let Some(rel) = html[search_from..].find("<img") {
@@ -350,7 +360,7 @@ fn img_srcs(html: &str) -> Vec<String> {
 fn load_images(
     html: &str,
     base_dir: &Path,
-    fetch_remote: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
+    fetch_remote: Option<&RemoteImageFetcher>,
 ) -> BTreeMap<String, Vec<u8>> {
     let mut images = BTreeMap::new();
     for src in img_srcs(html) {
@@ -485,7 +495,7 @@ mod tests {
         // Every Wave 0 token class made it into the emitted stylesheet as a
         // real declaration, not silently dropped by the minifier.
         assert!(html.contains("background-color"));
-        assert!(html.contains("border-radius:1rem"));
+        assert!(html.contains("border-radius:16px"));
         assert!(html.contains("box-shadow"));
 
         let bytes = render_pdf(&html, &PageConfig::default()).unwrap();

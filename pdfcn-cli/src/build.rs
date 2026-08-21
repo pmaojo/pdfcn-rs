@@ -67,7 +67,7 @@ pub fn run(
         orientation: parse_orientation(orientation)?,
         margin_mm,
     };
-    let fetcher: Option<&dyn Fn(&str) -> Option<Vec<u8>>> =
+    let fetcher: Option<&pdfcn_core::RemoteImageFetcher> =
         fetch_remote_images.then_some(&fetch_remote_image);
     let bytes = pdfcn_core::render_files_with_remote_images(template, data, &page, fetcher)
         .map_err(|e| anyhow::anyhow!("{e}"))?;

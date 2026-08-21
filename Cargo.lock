@@ -1941,6 +1941,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "pdfcn-core",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

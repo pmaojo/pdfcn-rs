@@ -380,15 +380,16 @@
           '%DocumentLayout(size="a4")',
           '  %Header(title="{{ store.name }}" subtitle="{{ store.tagline }}")',
           '',
-          '  .grid.grid-cols-2',
-          '    - for product in products',
-          '      %Card(title="{{ product.name }}" image="{{ product.image }}" image-alt="{{ product.name }}" class="m-2")',
-          '        - if product.discount',
-          '          .absolute.top-2.right-2.z-10.rounded-full.bg-destructive.text-white.text-xs.font-semibold(style="padding:2px 10px") {{ product.discount }}',
-          '        %p.text-sm.text-slate-500.mb-2 {{ product.description }}',
-          '        .flex.justify-between.items-center.mt-2',
-          '          %p.text-lg.font-bold {{ product.price }}',
-          '          .rounded-full.border.border-input.text-foreground.text-xs.font-semibold(style="padding:2px 10px;display:inline-block") In stock',
+          '  - for row in rows',
+          '    .grid.grid-cols-2.break-inside-avoid',
+          '      - for product in row',
+          '        %Card(title="{{ product.name }}" image="{{ product.image }}" image-alt="{{ product.name }}" class="m-2")',
+          '          - if product.discount',
+          '            .absolute.top-2.right-2.z-10.rounded-full.bg-destructive.text-white.text-xs.font-semibold(style="padding:2px 10px") {{ product.discount }}',
+          '          %p.text-sm.text-slate-500.mb-2 {{ product.description }}',
+          '          .flex.justify-between.items-center.mt-2',
+          '            %p.text-lg.font-bold {{ product.price }}',
+          '            .rounded-full.border.border-input.text-foreground.text-xs.font-semibold(style="padding:2px 10px;display:inline-block") In stock',
           '',
         ].join('\n'),
         json: JSON.stringify({
@@ -396,35 +397,39 @@
             "name": "Trailhead Outfitters",
             "tagline": "Autumn 2026 catalog"
           },
-          "products": [
-            {
-              "name": "Trail Runner",
-              "image": "sneaker.png",
-              "price": "$89.00",
-              "discount": "-20%",
-              "description": "Grippy lugged sole, breathable mesh upper."
-            },
-            {
-              "name": "Summit Pack 28L",
-              "image": "backpack.png",
-              "price": "$129.00",
-              "discount": null,
-              "description": "Roll-top, hydration sleeve, rain cover included."
-            },
-            {
-              "name": "Field Watch",
-              "image": "watch.png",
-              "price": "$210.00",
-              "discount": "-15%",
-              "description": "Sapphire crystal, 100m water resistance."
-            },
-            {
-              "name": "Trail Headphones",
-              "image": "headphones.png",
-              "price": "$59.00",
-              "discount": null,
-              "description": "Bone-conduction, 10h battery, IPX6."
-            }
+          "rows": [
+            [
+              {
+                "name": "Trail Runner",
+                "image": "sneaker.png",
+                "price": "$89.00",
+                "discount": "-20%",
+                "description": "Grippy lugged sole, breathable mesh upper."
+              },
+              {
+                "name": "Summit Pack 28L",
+                "image": "backpack.png",
+                "price": "$129.00",
+                "discount": null,
+                "description": "Roll-top, hydration sleeve, rain cover included."
+              }
+            ],
+            [
+              {
+                "name": "Field Watch",
+                "image": "watch.png",
+                "price": "$210.00",
+                "discount": "-15%",
+                "description": "Sapphire crystal, 100m water resistance."
+              },
+              {
+                "name": "Trail Headphones",
+                "image": "headphones.png",
+                "price": "$59.00",
+                "discount": null,
+                "description": "Bone-conduction, 10h battery, IPX6."
+              }
+            ]
           ]
         }, null, 2),
         images: {

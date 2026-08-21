@@ -167,7 +167,7 @@ fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     let image = attr(attrs, "image");
     let extra = attr_or(attrs, "class", "");
     html! {
-        div class={ "card relative overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm break-inside-avoid " (extra) } {
+        div class={ "card relative overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm break-inside-avoid " (extra) } {
             @if let Some(src) = image {
                 img class="card-image w-full h-48 object-cover" src=(src) alt=(attr_or(attrs, "image-alt", ""));
             }
@@ -190,7 +190,7 @@ fn table(attrs: &[ResolvedAttr], children: Markup) -> Markup {
         _ => "",
     };
     html! {
-        table class={ "table w-full border" (variant_class) } {
+        table class={ "table w-full border border-border" (variant_class) } {
             (children)
         }
     }
@@ -289,7 +289,7 @@ fn invoice_table(attrs: &[ResolvedAttr]) -> Markup {
         });
 
     html! {
-        table class="invoice-table w-full border" {
+        table class="invoice-table w-full border border-border" {
             thead {
                 tr {
                     @for (_, label) in &columns {

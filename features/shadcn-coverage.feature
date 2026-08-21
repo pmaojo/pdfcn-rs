@@ -138,6 +138,19 @@ Feature: shadcn/ui look-and-feel coverage — closing the design-token and compo
     Then adjacent children render flush against each other in the current `azul-layout` engine, regardless of the "gap" CSS declaration being present in the stylesheet
     And margin on the children (e.g. "m-2") is the documented workaround
 
+  @covers(pdfcn-styles/src/tokens.rs)
+  Scenario: `border-radius` renders only with a `px` value, not `rem`
+    Given the utility resolver is asked for "rounded-lg", "rounded-2xl" and "rounded-3xl"
+    When each class is resolved
+    Then it returns a "border-radius" declaration in "px", not the Tailwind-equivalent "rem" value
+    Because the renderer draws a real curved corner (bezier path operators) for a `px` radius but silently draws a square corner for the same radius given in `rem` -- verified by inspecting the actual rendered PDF's path operators, not just the emitted CSS
+
+  @covers(examples/catalog.haml)
+  Scenario: A `%Grid` row that would fragment across a page boundary needs its own break-avoid wrapper
+    Given a `%Grid` containing more rows of cards than fit on one page
+    Then wrapping every item in a single `%Grid` lets the row that crosses the page boundary render with a hugely inflated height instead of moving to the next page
+    And grouping the data into rows and wrapping each row in its own ".grid.grid-cols-2.break-inside-avoid" (`examples/catalog.haml`'s pattern) avoids the fragmentation entirely, keeping every card's height content-sized
+
   @covers(pdfcn-core/src/lib.rs)
   Scenario: `pdfcn build` embeds local images referenced by a relative src
     Given a template with an "<img src=\"sneaker.png\">" and a "sneaker.png" file next to it on disk
