@@ -196,18 +196,47 @@ fn generate_qrcodes(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
     }
 }
 
+/// Charts v2 specs (series + labels + colors, hex-encoded whole) can make
+/// `<img src>` far longer than `%Vector`'s caller-chosen id or `%Barcode`'s
+/// value ever get. printpdf turns a `src` straight into a PDF Name for the
+/// image's XObject resource (`HtmlImg_<src>`, one-to-one, no truncation or
+/// hashing on its side) -- verified empirically against printpdf itself,
+/// isolated from the rest of this pipeline: a ~130-byte src round-trips
+/// fine, but a ~240+ byte one is registered in `/Resources/XObject` under
+/// its full name and *also* referenced by that exact name in the content
+/// stream's `Do` operator (both sides agree, printpdf isn't at fault for a
+/// mismatch), yet real PDF readers (MuPDF, and whatever renders it in a
+/// browser) refuse to resolve a name that long and the image comes out
+/// blank. Rewriting any placeholder src past this length to a short
+/// hash-based one keeps the pipeline self-describing -- the hash is
+/// computed and resolved within this same pass, nothing external needed --
+/// while staying well under whatever limit real readers enforce.
+#[cfg(feature = "vector")]
+const MAX_SAFE_PLACEHOLDER_SRC_LEN: usize = 100;
+
+#[cfg(feature = "vector")]
+fn short_placeholder_src(scheme: &str, src: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    src.hash(&mut hasher);
+    format!("{scheme}h{:016x}", hasher.finish())
+}
+
 /// Pass 1b (Ola 1.2): fills every vector-substrate placeholder -- `%Vector`
 /// side-channel lookups, Charts v2 specs and `%Barcode` payloads -- with real
-/// PNG bytes registered under the placeholder's own src. A placeholder whose
-/// SVG can't be produced (unknown id, malformed spec, unencodable payload)
-/// is left unresolved and degrades exactly like any missing image; nothing
-/// here fails or panics the render.
-/// No-op (and compiles to nothing) without the `vector` cargo feature.
+/// PNG bytes registered under the placeholder's own src (or a short
+/// hash-based stand-in for an overlong one, see
+/// [`MAX_SAFE_PLACEHOLDER_SRC_LEN`]), rewriting the HTML to match. A
+/// placeholder whose SVG can't be produced (unknown id, malformed spec,
+/// unencodable payload) is left unresolved and degrades exactly like any
+/// missing image; nothing here fails or panics the render.
+/// No-op (and compiles to nothing, returning `html` unchanged) without the
+/// `vector` cargo feature.
 pub(crate) fn generate_vectors(
     html: &str,
     images: &mut BTreeMap<String, Vec<u8>>,
     svg_assets: &BTreeMap<String, String>,
-) {
+) -> String {
     #[cfg(feature = "vector")]
     {
         use crate::{barcode, charts_svg, raster};
@@ -237,42 +266,75 @@ pub(crate) fn generate_vectors(
             }
         }
 
+        let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
         for (src, (box_w, box_h)) in boxes {
-            if images.contains_key(&src) {
-                continue;
-            }
-            // One closure so any step can bail out with `?`: an unfillable
-            // placeholder is simply left unresolved.
-            let png = (|| {
-                if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
-                    let svg = svg_assets.get(id)?;
-                    return raster::svg_to_png(svg, box_w, box_h);
-                }
-                if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
-                    let bytes = hex_decode(spec_hex)?;
-                    let spec: JsonValue = serde_json::from_slice(&bytes).ok()?;
-                    let svg = charts_svg::chart_svg(&spec)?;
-                    return raster::svg_to_png(&svg, box_w, box_h);
-                }
-                if let Some(rest) = src.strip_prefix(BARCODE_SCHEME) {
-                    let (scheme, hex_value) = rest.split_once(':')?;
-                    let bytes = hex_decode(hex_value)?;
-                    let value = String::from_utf8(bytes).ok()?;
-                    let w = box_w.unwrap_or(240.0);
-                    let h = box_h.unwrap_or(60.0);
-                    let svg = barcode::barcode_svg(scheme, &value, w, h)?;
-                    return raster::svg_to_png(&svg, Some(w), Some(h));
-                }
+            let short_src = if src.len() > MAX_SAFE_PLACEHOLDER_SRC_LEN {
+                let scheme = [VECTOR_SCHEME, CHART_SCHEME, BARCODE_SCHEME]
+                    .into_iter()
+                    .find(|s| src.starts_with(s))
+                    .unwrap_or("");
+                Some(short_placeholder_src(scheme, &src))
+            } else {
                 None
-            })();
-            if let Some(png) = png {
-                images.insert(src, png);
+            };
+            let registered_key = short_src.as_ref().unwrap_or(&src);
+            if !images.contains_key(registered_key) {
+                // One closure so any step can bail out with `?`: an
+                // unfillable placeholder is simply left unresolved.
+                let png = (|| {
+                    if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
+                        let svg = svg_assets.get(id)?;
+                        return raster::svg_to_png(svg, box_w, box_h);
+                    }
+                    if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
+                        let bytes = hex_decode(spec_hex)?;
+                        let spec: JsonValue = serde_json::from_slice(&bytes).ok()?;
+                        let svg = charts_svg::chart_svg(&spec)?;
+                        return raster::svg_to_png(&svg, box_w, box_h);
+                    }
+                    if let Some(rest) = src.strip_prefix(BARCODE_SCHEME) {
+                        let (scheme, hex_value) = rest.split_once(':')?;
+                        let bytes = hex_decode(hex_value)?;
+                        let value = String::from_utf8(bytes).ok()?;
+                        let w = box_w.unwrap_or(240.0);
+                        let h = box_h.unwrap_or(60.0);
+                        let svg = barcode::barcode_svg(scheme, &value, w, h)?;
+                        return raster::svg_to_png(&svg, Some(w), Some(h));
+                    }
+                    None
+                })();
+                if let Some(png) = png {
+                    images.insert(registered_key.clone(), png);
+                } else if short_src.is_some() {
+                    // Nothing to embed, so no rewrite either -- leave the
+                    // original (unresolvable) src in place, same as any
+                    // other missing image.
+                    continue;
+                }
+            }
+            if let Some(short) = short_src {
+                // The same src can appear in more than one `<img>` tag (the
+                // same chart placed twice, say) -- every occurrence needs
+                // the rewrite, not just the first.
+                let marker = format!("src=\"{src}\"");
+                for (rel, _) in html.match_indices(&marker) {
+                    let val_start = rel + "src=\"".len();
+                    replacements.push((val_start..val_start + src.len(), short.clone()));
+                }
             }
         }
+
+        let mut out = html.to_string();
+        replacements.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        for (range, key) in replacements {
+            out.replace_range(range, &key);
+        }
+        out
     }
     #[cfg(not(feature = "vector"))]
     {
-        let _ = (html, images, svg_assets);
+        let _ = (images, svg_assets);
+        html.to_string()
     }
 }
 
@@ -477,8 +539,11 @@ pub(crate) fn prepare_assets_with_vectors(
     // loss into every variant (a 400x100 source into a 100px square box
     // would come out 75x75 instead of 100x100).
     let rewritten = apply_cover_crops(html, images);
-    generate_qrcodes(html, images);
-    generate_vectors(html, images, svg_assets);
+    generate_qrcodes(&rewritten, images);
+    // May further rewrite `<img src>` for any Charts v2/vector/barcode
+    // placeholder too long to survive as a PDF Name once printpdf turns it
+    // into an XObject resource id (see `MAX_SAFE_PLACEHOLDER_SRC_LEN`).
+    let rewritten = generate_vectors(&rewritten, images, svg_assets);
     // The original stays registered under its own src untouched, so
     // normalization -- last, capping everything at box * MAX_PRINT_SCALE --
     // parks any src that has a cropped variant aside: its visual role is
@@ -494,7 +559,7 @@ pub(crate) fn prepare_assets_with_vectors(
         .into_iter()
         .filter_map(|base| images.remove(&base).map(|bytes| (base, bytes)))
         .collect();
-    normalize_resolutions(html, images);
+    normalize_resolutions(&rewritten, images);
     for (base, bytes) in parked {
         images.insert(base, bytes);
     }

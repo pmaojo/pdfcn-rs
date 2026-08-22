@@ -26,7 +26,7 @@ pub use crate::tokens::ThemeMode;
 
 /// A resolved document theme: shadcn's light or dark token set with
 /// optional per-token overrides layered on top.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Theme {
     /// Which built-in token table underpins the theme.
     pub mode: ThemeMode,

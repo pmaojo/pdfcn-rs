@@ -226,21 +226,25 @@ pub fn theme_from_json(value: &JsonValue) -> Result<Theme, String> {
 /// sees. Only successful parses are cached -- a malformed template keeps
 /// failing identically.
 const PARSE_CACHE_CAP: usize = 128;
-type ParseCache = Mutex<(HashMap<u64, pdfcn_parser::Document>, VecDeque<u64>)>;
+type ParseCache = Mutex<(HashMap<u64, Arc<pdfcn_parser::Document>>, VecDeque<u64>)>;
 static PARSE_CACHE: OnceLock<ParseCache> = OnceLock::new();
 
-fn cached_parse(source: &str) -> Result<pdfcn_parser::Document, CoreError> {
+/// Returns a process-wide-shared handle to the parsed AST: a hit is one
+/// atomic refcount bump, not a deep clone of the whole tree, regardless of
+/// how large the template is. `pdfcn_template::evaluate` only ever needs
+/// `&Document`, and `&Arc<Document>` derefs to that for free.
+fn cached_parse(source: &str) -> Result<Arc<pdfcn_parser::Document>, CoreError> {
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     let key = hasher.finish();
     if let Some(cache) = PARSE_CACHE.get() {
         if let Ok(guard) = cache.lock() {
             if let Some(doc) = guard.0.get(&key) {
-                return Ok(doc.clone());
+                return Ok(Arc::clone(doc));
             }
         }
     }
-    let doc = pdfcn_parser::parse_document(source)?;
+    let doc = Arc::new(pdfcn_parser::parse_document(source)?);
     let cache = PARSE_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
     if let Ok(mut guard) = cache.lock() {
         if !guard.0.contains_key(&key) {
@@ -252,11 +256,54 @@ fn cached_parse(source: &str) -> Result<pdfcn_parser::Document, CoreError> {
                     None => break,
                 }
             }
-            guard.0.insert(key, doc.clone());
+            guard.0.insert(key, Arc::clone(&doc));
             guard.1.push_back(key);
         }
     }
     Ok(doc)
+}
+
+/// Bounded process-wide cache of built stylesheets, keyed by the distinct
+/// utility classes a document uses plus its theme -- not by the document's
+/// literal HTML. A "one template, many rows" batch (the shape
+/// `render_files_with_remote_images`'s callers and the batch endpoint both
+/// have) almost always resolves to the same class set across every row
+/// even though the text content differs per row, so this is the case that
+/// actually recurs; caching on the literal HTML string would only ever hit
+/// when two renders are byte-for-byte identical.
+const STYLESHEET_CACHE_CAP: usize = 128;
+type StylesheetCache = Mutex<(HashMap<u64, Arc<String>>, VecDeque<u64>)>;
+static STYLESHEET_CACHE: OnceLock<StylesheetCache> = OnceLock::new();
+
+fn cached_stylesheet(classes: &BTreeSet<String>, theme: &Theme) -> Arc<String> {
+    let mut hasher = DefaultHasher::new();
+    classes.hash(&mut hasher);
+    theme.hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(cache) = STYLESHEET_CACHE.get() {
+        if let Ok(guard) = cache.lock() {
+            if let Some(css) = guard.0.get(&key) {
+                return Arc::clone(css);
+            }
+        }
+    }
+    let css = Arc::new(pdfcn_styles::build_stylesheet_from_classes(classes, theme));
+    let cache = STYLESHEET_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
+    if let Ok(mut guard) = cache.lock() {
+        if !guard.0.contains_key(&key) {
+            while guard.0.len() >= STYLESHEET_CACHE_CAP {
+                match guard.1.pop_front() {
+                    Some(oldest) => {
+                        guard.0.remove(&oldest);
+                    }
+                    None => break,
+                }
+            }
+            guard.0.insert(key, Arc::clone(&css));
+            guard.1.push_back(key);
+        }
+    }
+    css
 }
 
 /// Runs the full FR-1/FR-2/FR-3 pipeline: parses `source`, evaluates it
@@ -290,7 +337,8 @@ pub fn render_html_with_theme(
     // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
     // every other utility (see pdfcn_styles::rewrite_gaps).
     let body_html = pdfcn_styles::rewrite_gaps(&body.into_string());
-    let stylesheet = pdfcn_styles::build_stylesheet_with_theme(&body_html, theme);
+    let classes = pdfcn_styles::extract_classes(&body_html);
+    let stylesheet = cached_stylesheet(&classes, theme);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))
 }
 
@@ -932,6 +980,9 @@ mod tests {
         let first = cached_parse(source).unwrap();
         let second = cached_parse(source).unwrap();
         assert_eq!(first, second);
+        // A cache hit shares the same allocation rather than deep-cloning
+        // the AST -- the whole point of caching it.
+        assert!(Arc::ptr_eq(&first, &second));
         // And the cached AST still evaluates correctly.
         let resolved = pdfcn_template::evaluate(&second, &json!({ "n": 7 }), &NoPartials).unwrap();
         match &resolved[0] {
@@ -943,6 +994,34 @@ mod tests {
             }
             other => panic!("expected Element, got {other:?}"),
         }
+    }
+
+    /// The stylesheet cache keys on the class set + theme, not the literal
+    /// HTML -- two different documents that happen to use the same classes
+    /// (the common "one template, many rows" shape) must share one build.
+    #[test]
+    fn stylesheet_cache_hits_on_matching_classes_regardless_of_surrounding_html() {
+        // `bg-primary` resolves through the theme's token table, so light
+        // and dark must actually disagree on its declaration -- unlike
+        // `flex`/`p-4`, which don't depend on the theme at all.
+        let classes: BTreeSet<String> = ["p-4", "flex", "bg-primary"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let theme = Theme::light();
+        let first = cached_stylesheet(&classes, &theme);
+        let second = cached_stylesheet(&classes, &theme);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            *first,
+            pdfcn_styles::build_stylesheet_from_classes(&classes, &theme)
+        );
+
+        // A different theme is a genuinely different cache entry.
+        let dark = Theme::dark();
+        let third = cached_stylesheet(&classes, &dark);
+        assert!(!Arc::ptr_eq(&first, &third));
+        assert_ne!(*first, *third);
     }
 
     /// The theme request field drives token resolution end to end: dark
