@@ -233,10 +233,24 @@ impl ChildSpacing {
     /// Derives the spacing plan from a container's own classes. Containers
     /// without a flex/grid display class keep `gap` doing nothing (as in
     /// real CSS outside flex/grid/multi-column), so no margins are injected.
+    ///
+    /// `space-x-*`/`space-y-*` piggyback on the same margin-injection
+    /// machinery, but their real-CSS semantics differ from `gap` in one
+    /// deliberate way: real Tailwind's `space-y-*` is a sibling selector
+    /// (`> * + *`) with no display requirement at all, so it works on a
+    /// plain block container -- the overwhelmingly common case (a `<div
+    /// class="space-y-4">` stacking cards). Restricting it to `flex
+    /// flex-col` the way `gap-y` is restricted would silently no-op on that
+    /// common case, which is worse than not having it. `space-x-*` keeps
+    /// the flex-row requirement: in real CSS a `margin-left` on block
+    /// children (which each own their line) has no visible effect either,
+    /// so requiring a row here matches reality rather than limiting it.
     fn from_classes(classes: &[&str]) -> Self {
         let mut gap = None;
         let mut gap_x = None;
         let mut gap_y = None;
+        let mut space_x = None;
+        let mut space_y = None;
         let mut is_flex = false;
         let mut is_col = false;
         let mut is_grid = false;
@@ -248,6 +262,10 @@ impl ChildSpacing {
                 gap_y = Some(k.to_string());
             } else if let Some(k) = c.strip_prefix("gap-") {
                 gap = Some(k.to_string());
+            } else if let Some(k) = c.strip_prefix("space-x-") {
+                space_x = Some(k.to_string());
+            } else if let Some(k) = c.strip_prefix("space-y-") {
+                space_y = Some(k.to_string());
             }
             match *c {
                 "flex" | "inline-flex" => is_flex = true,
@@ -262,7 +280,17 @@ impl ChildSpacing {
             }
         }
         if !is_flex && !is_grid {
-            return Self::default();
+            // No flex/grid: `gap` has nothing to do here, but `space-y-*`
+            // still stacks vertical margin on ordinary block children.
+            return match space_y {
+                Some(k) => Self {
+                    h: None,
+                    v: Some(k),
+                    cols: 1,
+                    is_grid: false,
+                },
+                None => Self::default(),
+            };
         }
         if is_grid {
             Self {
@@ -274,13 +302,13 @@ impl ChildSpacing {
         } else if is_col {
             Self {
                 h: None,
-                v: gap_y.or(gap),
+                v: gap_y.or(gap).or(space_y),
                 cols: 1,
                 is_grid: false,
             }
         } else {
             Self {
-                h: gap_x.or(gap),
+                h: gap_x.or(gap).or(space_x),
                 v: None,
                 cols: 1,
                 is_grid: false,
@@ -407,16 +435,18 @@ fn emit_element(s: &str, e: &Element, inject: &[String], inner_html: &str, out: 
     }
 }
 
-/// Rewrites every flex/grid `gap-*` container in rendered HTML so its direct
+/// Rewrites every flex/grid `gap-*` container (and every `space-x-*`/
+/// `space-y-*` container, grid or not) in rendered HTML so its direct
 /// element children carry equivalent `mr-*`/`mb-*` margin utilities — making
-/// `gap` work despite the layout engine ignoring the CSS declaration.
-/// Markup with no `gap-*` usage passes through byte-for-byte unchanged.
+/// `gap` (and `space-x`/`space-y`) work despite the layout engine ignoring
+/// the CSS declarations they'd otherwise resolve to. Markup using neither
+/// utility passes through byte-for-byte unchanged.
 pub fn rewrite_gaps(html: &str) -> String {
     // Fast path: injected classes are always `mr-*`/`mb-*`, so a document
-    // with no `gap-` anywhere (the common case) can skip the scan-and-rebuild
-    // entirely. A false positive (the literal text "gap-" in prose) just
-    // falls through to the normal lossless rewrite.
-    if !html.contains("gap-") {
+    // using neither utility (the common case) can skip the scan-and-rebuild
+    // entirely. A false positive (the literal text "gap-"/"space-" in prose)
+    // just falls through to the normal lossless rewrite.
+    if !html.contains("gap-") && !html.contains("space-") {
         return html.to_string();
     }
     rewrite_scope(html, &ChildSpacing::default())
@@ -476,6 +506,45 @@ mod tests {
         assert!(out.contains(r#"<p class="mr-6 mb-1">1</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mb-1">2</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mr-6">3</p>"#), "{out}");
+    }
+
+    /// `space-y-*` is the common case in real Tailwind: a plain block
+    /// container (no `flex`/`grid` at all) stacking cards vertically.
+    /// Restricting it to `flex flex-col` the way `gap-y` is restricted
+    /// would silently no-op here, so this must work without a display class.
+    #[test]
+    fn space_y_stacks_margin_on_a_plain_block_container() {
+        let out = rewrite_gaps(r#"<div class="space-y-4"><p>a</p><p>b</p><p>c</p></div>"#);
+        assert!(out.contains(r#"<p class="mb-4">a</p>"#), "{out}");
+        assert!(out.contains(r#"<p class="mb-4">b</p>"#), "{out}");
+        assert!(out.contains("<p>c</p>"), "{out}");
+    }
+
+    /// `space-x-*` keeps the flex-row requirement: in real CSS a
+    /// `margin-left` on block children (each on its own line) has no
+    /// visible effect either, so requiring a row matches reality.
+    #[test]
+    fn space_x_requires_a_flex_row_like_real_css_does() {
+        let out = rewrite_gaps(r#"<div class="flex space-x-2"><p>a</p><p>b</p></div>"#);
+        assert!(out.contains(r#"<p class="mr-2">a</p>"#), "{out}");
+
+        let out = rewrite_gaps(r#"<div class="space-x-2"><p>a</p><p>b</p></div>"#);
+        assert_eq!(out, r#"<div class="space-x-2"><p>a</p><p>b</p></div>"#);
+    }
+
+    #[test]
+    fn space_y_on_a_flex_col_container_behaves_like_gap_y() {
+        let out = rewrite_gaps(r#"<div class="flex flex-col space-y-3"><p>a</p><p>b</p></div>"#);
+        assert!(out.contains(r#"<p class="mb-3">a</p>"#), "{out}");
+    }
+
+    #[test]
+    fn markup_without_space_or_gap_passes_through_unchanged() {
+        let html = r#"<div class="p-4"><p class="space-x-typo">a</p></div>"#;
+        // "space-" appears in a class name that isn't actually space-x-/
+        // space-y-* (no trailing scale key azul-layout would act on), so
+        // the scan-and-rebuild still runs but must be a no-op.
+        assert_eq!(rewrite_gaps(html), html);
     }
 
     #[test]

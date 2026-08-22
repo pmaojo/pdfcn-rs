@@ -4,9 +4,26 @@ mod error;
 mod html_render;
 mod options;
 mod page;
+// The Wave 1 vector substrate (Ola 1.2/1.3): SVG rasterization and the
+// chart/barcode SVG generators. Compiled only behind the opt-in `vector`
+// cargo feature -- the default build never sees them (see Cargo.toml).
+#[cfg(feature = "vector")]
+mod barcode;
+#[cfg(feature = "vector")]
+mod charts_svg;
+#[cfg(feature = "vector")]
+mod raster;
+
+// Ola 3: post-processes printpdf's own output to splice in a Factur-X
+// invoice attachment. Compiled only behind the opt-in `factur-x` cargo
+// feature -- the default build never sees `lopdf` (see Cargo.toml).
+#[cfg(feature = "factur-x")]
+mod factur_x;
 
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
+#[cfg(feature = "factur-x")]
+pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_styles::{Theme, ThemeMode};
@@ -316,7 +333,7 @@ pub fn render_pdf_with_assets(
     // placeholders get real bytes and object-fit:cover images get cropped
     // before the layout engine ever sees them.
     let mut prepared_images = images.clone();
-    let html = assets::prepare_assets(html, &mut prepared_images);
+    let html = assets::prepare_assets_with_vectors(html, &mut prepared_images, &options.svg_assets);
     let html = html.as_str();
 
     let (width_mm, height_mm) = options.page.page_size_mm();

@@ -7,6 +7,13 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Shadcn-style preconfigured UI component registry (DocumentLayout, Card, Table, Badge, ...)"
 
+[features]
+# Gates the Wave 1 vector-substrate components (Charts v2, `%Barcode`).
+# Enabled transitively by pdfcn-core's own `vector` feature; without it
+# these component names expand to an explicit "feature disabled" marker so
+# templates fail visibly rather than rendering unfilled placeholders.
+vector = []
+
 [dependencies]
 pdfcn-template = { workspace = true }
 maud = { workspace = true }

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -78,6 +79,46 @@ pub struct BuildArgs {
     /// Comma-separated PDF document keywords metadata
     #[arg(long)]
     keywords: Option<String>,
+    /// SVG side channel for %Vector placeholders (`%Vector(id="...")`):
+    /// repeatable `--svg ID=PATH`, where PATH is a .svg file whose text is
+    /// embedded under that id (the vector substrate; requires pdfcn-core
+    /// built with its `vector` cargo feature).
+    #[arg(long = "svg", value_name = "ID=PATH")]
+    svg: Vec<String>,
+    /// Ola 3: path to an EN 16931/CII invoice XML to embed as a Factur-X
+    /// attachment (requires pdfcn-cli/pdfcn-core built with the
+    /// `factur-x` cargo feature). Splices the rendered PDF into a
+    /// Factur-X-shaped container: embedded `factur-x.xml`, `/AF`/`/Names`
+    /// entries, and XMP declaring the profile below.
+    #[cfg(feature = "factur-x")]
+    #[arg(long, value_name = "PATH")]
+    factur_x_xml: Option<PathBuf>,
+    /// minimum, basic-wl, basic, en16931 (default), or extended
+    #[cfg(feature = "factur-x")]
+    #[arg(long, default_value = "en16931")]
+    factur_x_profile: String,
+    /// Path to a genuine sRGB ICC profile to embed as the PDF/A
+    /// `/OutputIntent`. Without this, the Factur-X container still gets
+    /// its embedded XML and correct XMP conformance claims, but no
+    /// OutputIntent -- see docs/spikes/002-factur-x-embedding.md for why
+    /// pdfcn never fabricates one itself.
+    #[cfg(feature = "factur-x")]
+    #[arg(long, value_name = "PATH")]
+    factur_x_icc: Option<PathBuf>,
+}
+
+#[cfg(feature = "factur-x")]
+fn parse_factur_x_profile(s: &str) -> anyhow::Result<pdfcn_core::FacturXProfile> {
+    match s.to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
+        "minimum" => Ok(pdfcn_core::FacturXProfile::Minimum),
+        "basic-wl" => Ok(pdfcn_core::FacturXProfile::BasicWl),
+        "basic" => Ok(pdfcn_core::FacturXProfile::Basic),
+        "en16931" => Ok(pdfcn_core::FacturXProfile::En16931),
+        "extended" => Ok(pdfcn_core::FacturXProfile::Extended),
+        other => anyhow::bail!(
+            "invalid --factur-x-profile '{other}', expected minimum, basic-wl, basic, en16931, or extended"
+        ),
+    }
 }
 
 /// Fetches one `http(s)://` image URL for `--fetch-remote-images`. Returns
@@ -177,6 +218,15 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
         .keywords
         .map(|k| k.split(',').map(|s| s.trim().to_string()).collect())
         .unwrap_or_default();
+    let mut svg_assets = BTreeMap::new();
+    for entry in &args.svg {
+        let Some((id, path)) = entry.split_once('=') else {
+            anyhow::bail!("invalid --svg '{entry}', expected ID=PATH (a .svg file)")
+        };
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("--svg {id}: cannot read {path}: {e}"))?;
+        svg_assets.insert(id.to_string(), source);
+    }
     let options = RenderOptions {
         page,
         theme: parse_theme(&args.theme)?,
@@ -192,12 +242,30 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
             keywords,
             producer: None,
         },
+        svg_assets,
     };
     let fetcher: Option<&pdfcn_core::RemoteImageFetcher> =
         args.fetch_remote_images.then_some(&fetch_remote_image);
     let bytes =
         pdfcn_core::render_files_with_remote_images(&args.template, &args.data, &options, fetcher)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+    #[cfg(feature = "factur-x")]
+    let bytes = match &args.factur_x_xml {
+        Some(xml_path) => {
+            let xml = std::fs::read(xml_path)
+                .map_err(|e| anyhow::anyhow!("--factur-x-xml: cannot read {xml_path:?}: {e}"))?;
+            let icc = args
+                .factur_x_icc
+                .as_deref()
+                .map(std::fs::read)
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("--factur-x-icc: {e}"))?;
+            let profile = parse_factur_x_profile(&args.factur_x_profile)?;
+            pdfcn_core::embed_factur_x_invoice(&bytes, &xml, profile, icc.as_deref())
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+        }
+        None => bytes,
+    };
     std::fs::write(&args.out, &bytes)?;
     println!("Wrote {} ({} bytes)", args.out.display(), bytes.len());
     Ok(())

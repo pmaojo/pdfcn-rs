@@ -54,6 +54,22 @@ const FONT_SIZE: &[(&str, &str)] = &[
     ("4xl", "2.25rem"),
 ];
 
+/// Tailwind's own max-width container scale (not the spacing scale --
+/// `max-w-xl` is 36rem there, while `p-xl` isn't a thing).
+const MAX_WIDTH: &[(&str, &str)] = &[
+    ("xs", "20rem"),
+    ("sm", "24rem"),
+    ("md", "28rem"),
+    ("lg", "32rem"),
+    ("xl", "36rem"),
+    ("2xl", "42rem"),
+    ("3xl", "48rem"),
+    ("4xl", "56rem"),
+    ("5xl", "64rem"),
+    ("6xl", "72rem"),
+    ("7xl", "80rem"),
+];
+
 const PALETTE: &[(&str, &str)] = &[
     ("slate-50", "#f8fafc"),
     ("slate-100", "#f1f5f9"),
@@ -300,6 +316,108 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             _ => spacing_decls(&["width"], rest),
         };
     }
+    // --- Ola 1.4 fidelity additions: purely static, high-use utilities.
+    // Named leading steps first, then the numeric scale (`leading-6` is
+    // Tailwind's spacing scale applied to line-height).
+    if let Some(rest) = class.strip_prefix("leading-") {
+        if let Some(named) = match rest {
+            "none" => Some("1"),
+            "tight" => Some("1.25"),
+            "snug" => Some("1.375"),
+            "normal" => Some("1.5"),
+            "relaxed" => Some("1.625"),
+            "loose" => Some("2"),
+            _ => None,
+        } {
+            return Some(format!("line-height:{named}"));
+        }
+        return spacing_decls(&["line-height"], rest);
+    }
+    if let Some(rest) = class.strip_prefix("tracking-") {
+        let value = match rest {
+            "tighter" => "-0.05em",
+            "tight" => "-0.025em",
+            "normal" => "0em",
+            "wide" => "0.025em",
+            "wider" => "0.05em",
+            "widest" => "0.1em",
+            _ => return None,
+        };
+        return Some(format!("letter-spacing:{value}"));
+    }
+    if let Some(rest) = class.strip_prefix("max-w-") {
+        if let Some(value) = lookup(MAX_WIDTH, rest) {
+            return Some(format!("max-width:{value}"));
+        }
+        if let Some(literal) = match rest {
+            "none" => Some("none"),
+            "full" => Some("100%"),
+            "prose" => Some("65ch"),
+            "fit" => Some("fit-content"),
+            "min" => Some("min-content"),
+            "max" => Some("max-content"),
+            _ => None,
+        } {
+            return Some(format!("max-width:{literal}"));
+        }
+        return spacing_decls(&["max-width"], rest);
+    }
+    if let Some(rest) = class.strip_prefix("max-h-") {
+        if rest == "none" {
+            return Some("max-height:none".to_string());
+        }
+        return spacing_decls(&["max-height"], rest);
+    }
+    if let Some(rest) = class.strip_prefix("opacity-") {
+        // Whole percentages 0-100 only (Tailwind's scale steps by 5); an
+        // out-of-range number is an unrecognized class, not a clamped one.
+        return rest
+            .parse::<u8>()
+            .ok()
+            .filter(|n| *n <= 100)
+            .map(|n| format!("opacity:{n}%"));
+    }
+    if let Some(rest) = class.strip_prefix("col-span-") {
+        if rest == "full" {
+            return Some("grid-column:1/-1".to_string());
+        }
+        return rest
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=12).contains(n))
+            .map(|n| format!("grid-column:span {n}/span {n}"));
+    }
+    if let Some(rest) = class.strip_prefix("aspect-") {
+        let ratio = match rest {
+            "auto" => "auto",
+            "square" => "1/1",
+            "video" => "16/9",
+            _ => return None,
+        };
+        return Some(format!("aspect-ratio:{ratio}"));
+    }
+    // Directional border widths and colors (`border-t`, `border-b-2`,
+    // `border-l-border`). Must sit before the generic `border-` branch,
+    // whose prefix would otherwise swallow the side letter.
+    for (prefix, prop) in [
+        ("border-t-", "border-top"),
+        ("border-r-", "border-right"),
+        ("border-b-", "border-bottom"),
+        ("border-l-", "border-left"),
+    ] {
+        if let Some(rest) = class.strip_prefix(prefix) {
+            if rest == "0" {
+                return Some(format!("{prop}-width:0;border-style:solid"));
+            }
+            if let Ok(n) = rest.parse::<u32>() {
+                return Some(format!("{prop}-width:{n}px;border-style:solid"));
+            }
+            if let Some(color) = resolve_color(rest, theme) {
+                return Some(format!("{prop}-color:{color}"));
+            }
+            return None;
+        }
+    }
     // A negative offset (`-top-2`, pulling an overlay half off an edge) puts
     // the `-` before the property name, not after it like every other
     // negative Tailwind utility would -- strip it once here so the prefix
@@ -374,6 +492,17 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         return Some(format!("background-color:{color}"));
     }
     if let Some(rest) = class.strip_prefix("border-") {
+        // A bare side border (`border-t`) is a 1px width on that side,
+        // exactly like bare `border` is on all four.
+        if let Some(prop) = match rest {
+            "t" => Some("border-top"),
+            "r" => Some("border-right"),
+            "b" => Some("border-bottom"),
+            "l" => Some("border-left"),
+            _ => None,
+        } {
+            return Some(format!("{prop}-width:1px;border-style:solid"));
+        }
         if let Some(color) = resolve_color(rest, theme) {
             return Some(format!("border-color:{color}"));
         }
@@ -523,6 +652,85 @@ mod tests {
     /// The new component modules (Alert/Avatar/form fields/nav) lean on
     /// height/width/min-height utilities that previously only existed as a
     /// couple of hardcoded literals (`w-full`, `h-full`).
+    // --- Ola 1.4 fidelity additions.
+    #[test]
+    fn resolves_typography_leading_and_tracking() {
+        assert_eq!(resolve("leading-none").as_deref(), Some("line-height:1"));
+        assert_eq!(
+            resolve("leading-relaxed").as_deref(),
+            Some("line-height:1.625")
+        );
+        assert_eq!(resolve("leading-6").as_deref(), Some("line-height:1.5rem"));
+        assert_eq!(
+            resolve("tracking-wide").as_deref(),
+            Some("letter-spacing:0.025em")
+        );
+        assert_eq!(
+            resolve("tracking-widest").as_deref(),
+            Some("letter-spacing:0.1em")
+        );
+        assert_eq!(resolve("tracking-nonsense"), None);
+    }
+
+    #[test]
+    fn resolves_max_size_constraints() {
+        assert_eq!(resolve("max-w-xl").as_deref(), Some("max-width:36rem"));
+        assert_eq!(resolve("max-w-prose").as_deref(), Some("max-width:65ch"));
+        assert_eq!(resolve("max-w-full").as_deref(), Some("max-width:100%"));
+        assert_eq!(resolve("max-w-[220px]").as_deref(), Some("max-width:220px"));
+        assert_eq!(resolve("max-h-16").as_deref(), Some("max-height:4rem"));
+        assert_eq!(resolve("max-h-none").as_deref(), Some("max-height:none"));
+    }
+
+    #[test]
+    fn resolves_directional_borders_widths_and_colors() {
+        assert_eq!(
+            resolve("border-t").as_deref(),
+            Some("border-top-width:1px;border-style:solid")
+        );
+        assert_eq!(
+            resolve("border-b-2").as_deref(),
+            Some("border-bottom-width:2px;border-style:solid")
+        );
+        assert_eq!(
+            resolve("border-l-0").as_deref(),
+            Some("border-left-width:0;border-style:solid")
+        );
+        assert_eq!(
+            resolve("border-r-red-500").as_deref(),
+            Some("border-right-color:#ef4444")
+        );
+        // The generic border-color utility still works alongside them.
+        assert_eq!(
+            resolve("border-input").as_deref(),
+            Some("border-color:hsl(214.3, 31.8%, 91.4%)")
+        );
+    }
+
+    #[test]
+    fn resolves_opacity_grid_span_and_aspect_ratio() {
+        assert_eq!(resolve("opacity-50").as_deref(), Some("opacity:50%"));
+        assert_eq!(resolve("opacity-100").as_deref(), Some("opacity:100%"));
+        assert_eq!(resolve("opacity-101"), None);
+        assert_eq!(
+            resolve("col-span-3").as_deref(),
+            Some("grid-column:span 3/span 3")
+        );
+        assert_eq!(
+            resolve("col-span-full").as_deref(),
+            Some("grid-column:1/-1")
+        );
+        assert_eq!(resolve("col-span-13"), None);
+        assert_eq!(
+            resolve("aspect-square").as_deref(),
+            Some("aspect-ratio:1/1")
+        );
+        assert_eq!(
+            resolve("aspect-video").as_deref(),
+            Some("aspect-ratio:16/9")
+        );
+    }
+
     #[test]
     fn resolves_height_and_width_utilities() {
         assert_eq!(resolve("h-10").as_deref(), Some("height:2.5rem"));

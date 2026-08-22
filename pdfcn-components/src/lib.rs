@@ -7,11 +7,16 @@
 
 mod alert;
 mod avatar;
+#[cfg(feature = "vector")]
+mod barcode;
 mod chart;
+#[cfg(feature = "vector")]
+mod chart_vector;
 mod form_field;
 mod nav;
 mod progress;
 mod qrcode;
+mod vector;
 
 use std::fmt;
 
@@ -28,6 +33,33 @@ pub(crate) fn attr<'a>(attrs: &'a [ResolvedAttr], name: &str) -> Option<&'a str>
 
 pub(crate) fn attr_or<'a>(attrs: &'a [ResolvedAttr], name: &str, default: &'a str) -> &'a str {
     attr(attrs, name).unwrap_or(default)
+}
+
+/// The shared "this component could not render" styling -- a small
+/// destructive-colored chip that keeps the mistake visible in the output
+/// instead of failing the whole document.
+pub(crate) fn invalid_component() -> String {
+    "pdfcn-invalid-component bg-destructive.text-white.text-xs.font-semibold.rounded.px-2.py-1"
+        .to_string()
+}
+
+/// Lowercase hex for placeholder payloads (`pdfcn-chart:` / `pdfcn-barcode:`
+/// srcs), the same transport `%QRCode` proved.
+#[cfg(feature = "vector")]
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What the Wave 1 vector components expand to when the crate is built
+/// without its `vector` cargo feature: an explicit marker naming the
+/// feature, so a template never silently renders an unfilled placeholder.
+#[cfg(not(feature = "vector"))]
+fn missing_feature_marker() -> Markup {
+    html! {
+        div class=(invalid_component()) {
+            "requires pdfcn built with the \"vector\" cargo feature"
+        }
+    }
 }
 
 /// shadcn/ui components whose entire purpose is interaction (open/close,
@@ -119,6 +151,25 @@ pub fn render(
         "Pagination" => Some(nav::pagination(attrs)),
         "QRCode" => Some(qrcode::qrcode(attrs)),
         "BarChart" => Some(chart::bar_chart(attrs)),
+        // Wave 1 vector substrate: %Vector is always registered (it's just a
+        // placeholder; it degrades like any unresolved image without the
+        // core-side feature), while the generators carry real logic and are
+        // gated so they can't emit placeholders nothing will ever fill.
+        "Vector" => Some(vector::vector(attrs)),
+        #[cfg(feature = "vector")]
+        "LineChart" => Some(chart_vector::line_chart(attrs)),
+        #[cfg(feature = "vector")]
+        "StackedBarChart" => Some(chart_vector::stacked_bar_chart(attrs)),
+        #[cfg(feature = "vector")]
+        "PieChart" => Some(chart_vector::pie_chart(attrs)),
+        #[cfg(feature = "vector")]
+        "Sparkline" => Some(chart_vector::sparkline(attrs)),
+        #[cfg(feature = "vector")]
+        "Barcode" => Some(barcode::barcode(attrs)),
+        #[cfg(not(feature = "vector"))]
+        "LineChart" | "StackedBarChart" | "PieChart" | "Sparkline" | "Barcode" => {
+            Some(missing_feature_marker())
+        }
         "PageFooter" => Some(page_footer(attrs)),
         _ => None,
     })

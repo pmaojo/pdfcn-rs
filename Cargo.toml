@@ -80,6 +80,17 @@ maud = "0.26"
 lightningcss = "1.0.0-alpha.60"
 printpdf = { version = "0.12", default-features = false, features = ["html", "png", "jpeg"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# SVG -> raster rendering for the opt-in `vector` substrate (see
+# pdfcn-core's `vector` cargo feature). Never in the default build: the
+# Vercel function must stay byte-for-byte at its current size.
+resvg = "0.45"
+# Low-level PDF object surgery for the opt-in `factur-x` substrate (see
+# pdfcn-core's `factur-x` cargo feature): printpdf has no embedded-file/
+# attachment support at all, so the Factur-X XML gets spliced in as a
+# post-processing pass over printpdf's own output. Pinned to the same
+# 0.44 printpdf already resolves transitively, so this adds no new crate
+# to the dependency tree, only a direct edge to one already being built.
+lopdf = "0.44"
 qrcodegen = "1"
 clap = { version = "4", features = ["derive"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

@@ -1,0 +1,9 @@
+{
+  "quarter": "Q3 2026",
+  "monthly_revenue": [42000, 51000, 47000, 63000, 71000, 68000],
+  "months": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
+  "channel_mix": [38, 24, 21, 17],
+  "channels": ["Direct", "Referral", "Search", "Social"],
+  "signup_trend": [12, 18, 15, 22, 30, 28, 35],
+  "shipment_id": "400638133393"
+}

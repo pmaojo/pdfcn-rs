@@ -11,6 +11,14 @@ description = "pdfcn: new / add / build / dev CLI tooling"
 name = "pdfcn"
 path = "src/main.rs"
 
+[features]
+# Forwards to pdfcn-core's own `vector` feature (Charts v2, %Barcode,
+# %Vector). Off by default, matching pdfcn-core: `--svg` and the chart/
+# barcode components are otherwise accepted but render a disabled-feature
+# marker, never a silent no-op.
+vector = ["pdfcn-core/vector"]
+factur-x = ["pdfcn-core/factur-x"]
+
 [dependencies]
 pdfcn-core = { workspace = true }
 clap = { workspace = true }

@@ -9,6 +9,7 @@ use pdfcn_core::{
     render, DocumentMetadata, ImageFormat, ImageOptimization, NoPartials, Orientation, PageConfig,
     PageSize, RenderOptions, Theme,
 };
+use std::collections::BTreeMap;
 
 #[napi(object)]
 pub struct PageOptions {
@@ -49,6 +50,12 @@ pub struct PageOptions {
     pub subject: Option<String>,
     /// PDF document keywords metadata
     pub keywords: Option<Vec<String>>,
+    /// SVG side channel for `%Vector(id="...")` placeholders (the vector
+    /// substrate): parallel arrays of ids and SVG sources, zipped into the
+    /// id -> source map `RenderOptions::svg_assets` expects. NAPI object
+    /// types can't express a map keyset, hence the paired arrays.
+    pub svg_ids: Option<Vec<String>>,
+    pub svg_sources: Option<Vec<String>>,
 }
 
 fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
@@ -119,6 +126,20 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
         None
     };
 
+    let svg_assets = match (&opts.svg_ids, &opts.svg_sources) {
+        (None, None) => BTreeMap::new(),
+        (Some(ids), Some(sources)) if ids.len() == sources.len() => ids
+            .iter()
+            .cloned()
+            .zip(sources.iter().cloned())
+            .collect::<BTreeMap<String, String>>(),
+        _ => {
+            return Err(Error::from_reason(
+                "svg_ids and svg_sources must be provided together and have the same length",
+            ))
+        }
+    };
+
     Ok(RenderOptions {
         page,
         theme,
@@ -134,6 +155,7 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
             keywords: opts.keywords.unwrap_or_default(),
             producer: None,
         },
+        svg_assets,
     })
 }
 

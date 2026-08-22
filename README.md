@@ -125,6 +125,72 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
+## Charts, barcodes and raw SVG (opt-in `vector` feature)
+
+`%LineChart`, `%StackedBarChart`, `%PieChart`, `%Sparkline`, `%Barcode` and a
+generic `%Vector` escape hatch all render through one shared substrate: the
+component expands to an `<img src="pdfcn-chart:...">` / `pdfcn-barcode:...` /
+`pdfcn-vector:{id}` placeholder, and an asset-preparation pass rasterizes it
+to a print-density PNG (`resvg`, ~300dpi) before layout. None of this ships
+in the default build — it's entirely behind the `vector` Cargo feature, kept
+off by default so the serverless binary (`pdfcn-vercel`/`api/generate-pdf.rs`)
+never links `resvg` unless a deployment opts in:
+
+```sh
+cargo run -p pdfcn-cli --features vector -- build examples/charts.haml \
+  -d examples/charts.json -o /tmp/charts.pdf --svg logo=examples/logo.svg
+```
+
+```haml
+%LineChart(values={{ monthly_revenue }} xlabels={{ months }} w="480px" h="200px")
+%PieChart(values={{ channel_mix }} labels={{ channels }} donut="true" w="220px" h="180px")
+%Sparkline(values={{ signup_trend }} w="220px" h="60px")
+%Barcode(scheme="ean13" value="{{ shipment_id }}" w="240px" h="60px")
+%Vector(id="logo" w="90px" h="45px" alt="Company logo")
+```
+
+`%Vector` renders arbitrary caller-supplied SVG (a logo, a diagram) rather
+than a chart spec — its source travels through `RenderOptions.svg_assets`
+(id → SVG text) rather than inline markup, since SVG can be arbitrarily
+large. `examples/charts.haml` (data: `examples/charts.json`, SVG:
+`examples/logo.svg`) is a worked example combining all five. Built without
+the `vector` feature, every one of these components expands to an explicit
+marker naming the disabled feature instead of a silent no-op.
+
+## Factur-X invoice embedding (opt-in `factur-x` feature)
+
+`pdfcn build --factur-x-xml invoice.xml` splices an EN 16931/CII invoice
+XML into the rendered PDF as a Factur-X-compliant attachment -- the same
+file is then both the human-readable invoice and the machine-readable
+e-invoice a client's accounting system parses. Behind its own opt-in
+`factur-x` Cargo feature (never in the default serverless build: it pulls
+in `lopdf`, only for direct object surgery on printpdf's own output,
+which has no embedded-file support of its own):
+
+```sh
+cargo run -p pdfcn-cli --features factur-x -- build invoice.haml \
+  -d invoice.json -o out.pdf --factur-x-xml invoice-en16931.xml \
+  --factur-x-profile en16931
+```
+
+`--factur-x-profile` accepts `minimum`, `basic-wl`, `basic`, `en16931`
+(default) or `extended` -- these only change the profile's XMP
+declaration, since every one of them maps to the same PDF/A-3B container.
+`pdfcn_core::embed_factur_x_invoice` is the same primitive for the API/
+napi bindings, taking already-rendered PDF bytes plus the XML.
+
+**PDF/A's `/OutputIntent` needs a real, caller-supplied sRGB ICC
+profile.** `--factur-x-icc profile.icc` embeds it; without it, the output
+is still Factur-X-shaped (embedded XML, correct `/AF`/`/Names`, correct
+XMP conformance claims) but not a fully validator-clean PDF/A-3 file.
+pdfcn deliberately never fabricates an ICC profile itself -- see
+`docs/spikes/002-factur-x-embedding.md` for why a subtly wrong one is
+worse than an honestly absent one.
+
+Not yet validated against a real Factur-X/PDF-A validator (veraPDF,
+Mustang) in this environment -- see the spike doc for exactly what is and
+isn't confirmed.
+
 ## Known limitations
 
 - **`gap` (flex and grid) has no effect.** Neither `display:flex` nor
