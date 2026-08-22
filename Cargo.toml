@@ -63,6 +63,11 @@ base64 = { workspace = true }
 rayon = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
+[dev-dependencies]
+# Test-only: inspects the factur_x post-processing step's output structure
+# directly, the same way pdfcn-core's own factur_x.rs tests do.
+lopdf = { workspace = true }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

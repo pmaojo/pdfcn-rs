@@ -71,8 +71,8 @@ pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) 
     let mut css = String::from(PRINT_RULES);
     for class in classes {
         if let Some(decl) = utilities::resolve_with(class, theme) {
-            let escaped = css_escape_class(class);
-            css.push_str(&format!(".{escaped}{{{decl}}}\n"));
+            let selector = class_selector(class);
+            css.push_str(&format!("{selector}{{{decl}}}\n"));
         }
     }
     if classes.contains("table-striped") {
@@ -81,17 +81,35 @@ pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) 
     minify(&css).unwrap_or(css)
 }
 
-fn css_escape_class(class: &str) -> String {
-    class
+/// Builds the CSS selector for one utility class. A plain class name (the
+/// common case) becomes an ordinary `.class` selector. A class containing
+/// a character that would need backslash-escaping inside a `.class`
+/// selector (`.`, `:`, `/`, `[`, `]` -- real Tailwind-style names like
+/// `px-2.5` or `w-1/2`) instead becomes an attribute selector,
+/// `[class~="px-2.5"]`, which needs no escaping at all: the class name
+/// lives inside a quoted string, not CSS identifier syntax.
+///
+/// This isn't cosmetic -- verified against the real layout engine, not
+/// assumed: `azul-layout`'s CSS parser doesn't handle the backslash escape
+/// a `.class` selector would otherwise need for these names, and a
+/// malformed escaped selector silently corrupts its parse of every rule
+/// that follows it in the same stylesheet (alphabetically later utility
+/// classes lost their declarations entirely -- e.g. a `%BarChart` placed
+/// anywhere after a `px-2.5`/`py-0.5` class in the same document rendered
+/// with invisible, zero-width bars, because `.w-full` sorted after the
+/// broken selector). The attribute-selector form sidesteps the escape
+/// entirely and both `lightningcss` (this crate's own minifier) and
+/// `azul-layout` parse it correctly.
+fn class_selector(class: &str) -> String {
+    if class
         .chars()
-        .map(|c| {
-            if matches!(c, '.' | ':' | '/' | '[' | ']') {
-                format!("\\{c}")
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
+        .any(|c| matches!(c, '.' | ':' | '/' | '[' | ']'))
+    {
+        let escaped_value = class.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("[class~=\"{escaped_value}\"]")
+    } else {
+        format!(".{class}")
+    }
 }
 
 fn minify(css: &str) -> Option<String> {
@@ -103,6 +121,17 @@ fn minify(css: &str) -> Option<String> {
             ..PrinterOptions::default()
         })
         .ok()?;
+    // `class_selector` never emits a backslash (see its own doc comment
+    // for why: azul-layout's parser can't handle one and silently drops
+    // every later rule in the stylesheet). `lightningcss`'s own minifier
+    // can still reintroduce one by unquoting an attribute selector's
+    // value back into an escaped bare identifier -- verified empirically,
+    // not assumed: `[class~="px-2.5"]` came back out as
+    // `[class~=px-2\.5]`. Falling back to the unminified (but always
+    // backslash-free) input is a bigger stylesheet, never a broken one.
+    if out.code.contains('\\') {
+        return None;
+    }
     Some(out.code)
 }
 
@@ -147,5 +176,36 @@ mod tests {
             css.contains("nth-child"),
             "table-striped must emit an nth-child zebra rule, got: {css}"
         );
+    }
+
+    /// A regression guard for a real bug: a class needing escaping in a
+    /// `.class` selector (`px-2.5`, containing a literal dot) used to be
+    /// emitted as `.px-2\.5{...}` -- valid CSS, but azul-layout's own
+    /// parser (not lightningcss, which handles it fine) can't parse that
+    /// backslash escape and silently drops every rule after it in the
+    /// stylesheet, corrupting unrelated components' layout further down
+    /// the same document. No selector this crate emits may contain a
+    /// backslash; a class needing escaping goes through an attribute
+    /// selector instead, which needs no escaping.
+    #[test]
+    fn a_class_needing_escaping_never_produces_a_backslash_selector() {
+        let html = r#"<div class="px-2.5 py-0.5"></div>"#;
+        let css = build_stylesheet(html);
+        assert!(!css.contains('\\'), "{css}");
+        assert!(css.contains(r#"[class~="px-2.5"]"#), "{css}");
+        assert!(css.contains(r#"[class~="py-0.5"]"#), "{css}");
+    }
+
+    /// The actual failure mode this bug produced: with the broken escaped
+    /// selector, `.w-full` (alphabetically after `px-2.5`) lost its
+    /// declaration entirely once fed through azul-layout, even though a
+    /// static string check here can't see that -- this at least locks
+    /// down that both classes still get real declarations from this
+    /// crate's own output.
+    #[test]
+    fn a_dotted_class_does_not_shadow_a_later_alphabetical_classs_rule() {
+        let html = r#"<div class="px-2.5"></div><div class="w-full"></div>"#;
+        let css = build_stylesheet(html);
+        assert!(css.contains("width:100%"), "{css}");
     }
 }

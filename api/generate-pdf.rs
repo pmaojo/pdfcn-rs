@@ -11,7 +11,7 @@ use pdfcn_core::{
     Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
-use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto};
+use pdfcn_vercel::dto::{FacturXDto, ImageOptimizationDto, MetadataDto};
 use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -115,10 +115,13 @@ struct GenerateRequest {
     metadata: Option<MetadataDto>,
     /// SVG side channel for `%Vector(id="...")` placeholders (the vector
     /// substrate): id -> SVG source text, plain UTF-8 (JSON needs no base64).
-    /// Requires a binary built with pdfcn-core's `vector` cargo feature;
-    /// without it these are accepted and ignored.
     #[serde(default)]
     svgs: BTreeMap<String, String>,
+    /// Present to splice a Factur-X EN 16931/CII invoice attachment into
+    /// the rendered PDF as a post-processing step. Absent by default --
+    /// this is not a per-render toggle most callers need.
+    #[serde(default)]
+    factur_x: Option<FacturXDto>,
 }
 
 /// Resolves `- include` against a request's `partials` map.
@@ -216,6 +219,33 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         None => Theme::light(),
     };
 
+    // Validated up front (a bad profile name or malformed base64 is a
+    // client mistake, a 400) rather than discovered after rendering.
+    let factur_x = match &req.factur_x {
+        Some(fx) => {
+            let profile = match FacturXDto::parse_profile(fx.profile.as_deref()) {
+                Ok(p) => p,
+                Err(msg) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
+            };
+            let icc = match &fx.icc_base64 {
+                None => None,
+                Some(encoded) => {
+                    use base64::{engine::general_purpose::STANDARD, Engine as _};
+                    match STANDARD.decode(encoded) {
+                        Ok(bytes) => Some(bytes),
+                        Err(_) => {
+                            return Ok(Response::builder()
+                                .status(400)
+                                .body(b"invalid factur_x.icc_base64: not valid base64".to_vec())?)
+                        }
+                    }
+                }
+            };
+            Some((fx.xml.clone(), profile, icc))
+        }
+        None => None,
+    };
+
     let image_optimization = match req
         .image_optimization
         .map(ImageOptimizationDto::into_image_optimization)
@@ -299,20 +329,44 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         }
     }
 
-    match render_pdf_with_assets(&html, &fonts, &images, &render_options) {
-        Ok(bytes) => Ok(Response::builder()
-            .status(200)
-            .header("Content-Type", "application/pdf")
-            .header(
-                "Content-Disposition",
-                format!("inline; filename=\"{}\"", req.filename),
-            )
-            .body(bytes)?),
-        Err(e) => Ok(Response::builder()
-            .status(422)
-            .header("Content-Type", "text/plain")
-            .body(format!("render error: {e}").into_bytes())?),
-    }
+    let bytes = match render_pdf_with_assets(&html, &fonts, &images, &render_options) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Ok(Response::builder()
+                .status(422)
+                .header("Content-Type", "text/plain")
+                .body(format!("render error: {e}").into_bytes())?)
+        }
+    };
+
+    let bytes = match factur_x {
+        None => bytes,
+        Some((xml, profile, icc)) => {
+            match pdfcn_core::embed_factur_x_invoice(
+                &bytes,
+                xml.as_bytes(),
+                profile,
+                icc.as_deref(),
+            ) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return Ok(Response::builder()
+                        .status(422)
+                        .header("Content-Type", "text/plain")
+                        .body(format!("factur-x embedding failed: {e}").into_bytes())?)
+                }
+            }
+        }
+    };
+
+    Ok(Response::builder()
+        .status(200)
+        .header("Content-Type", "application/pdf")
+        .header(
+            "Content-Disposition",
+            format!("inline; filename=\"{}\"", req.filename),
+        )
+        .body(bytes)?)
 }
 
 #[tokio::main]
@@ -340,6 +394,103 @@ mod tests {
         let resp = handle_body(&body).await;
         assert_eq!(resp.status(), 200);
         assert!(resp.body().starts_with(b"%PDF"));
+    }
+
+    /// The exact shape of index.html's "Charts, barcode & vector logo"
+    /// sandbox example -- a regression guard for the live demo itself, not
+    /// just the API in the abstract.
+    #[tokio::test]
+    async fn the_sandbox_charts_example_renders_end_to_end() {
+        let body = serde_json::json!({
+            "template": "%DocumentLayout(size=\"a4\")\n  %Header(title=\"{{ product.name }}\" subtitle=\"{{ product.tagline }}\")\n    %Vector(id=\"logo\" w=\"90px\" h=\"45px\" alt=\"Company logo\")\n\n  %Card(title=\"Monthly revenue\")\n    %LineChart(values={{ monthly_revenue }} xlabels={{ months }} w=\"480px\" h=\"200px\")\n\n  .flex.justify-between.gap-4\n    %Card(title=\"Channel mix\" class=\"w-full\")\n      %PieChart(values={{ channel_mix }} labels={{ channels }} donut=\"true\" w=\"220px\" h=\"180px\")\n    %Card(title=\"Signups, last 7 weeks\" class=\"w-full\")\n      %Sparkline(values={{ signup_trend }} w=\"220px\" h=\"60px\")\n\n  %Card(title=\"Shipment\")\n    %p.text-sm.mb-2 Tracking barcode for the reference shipment below.\n    %Barcode(scheme=\"ean13\" value=\"{{ shipment_id }}\" w=\"240px\" h=\"60px\")\n",
+            "data": {
+                "product": { "name": "pdfcn-rs", "tagline": "Charts v2, %Barcode and %Vector, live" },
+                "monthly_revenue": [42000, 51000, 47000, 63000, 71000, 68000],
+                "months": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
+                "channel_mix": [38, 24, 21, 17],
+                "channels": ["Direct", "Referral", "Search", "Social"],
+                "signup_trend": [12, 18, 15, 22, 30, 28, 35],
+                "shipment_id": "400638133393"
+            },
+            "svgs": {
+                "logo": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 60\"><rect x=\"4\" y=\"4\" width=\"112\" height=\"52\" rx=\"8\" fill=\"#2563eb\"/><text x=\"60\" y=\"37\" font-family=\"sans-serif\" font-size=\"20\" fill=\"#ffffff\" text-anchor=\"middle\">pdfcn</text></svg>"
+            }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 200);
+        assert!(resp.body().starts_with(b"%PDF"));
+    }
+
+    /// The exact shape of index.html's "Factur-X invoice" sandbox example.
+    #[tokio::test]
+    async fn the_sandbox_facturx_example_renders_end_to_end() {
+        let body = serde_json::json!({
+            "template": "%DocumentLayout(size=\"a4\")\n  %Header(title=\"Invoice {{ invoice.number }}\" subtitle=\"{{ invoice.date }}\")\n    %Badge(variant=\"success\" label=\"Paid\")\n\n  %Card(title=\"Bill To\")\n    %p {{ customer.name }}\n\n  %InvoiceTable(rows={{ invoice.items }} columns={{ invoice.columns }})\n\n  .flex.justify-between.mt-4\n    %p Total\n    %p {{ invoice.total }}\n",
+            "data": {
+                "invoice": {
+                    "number": "INV-1042",
+                    "date": "2026-08-19",
+                    "total": "$194.40",
+                    "columns": [
+                        { "key": "description", "label": "Description" },
+                        { "key": "qty", "label": "Qty" },
+                        { "key": "price", "label": "Price" }
+                    ],
+                    "items": [
+                        { "description": "Consulting", "qty": "4h", "price": "$120.00" },
+                        { "description": "Hosting", "qty": "1", "price": "$60.00" }
+                    ]
+                },
+                "customer": { "name": "Ada Lovelace" }
+            },
+            "factur_x": {
+                "xml": "<rsm:CrossIndustryInvoice xmlns:rsm=\"urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100\"><rsm:ExchangedDocument><ram:ID xmlns:ram=\"urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100\">INV-1042</ram:ID></rsm:ExchangedDocument></rsm:CrossIndustryInvoice>",
+                "profile": "en16931"
+            }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 200);
+        let doc = lopdf::Document::load_mem(resp.body()).unwrap();
+        assert!(doc.catalog().unwrap().get(b"AF").is_ok());
+    }
+
+    #[tokio::test]
+    async fn factur_x_splices_the_invoice_xml_into_the_response() {
+        let body = serde_json::json!({
+            "template": "%h1 Invoice\n%p Total: {{ total }}",
+            "data": { "total": "$42.00" },
+            "factur_x": { "xml": "<Invoice/>", "profile": "en16931" }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 200);
+        let doc = lopdf::Document::load_mem(resp.body()).unwrap();
+        let catalog = doc.catalog().unwrap();
+        assert!(catalog.get(b"AF").is_ok(), "expected an /AF entry");
+    }
+
+    #[tokio::test]
+    async fn factur_x_rejects_an_unknown_profile_with_a_400() {
+        let body = serde_json::json!({
+            "template": "%p hi",
+            "factur_x": { "xml": "<Invoice/>", "profile": "not-a-real-profile" }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn factur_x_rejects_malformed_icc_base64_with_a_400() {
+        let body = serde_json::json!({
+            "template": "%p hi",
+            "factur_x": { "xml": "<Invoice/>", "icc_base64": "not-base64!!" }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
+        assert_eq!(resp.status(), 400);
     }
 
     #[tokio::test]
