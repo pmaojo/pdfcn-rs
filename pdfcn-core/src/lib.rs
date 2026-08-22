@@ -14,8 +14,16 @@ mod charts_svg;
 #[cfg(feature = "vector")]
 mod raster;
 
+// Ola 3: post-processes printpdf's own output to splice in a Factur-X
+// invoice attachment. Compiled only behind the opt-in `factur-x` cargo
+// feature -- the default build never sees `lopdf` (see Cargo.toml).
+#[cfg(feature = "factur-x")]
+mod factur_x;
+
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
+#[cfg(feature = "factur-x")]
+pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_styles::{Theme, ThemeMode};

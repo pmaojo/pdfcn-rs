@@ -17,6 +17,7 @@ path = "src/main.rs"
 # barcode components are otherwise accepted but render a disabled-feature
 # marker, never a silent no-op.
 vector = ["pdfcn-core/vector"]
+factur-x = ["pdfcn-core/factur-x"]
 
 [dependencies]
 pdfcn-core = { workspace = true }

@@ -15,6 +15,14 @@ description = "Orchestrates parsing, template evaluation, component expansion, s
 # the matching component set in pdfcn-components.
 vector = ["dep:resvg", "pdfcn-components/vector"]
 
+# Ola 3: post-processes printpdf's own output to splice in a Factur-X
+# EN 16931/CII invoice attachment (embedded XML + PDF/A-3 catalog
+# structure). Off by default -- adds a direct `lopdf` dependency, but see
+# the comment on the workspace `lopdf` entry: it's the same version
+# printpdf already resolves transitively, so this doesn't grow the
+# default build's dependency tree at all, only pdfcn-core's own surface.
+factur-x = ["dep:lopdf"]
+
 [dependencies]
 pdfcn-parser = { workspace = true }
 pdfcn-template = { workspace = true }
@@ -28,6 +36,7 @@ printpdf = { workspace = true }
 image = { workspace = true }
 qrcodegen = { workspace = true }
 resvg = { workspace = true, optional = true }
+lopdf = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
