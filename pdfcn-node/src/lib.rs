@@ -39,14 +39,21 @@ fn to_page_config(opts: Option<PageOptions>) -> PageConfig {
     PageConfig {
         size,
         orientation,
-        margin_mm: opts.margin_mm.map(|m| m as f32).unwrap_or(default.margin_mm),
+        margin_mm: opts
+            .margin_mm
+            .map(|m| m as f32)
+            .unwrap_or(default.margin_mm),
     }
 }
 
 /// Renders a `.haml`-style `template` against a JSON-encoded `data_json`
 /// context and returns PDF bytes.
 #[napi]
-pub fn render_pdf(template: String, data_json: String, options: Option<PageOptions>) -> Result<Buffer> {
+pub fn render_pdf(
+    template: String,
+    data_json: String,
+    options: Option<PageOptions>,
+) -> Result<Buffer> {
     let data: serde_json::Value = serde_json::from_str(&data_json)
         .map_err(|e| Error::from_reason(format!("invalid data_json: {e}")))?;
     let page = to_page_config(options);

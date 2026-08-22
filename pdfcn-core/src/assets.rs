@@ -220,10 +220,7 @@ fn apply_cover_crops(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Stri
         let marker = format!("src=\"{src}\"");
         if let Some(rel) = tag.attrs.find(&marker) {
             let val_start = tag.span.start + rel + "src=\"".len();
-            replacements.push((
-                val_start..val_start + src.len(),
-                key,
-            ));
+            replacements.push((val_start..val_start + src.len(), key));
         }
     }
     for (key, bytes) in cropped {
@@ -355,7 +352,10 @@ fn downscale_to_limits(
     let mut out = Vec::new();
     if bytes.starts_with(&[0xFF, 0xD8]) {
         image::DynamicImage::ImageRgb8(resized.into_rgb8())
-            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut out),
+                image::ImageFormat::Jpeg,
+            )
             .ok()?;
     } else {
         resized
@@ -384,7 +384,10 @@ pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Str
     // carried by the variant alone.
     let cropped_bases: BTreeSet<String> = images
         .keys()
-        .filter_map(|key| key.split_once("#pdfcn-cover-").map(|(base, _)| base.to_string()))
+        .filter_map(|key| {
+            key.split_once("#pdfcn-cover-")
+                .map(|(base, _)| base.to_string())
+        })
         .collect();
     let parked: Vec<(String, Vec<u8>)> = cropped_bases
         .into_iter()
@@ -413,7 +416,10 @@ mod tests {
     #[test]
     fn generates_and_registers_a_qrcode_for_the_placeholder_src() {
         let value = "https://example.com/pay/INV-1042";
-        let html = format!(r#"<img src="{QRCODE_SCHEME}{}" style="width:96px">"#, hex_encode(value.as_bytes()));
+        let html = format!(
+            r#"<img src="{QRCODE_SCHEME}{}" style="width:96px">"#,
+            hex_encode(value.as_bytes())
+        );
         let mut images = BTreeMap::new();
         let out = prepare_assets(&html, &mut images);
         let src = out
@@ -450,9 +456,8 @@ mod tests {
     fn cover_crops_the_source_to_the_box_aspect_and_rewrites_src() {
         // 400x100 source into a 100x100 box: cover must crop to 100x100.
         let src = "photo.png";
-        let html = format!(
-            r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover">"#
-        );
+        let html =
+            format!(r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover">"#);
         let mut images = BTreeMap::from([(src.to_string(), png_bytes(400, 100, [10, 20, 30]))]);
         let out = prepare_assets(&html, &mut images);
         assert!(out.contains(&format!("src=\"{src}#pdfcn-cover-")), "{out}");
@@ -470,9 +475,8 @@ mod tests {
     #[test]
     fn matching_aspect_is_not_reencoded() {
         let src = "photo.png";
-        let html = format!(
-            r#"<img src="{src}" style="width:200px;height:100px;object-fit:cover">"#
-        );
+        let html =
+            format!(r#"<img src="{src}" style="width:200px;height:100px;object-fit:cover">"#);
         let original = png_bytes(400, 200, [1, 2, 3]);
         let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
         let out = prepare_assets(&html, &mut images);
@@ -499,9 +503,7 @@ mod tests {
     #[test]
     fn undecodable_source_bytes_are_left_alone() {
         let src = "broken.png";
-        let html = format!(
-            r#"<img src="{src}" style="width:100px;height:50px;object-fit:cover">"#
-        );
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px;object-fit:cover">"#);
         let mut images = BTreeMap::from([(src.to_string(), b"not-an-image".to_vec())]);
         let out = prepare_assets(&html, &mut images);
         assert_eq!(out, html);
@@ -513,11 +515,11 @@ mod tests {
         // 800x200 source (aspect 4.0) differs from both box aspects (1.0
         // and 2.0), so both imgs get their own cropped variant.
         let mut images = BTreeMap::from([(src.to_string(), png_bytes(800, 200, [1, 2, 3]))]);
-        let html = format!(
-            r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover">"#
-        ) + &format!(
-            r#"<img src="{src}" style="width:200px;height:100px;object-fit:cover">"#
-        );
+        let html =
+            format!(r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover">"#)
+                + &format!(
+                    r#"<img src="{src}" style="width:200px;height:100px;object-fit:cover">"#
+                );
         let out = prepare_assets(&html, &mut images);
         assert_eq!(out.matches("#pdfcn-cover-").count(), 2, "{out}");
         assert_eq!(images.len(), 3); // original + two crops
@@ -568,8 +570,11 @@ mod tests {
             image::Rgb([10, 20, 30]),
         ));
         let mut bytes = Vec::new();
-        jpeg.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
-            .unwrap();
+        jpeg.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
         let mut images = BTreeMap::from([(src.to_string(), bytes)]);
         let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
         prepare_assets(&html, &mut images);
