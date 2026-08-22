@@ -1,0 +1,19 @@
+# Rust source — not shipped to npm (only the compiled .node binary is)
+target/
+Cargo.toml
+Cargo.lock
+build.rs
+src/
+# npm-specific
+node_modules/
+# IDE and OS junk
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+# napi build artifacts we don't ship
+*.node.new
+artifacts.json
+# Tests
+__test__/

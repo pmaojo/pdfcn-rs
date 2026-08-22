@@ -1,0 +1,60 @@
+{
+  "name": "pdfcn",
+  "version": "0.1.0",
+  "description": "HAML-like templates + shadcn-style components, compiled to PDF bytes in memory — native Node.js bindings via napi-rs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "pdfcn.linux-x64-gnu.node",
+    "pdfcn.linux-x64-musl.node",
+    "pdfcn.linux-arm64-gnu.node",
+    "pdfcn.linux-arm64-musl.node",
+    "pdfcn.darwin-x64.node",
+    "pdfcn.darwin-arm64.node",
+    "pdfcn.win32-x64-msvc.node"
+  ],
+  "napi": {
+    "name": "pdfcn",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-unknown-linux-musl"
+      ]
+    }
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "universal": "napi universal",
+    "prepublishOnly": "napi prepublish -t npm",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pmaojo/pdfcn-rs.git"
+  },
+  "keywords": [
+    "pdf",
+    "pdf-generation",
+    "template",
+    "haml",
+    "shadcn",
+    "napi-rs",
+    "rust"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/pmaojo/pdfcn-rs/issues"
+  },
+  "homepage": "https://github.com/pmaojo/pdfcn-rs#readme"
+}
