@@ -2,7 +2,7 @@
 //! image-map pair just before `printpdf` lays it out, because the layout
 //! engine can't do it itself.
 //!
-//! Two passes today, both driven by scanning `<img>` tags in the rendered
+//! Three passes today, all driven by scanning `<img>` tags in the rendered
 //! markup:
 //!
 //! 1. **QR codes** — a `%QRCode(value="…")` component (see
@@ -18,11 +18,16 @@
 //!    engine's "scale to fill" then produces exactly what a browser would
 //!    show. The `<img src>` is rewritten to the cropped variant, leaving
 //!    the original bytes untouched for any other reference.
+//! 3. **Resolution normalization** — a source image far larger than its
+//!    layout box can ever paint is dead weight in the output PDF (and in
+//!    layout time). Any image whose box is known in px is downscaled to
+//!    ~300dpi of that box (3x, see `MAX_PRINT_SCALE`); any image is capped
+//!    at `MAX_IMAGE_DIMENSION_PX` on a side. Shrink-only, format-preserving.
 //!
 //! Like `img_srcs`, the scanner relies on our own `maud` output being
 //! well-formed: double-quoted attributes, no `<`/`>` inside values.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 const QRCODE_SCHEME: &str = "pdfcn-qrcode:";
@@ -267,12 +272,129 @@ fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
     Some(png)
 }
 
+/// How many device pixels of source resolution one CSS px of layout box
+/// may carry. PDF pixels map to points at 96/inch; print wants ~300dpi,
+/// so 3x keeps every image above print quality while capping waste -- a
+/// 4000px logo dropped into an 80px-tall card slot ships ~48x more pixels
+/// than it can ever paint.
+const MAX_PRINT_SCALE: f64 = 3.0;
+
+/// Absolute cap on either dimension of any embedded image, even one with
+/// no known box: beyond this, no plausible page size can use the extra
+/// detail and decode/encode cost grows quadratically.
+const MAX_IMAGE_DIMENSION_PX: u32 = 4096;
+
+/// Pass 3: downscales over-resolved sources to what their layout boxes can
+/// actually paint (`box px * [`MAX_PRINT_SCALE`]`), and caps any image at
+/// [`MAX_IMAGE_DIMENSION_PX`] on a side regardless. Shrinks only -- never
+/// upscales, never touches an image already within limits -- and re-encodes
+/// in the source's format (JPEG stays JPEG, everything else PNG), so the
+/// caller's `<img>` markup needs no rewriting. An undecodable source is
+/// left alone, degrading exactly as before.
+fn normalize_resolutions(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
+    // The widest/tallest box each src paints into governs its limit.
+    let mut limits: BTreeMap<String, (Option<f64>, Option<f64>)> = BTreeMap::new();
+    for tag in scan_img_tags(html) {
+        let Some(src) = attr_value(&tag.attrs, "src").map(str::to_string) else {
+            continue;
+        };
+        let (w, h) = attr_value(&tag.attrs, "style")
+            .map(parse_style)
+            .map(|s| (s.width_px, s.height_px))
+            .unwrap_or((None, None));
+        let entry = limits.entry(src).or_insert((None, None));
+        // Only a tag that actually declares a dimension raises that
+        // dimension's limit; an absent style never shrinks it.
+        if let Some(w) = w {
+            entry.0 = Some(entry.0.map_or(w, |prev| prev.max(w)));
+        }
+        if let Some(h) = h {
+            entry.1 = Some(entry.1.map_or(h, |prev| prev.max(h)));
+        }
+    }
+    let replacements: Vec<(String, Vec<u8>)> = limits
+        .into_iter()
+        .filter_map(|(src, (box_w, box_h))| {
+            let bytes = images.get(&src)?;
+            let shrunk = downscale_to_limits(bytes, box_w, box_h)?;
+            Some((src, shrunk))
+        })
+        .collect();
+    for (src, bytes) in replacements {
+        images.insert(src, bytes);
+    }
+}
+
+/// The shrunken re-encode of `bytes`, or `None` when it's already within
+/// its limits (or undecodable) and should be left exactly as-is.
+fn downscale_to_limits(
+    bytes: &[u8],
+    box_w_px: Option<f64>,
+    box_h_px: Option<f64>,
+) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let (iw, ih) = (img.width(), img.height());
+    if iw == 0 || ih == 0 {
+        return None;
+    }
+    let mut max_scale = f64::INFINITY;
+    if let Some(w) = box_w_px.filter(|w| *w > 0.0) {
+        max_scale = max_scale.min((w * MAX_PRINT_SCALE) / iw as f64);
+    }
+    if let Some(h) = box_h_px.filter(|h| *h > 0.0) {
+        max_scale = max_scale.min((h * MAX_PRINT_SCALE) / ih as f64);
+    }
+    let cap = MAX_IMAGE_DIMENSION_PX as f64;
+    max_scale = max_scale.min(cap / iw as f64).min(cap / ih as f64);
+    if !max_scale.is_finite() || max_scale >= 1.0 {
+        return None;
+    }
+    let nw = (((iw as f64) * max_scale).round() as u32).max(1);
+    let nh = (((ih as f64) * max_scale).round() as u32).max(1);
+    let resized = img.resize(nw, nh, image::imageops::FilterType::Triangle);
+    let mut out = Vec::new();
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        image::DynamicImage::ImageRgb8(resized.into_rgb8())
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Jpeg)
+            .ok()?;
+    } else {
+        resized
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .ok()?;
+    }
+    Some(out)
+}
+
 /// Runs every pass over the rendered HTML + image map, in place for the
 /// map and by value for the HTML. Call this right before handing both to
-/// `printpdf`.
+/// `printpdf`. Cover cropping runs first, slicing from each source's full
+/// resolution; resolution normalization runs last, capping everything at
+/// print scale without disturbing sources that already have a crop.
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
+    // Cover-crop before normalizing: a crop slices from the source's full
+    // resolution, so it must run while those bytes are intact --
+    // normalizing first would shrink the pool it samples and bake that
+    // loss into every variant (a 400x100 source into a 100px square box
+    // would come out 75x75 instead of 100x100).
+    let rewritten = apply_cover_crops(html, images);
     generate_qrcodes(html, images);
-    apply_cover_crops(html, images)
+    // The original stays registered under its own src untouched, so
+    // normalization -- last, capping everything at box * MAX_PRINT_SCALE --
+    // parks any src that has a cropped variant aside: its visual role is
+    // carried by the variant alone.
+    let cropped_bases: BTreeSet<String> = images
+        .keys()
+        .filter_map(|key| key.split_once("#pdfcn-cover-").map(|(base, _)| base.to_string()))
+        .collect();
+    let parked: Vec<(String, Vec<u8>)> = cropped_bases
+        .into_iter()
+        .filter_map(|base| images.remove(&base).map(|bytes| (base, bytes)))
+        .collect();
+    normalize_resolutions(html, images);
+    for (base, bytes) in parked {
+        images.insert(base, bytes);
+    }
+    rewritten
 }
 
 #[cfg(test)]
@@ -399,5 +521,71 @@ mod tests {
         let out = prepare_assets(&html, &mut images);
         assert_eq!(out.matches("#pdfcn-cover-").count(), 2, "{out}");
         assert_eq!(images.len(), 3); // original + two crops
+    }
+
+    /// A source far beyond its box's print resolution is downscaled to
+    /// box_px * 3 (~300dpi), shrinking the embedded bytes.
+    #[test]
+    fn an_oversized_source_is_downscaled_to_its_boxs_print_resolution() {
+        let src = "photo.png";
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(2000, 1000, [1, 2, 3]))]);
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
+        prepare_assets(&html, &mut images);
+        let decoded = image::load_from_memory(&images[src]).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (300, 150));
+    }
+
+    #[test]
+    fn a_source_within_its_boxs_resolution_is_untouched() {
+        let src = "photo.png";
+        let original = png_bytes(300, 150, [1, 2, 3]);
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
+        prepare_assets(&html, &mut images);
+        assert_eq!(images[src].len(), original.len());
+    }
+
+    /// Even with no known box, a monster image is capped at
+    /// MAX_IMAGE_DIMENSION_PX on its longest side.
+    #[test]
+    fn a_boxless_monster_image_is_capped_at_the_absolute_dimension_limit() {
+        let src = "photo.png";
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(5000, 2500, [1, 2, 3]))]);
+        let html = format!(r#"<img src="{src}">"#);
+        prepare_assets(&html, &mut images);
+        let decoded = image::load_from_memory(&images[src]).unwrap();
+        assert_eq!(decoded.width(), MAX_IMAGE_DIMENSION_PX);
+    }
+
+    /// JPEG sources stay JPEG (magic bytes) after normalization, so the
+    /// engine's decoder sees the same format it would have.
+    #[test]
+    fn jpeg_sources_stay_jpeg_after_downscaling() {
+        let src = "photo.jpg";
+        let jpeg = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2000,
+            1000,
+            image::Rgb([10, 20, 30]),
+        ));
+        let mut bytes = Vec::new();
+        jpeg.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut images = BTreeMap::from([(src.to_string(), bytes)]);
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
+        prepare_assets(&html, &mut images);
+        let shrunk = &images[src];
+        assert!(shrunk.starts_with(&[0xFF, 0xD8]), "must stay JPEG");
+        let decoded = image::load_from_memory(shrunk).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (300, 150));
+    }
+
+    #[test]
+    fn an_undecodable_source_survives_normalization_untouched() {
+        let src = "broken.png";
+        let original = b"not-an-image".to_vec();
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let html = format!(r#"<img src="{src}" style="width:100px">"#);
+        prepare_assets(&html, &mut images);
+        assert_eq!(images[src], original);
     }
 }

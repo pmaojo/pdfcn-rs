@@ -119,6 +119,7 @@ pub fn render(
         "Pagination" => Some(nav::pagination(attrs)),
         "QRCode" => Some(qrcode::qrcode(attrs)),
         "BarChart" => Some(chart::bar_chart(attrs)),
+        "PageFooter" => Some(page_footer(attrs)),
         _ => None,
     })
 }
@@ -383,6 +384,41 @@ fn cell_text(v: &JsonValue) -> String {
     }
 }
 
+/// `%PageFooter`: document-chrome footer strip -- a hairline rule over a
+/// left/center/right three-slot row, the classic letterhead footer.
+/// All three slots are optional; an empty slot renders nothing, and a
+/// single populated slot sits at its own side (left by default).
+///
+/// This is *flow-level* chrome: it renders once, at the end of the
+/// document, wherever the content ends. It does not repeat on every page
+/// -- the layout engine has no verified support for `position:fixed`
+/// page repetition or `@page` margin boxes, so claiming per-page repetition
+/// would be a lie. For a per-document "Page X of Y" label, `%Pagination`
+/// takes data-driven values; for a letterhead footer line, this is it.
+///
+/// `left` / `center` / `right` (optional): slot text, interpolated by the
+/// template engine like any attribute (`left="{{ company.name }}"`).
+/// `class` (optional): extra utility classes on the footer's root.
+fn page_footer(attrs: &[ResolvedAttr]) -> Markup {
+    let left = attr(attrs, "left");
+    let center = attr(attrs, "center");
+    let right = attr(attrs, "right");
+    let extra = attr_or(attrs, "class", "");
+    html! {
+        footer class={ "page-footer mt-8 pt-3 border-t border-border w-full text-xs text-muted-foreground flex justify-between items-center gap-4 break-inside-avoid " (extra) } {
+            @if let Some(l) = left {
+                span class="page-footer-left" { (l) }
+            }
+            @if let Some(c) = center {
+                span class="page-footer-center" { (c) }
+            }
+            @if let Some(r) = right {
+                span class="page-footer-right" { (r) }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,5 +603,44 @@ mod tests {
                 "unexpected message for {name}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn page_footer_renders_populated_slots_and_skips_empty_ones() {
+        let out = render(
+            "PageFooter",
+            &[a("left", "Acme Inc."), a("right", "hello@acme.com")],
+            html! {},
+        )
+        .unwrap()
+        .unwrap()
+        .into_string();
+        assert!(out.contains("Acme Inc."));
+        assert!(out.contains("hello@acme.com"));
+        assert!(out.contains("page-footer-left"));
+        assert!(out.contains("page-footer-right"));
+        assert!(!out.contains("page-footer-center"));
+        // Letterhead chrome: hairline rule, small muted ink.
+        assert!(out.contains("border-t"));
+        assert!(out.contains("text-xs"));
+    }
+
+    #[test]
+    fn page_footer_with_no_slots_still_renders_its_rule() {
+        let out = render("PageFooter", &[], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("border-t"));
+        assert!(!out.contains("<span"));
+    }
+
+    #[test]
+    fn page_footer_class_appends_to_its_root() {
+        let out = render("PageFooter", &[a("class", "mt-12")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(out.contains("mt-12"));
     }
 }

@@ -10,6 +10,16 @@
 //! from. They are emitted as comma-separated `hsl()`, the form every CSS
 //! parser in the pipeline accepts.
 
+/// Which built-in token table a [`crate::theme::Theme`] resolves against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeMode {
+    /// shadcn's light `:root` block (the default).
+    #[default]
+    Light,
+    /// shadcn's `.dark` block: dark surfaces, light ink.
+    Dark,
+}
+
 /// shadcn's default light theme. Each entry is the token name as it appears
 /// after the `--` in shadcn's `:root`, paired with that token's literal
 /// value.
@@ -35,10 +45,51 @@ const THEME: &[(&str, &str)] = &[
     ("ring", "hsl(222.2, 84%, 4.9%)"),
 ];
 
+/// shadcn's dark theme, straight from its `.dark` block -- same token
+/// names as [`THEME`], dark surfaces and adjusted muted/accent/border
+/// tokens. Same `H S% L%` form, so entries diff cleanly against upstream.
+const DARK_THEME: &[(&str, &str)] = &[
+    ("background", "hsl(222.2, 84%, 4.9%)"),
+    ("foreground", "hsl(210, 40%, 98%)"),
+    ("card", "hsl(222.2, 84%, 4.9%)"),
+    ("card-foreground", "hsl(210, 40%, 98%)"),
+    ("popover", "hsl(222.2, 84%, 4.9%)"),
+    ("popover-foreground", "hsl(210, 40%, 98%)"),
+    ("primary", "hsl(210, 40%, 98%)"),
+    ("primary-foreground", "hsl(222.2, 47.4%, 11.2%)"),
+    ("secondary", "hsl(217.2, 32.6%, 17.5%)"),
+    ("secondary-foreground", "hsl(210, 40%, 98%)"),
+    ("muted", "hsl(217.2, 32.6%, 17.5%)"),
+    ("muted-foreground", "hsl(215, 20.2%, 65.1%)"),
+    ("accent", "hsl(217.2, 32.6%, 17.5%)"),
+    ("accent-foreground", "hsl(210, 40%, 98%)"),
+    ("destructive", "hsl(0, 62.8%, 30.6%)"),
+    ("destructive-foreground", "hsl(210, 40%, 98%)"),
+    ("border", "hsl(217.2, 32.6%, 17.5%)"),
+    ("input", "hsl(217.2, 32.6%, 17.5%)"),
+    ("ring", "hsl(212.7, 26.8%, 83.9%)"),
+];
+
+fn table(mode: ThemeMode) -> &'static [(&'static str, &'static str)] {
+    match mode {
+        ThemeMode::Light => THEME,
+        ThemeMode::Dark => DARK_THEME,
+    }
+}
+
 /// Resolves a shadcn semantic theme token (`primary`, `muted-foreground`,
 /// `border`, ...) to a literal CSS color.
 pub fn color(name: &str) -> Option<&'static str> {
     THEME
+        .iter()
+        .find(|(token, _)| *token == name)
+        .map(|(_, value)| *value)
+}
+
+/// Like [`color`], but resolved against a mode's table -- [`ThemeMode::Dark`]
+/// yields shadcn's `.dark` values rather than the light `:root` ones.
+pub fn color_in(mode: ThemeMode, name: &str) -> Option<&'static str> {
+    table(mode)
         .iter()
         .find(|(token, _)| *token == name)
         .map(|(_, value)| *value)

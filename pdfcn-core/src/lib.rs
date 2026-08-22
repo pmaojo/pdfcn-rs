@@ -7,8 +7,12 @@ mod page;
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
 pub use page::{Orientation, PageConfig, PageSize};
+pub use pdfcn_styles::{Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
+use std::collections::{BTreeMap, HashMap, BTreeSet, VecDeque};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -16,7 +20,6 @@ use printpdf::html::rust_fontconfig::{FcFontCache, FcParseFontBytes};
 use printpdf::html::SharedFontPool;
 use printpdf::{Base64OrRaw, GeneratePdfOptions, PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeMap, HashMap};
 
 /// The built-in document typefaces, embedded so PDF generation has no
 /// dependency on fonts being installed on the host (NFR-3): the render path
@@ -146,6 +149,90 @@ impl PartialLoader for FsPartialLoader {
     }
 }
 
+/// Builds a [`Theme`] from its JSON form, as accepted by the HTTP API's
+/// optional `theme` request field:
+///
+/// ```json
+/// { "mode": "dark", "overrides": { "primary": "#2563eb" } }
+/// ```
+///
+/// `mode` defaults to light; `overrides` maps bare semantic token names to
+/// literal CSS colors. Returns `Err` with a client-facing message for a
+/// malformed shape.
+pub fn theme_from_json(value: &JsonValue) -> Result<Theme, String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "theme must be an object".to_string())?;
+    let mut theme = match obj.get("mode").and_then(JsonValue::as_str) {
+        None | Some("light") => Theme::light(),
+        Some("dark") => Theme::dark(),
+        Some(other) => {
+            return Err(format!(
+                "unknown theme mode \"{other}\" (expected \"light\" or \"dark\")"
+            ))
+        }
+    };
+    match obj.get("overrides") {
+        None | Some(JsonValue::Null) => {}
+        Some(JsonValue::Object(map)) => {
+            for (token, color) in map {
+                let Some(color) = color.as_str() else {
+                    return Err(format!("theme override \"{token}\" must be a string"));
+                };
+                theme.overrides.insert(token.clone(), color.to_string());
+            }
+        }
+        Some(_) => {
+            return Err(
+                "theme overrides must be an object of token name to CSS color".to_string(),
+            )
+        }
+    }
+    Ok(theme)
+}
+
+/// Bounded process-wide cache of parsed template ASTs, keyed by a hash of
+/// the source. Server-side callers rendering many documents from one
+/// template (a batch endpoint, a monthly-statements loop) pay the lex/parse
+/// cost once instead of per document; one-off renders pay one extra hash.
+/// Entries are evicted FIFO past [`PARSE_CACHE_CAP`] so memory stays
+/// bounded regardless of how many distinct templates a long-lived process
+/// sees. Only successful parses are cached -- a malformed template keeps
+/// failing identically.
+const PARSE_CACHE_CAP: usize = 128;
+type ParseCache = Mutex<(HashMap<u64, pdfcn_parser::Document>, VecDeque<u64>)>;
+static PARSE_CACHE: OnceLock<ParseCache> = OnceLock::new();
+
+fn cached_parse(source: &str) -> Result<pdfcn_parser::Document, CoreError> {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(cache) = PARSE_CACHE.get() {
+        if let Ok(guard) = cache.lock() {
+            if let Some(doc) = guard.0.get(&key) {
+                return Ok(doc.clone());
+            }
+        }
+    }
+    let doc = pdfcn_parser::parse_document(source)?;
+    let cache = PARSE_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
+    if let Ok(mut guard) = cache.lock() {
+        if !guard.0.contains_key(&key) {
+            while guard.0.len() >= PARSE_CACHE_CAP {
+                match guard.1.pop_front() {
+                    Some(oldest) => {
+                        guard.0.remove(&oldest);
+                    }
+                    None => break,
+                }
+            }
+            guard.0.insert(key, doc.clone());
+            guard.1.push_back(key);
+        }
+    }
+    Ok(doc)
+}
+
 /// Runs the full FR-1/FR-2/FR-3 pipeline: parses `source`, evaluates it
 /// against `data`, expands components, and returns a complete HTML
 /// document string with an embedded, minified, print-safe stylesheet.
@@ -154,7 +241,21 @@ pub fn render_html(
     data: &JsonValue,
     loader: &dyn PartialLoader,
 ) -> Result<String, CoreError> {
-    let doc = pdfcn_parser::parse_document(source)?;
+    render_html_with_theme(source, data, loader, &Theme::light())
+}
+
+/// Like [`render_html`], but semantic token utilities resolve through
+/// `theme`: its mode picks shadcn's light or dark token table and its
+/// per-token overrides rebrand the document (`bg-primary`, `%Badge`,
+/// borders, ...) without touching the template. See [`theme_from_json`]
+/// for the HTTP-facing shape.
+pub fn render_html_with_theme(
+    source: &str,
+    data: &JsonValue,
+    loader: &dyn PartialLoader,
+    theme: &Theme,
+) -> Result<String, CoreError> {
+    let doc = cached_parse(source)?;
     let resolved = pdfcn_template::evaluate(&doc, data, loader)?;
     let body = html_render::render_body(&resolved)?;
     // The layout engine ignores the CSS `gap` declaration, so flex/grid
@@ -163,7 +264,7 @@ pub fn render_html(
     // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
     // every other utility (see pdfcn_styles::rewrite_gaps).
     let body_html = pdfcn_styles::rewrite_gaps(&body.into_string());
-    let stylesheet = pdfcn_styles::build_stylesheet(&body_html);
+    let stylesheet = pdfcn_styles::build_stylesheet_with_theme(&body_html, theme);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))
 }
 
@@ -219,9 +320,20 @@ pub fn render_pdf_with_assets(
         margin_left: Some(page.margin_mm),
         ..Default::default()
     };
+    // Embed only the fonts the document can reach. Every built-in family
+    // is ~300-500KB of TTF, and a typical invoice uses two of the twelve;
+    // embedding all of them on every render was the single largest line
+    // item in output size. A family survives if the document's CSS names
+    // it -- or if it's Inter, the default body font `wrap_document` always
+    // sets. Caller-supplied fonts are always kept (they were supplied
+    // deliberately, and their bytes aren't ours to second-guess).
+    let used_families = used_font_families(html);
     let mut fonts = BTreeMap::new();
     let mut raw_fonts: BTreeMap<String, &[u8]> = BTreeMap::new();
     for (family, bytes) in BUILTIN_FONTS {
+        if *family != DEFAULT_FONT_FAMILY && !used_families.contains(*family) {
+            continue;
+        }
         fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));
         raw_fonts.insert(family.to_string(), bytes);
     }
@@ -403,6 +515,50 @@ fn load_images(
     images
 }
 
+/// Collects the font families the document's CSS actually asks for: every
+/// value in a `font-family:` declaration (the generated stylesheet embeds
+/// them minified inside `<style>`, so this scans the whole document),
+/// split on commas, unquoted and trimmed. Used by [`render_pdf_with_assets`]
+/// to prune the embedded font set down to what the document references.
+fn used_font_families(html: &str) -> BTreeSet<String> {
+    // Generic CSS family keywords are never embeddable files; naming one
+    // in a stack is a fallback instruction, not a font request.
+    const GENERIC_FAMILIES: [&str; 9] = [
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+    ];
+    const MARKER: &str = "font-family:";
+    let mut out = BTreeSet::new();
+    let mut rest = html;
+    while let Some(pos) = rest.find(MARKER) {
+        let after = &rest[pos + MARKER.len()..];
+        // A declaration ends at `;`, a block close, a tag opening, or an
+        // inline attribute's `)"` tail -- but never at a quote or comma,
+        // since multi-word families arrive quoted ("Source Serif 4") and
+        // stacks arrive comma-separated.
+        let end = after
+            .find([';', '}', '<', ')', '>'])
+            .unwrap_or(after.len());
+        for name in after[..end].split(',') {
+            let name = name.trim().trim_matches('"').trim_matches('\'').trim();
+            if !name.is_empty()
+                && !GENERIC_FAMILIES.contains(&name.to_ascii_lowercase().as_str())
+            {
+                out.insert(name.to_string());
+            }
+        }
+        rest = &after[end..];
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +719,101 @@ mod tests {
         assert!(err
             .to_string()
             .contains("interactive-only, unsupported in static PDF output"));
+    }
+
+    /// Font pruning: only families the document's CSS names (plus Inter,
+    /// the default body font) may be embedded. A serif/mono document must
+    /// keep those families; a default-styled one embeds just Inter.
+    #[test]
+    fn used_font_families_collects_every_declared_family() {
+        let html = concat!(
+            "<style>body{font-family:Inter}",
+            "h1{font-family:\"Source Serif 4\",serif}",
+            "code{font-family: JetBrains Mono}</style>"
+        );
+        let used = used_font_families(html);
+        assert!(used.contains("Inter"));
+        assert!(used.contains("Source Serif 4"));
+        assert!(used.contains("JetBrains Mono"));
+    }
+
+    #[test]
+    fn a_default_styled_document_embeds_only_the_default_font() {
+        let source = "%h1 Invoice\\n%p Total: $42";
+        let html = render_html(source, &json!({}), &NoPartials).unwrap();
+        // The stylesheet names only the default family.
+        let used = used_font_families(&html);
+        assert_eq!(used, BTreeSet::from([DEFAULT_FONT_FAMILY.to_string()]));
+        // End to end: still renders.
+        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    #[test]
+    fn a_serif_document_keeps_its_named_font_embedded() {
+        let source = "%p(style=\"font-family:'Source Serif 4'\") Serif body";
+        let html = render_html(source, &json!({}), &NoPartials).unwrap();
+        assert!(used_font_families(&html).contains("Source Serif 4"));
+        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    /// The parse cache must be transparent: identical renders before and
+    /// after caching (including a second render of the same source).
+    #[test]
+    fn cached_parse_is_transparent_for_repeated_sources() {
+        let source = "%p Cache me {{ n }}";
+        let first = cached_parse(source).unwrap();
+        let second = cached_parse(source).unwrap();
+        assert_eq!(first, second);
+        // And the cached AST still evaluates correctly.
+        let resolved = pdfcn_template::evaluate(&second, &json!({ "n": 7 }), &NoPartials).unwrap();
+        match &resolved[0] {
+            pdfcn_template::Resolved::Element { children, .. } => {
+                assert_eq!(children[0], pdfcn_template::Resolved::Text("Cache me 7".into()));
+            }
+            other => panic!("expected Element, got {other:?}"),
+        }
+    }
+
+    /// The theme request field drives token resolution end to end: dark
+    /// mode flips `bg-background`, and an override rebrands `bg-primary`.
+    /// The theme request field drives token resolution end to end: dark
+    /// mode flips `bg-background` (and the primary ink on top of it), and
+    /// an override rebrands `bg-primary`. Assertions target the *minified*
+    /// stylesheet values -- lightningcss rewrites `hsl(...)` tokens to hex --
+    /// so the expected strings are the hex forms: shadcn's dark background
+    /// hsl(222.2, 84%, 4.9%) is #020817, dark primary hsl(210, 40%, 98%)
+    /// is #f8fafc.
+    #[test]
+    fn render_html_with_theme_resolves_tokens_end_to_end() {
+        let source = "%p.bg-background.text-primary Body";
+        let theme = Theme::dark();
+        let html =
+            render_html_with_theme(source, &json!({}), &NoPartials, &theme).unwrap();
+        assert!(html.contains("#020817"), "{html}");
+        assert!(html.contains("#f8fafc"), "{html}");
+
+        let mut branded = Theme::light();
+        branded.overrides.insert("primary".into(), "#2563eb".into());
+        let html =
+            render_html_with_theme(source, &json!({}), &NoPartials, &branded).unwrap();
+        assert!(html.to_lowercase().contains("#2563eb"), "{html}");
+    }
+
+    #[test]
+    fn theme_from_json_accepts_mode_and_overrides_and_rejects_junk() {
+        let theme = theme_from_json(&serde_json::json!({
+            "mode": "dark",
+            "overrides": { "primary": "#2563eb" }
+        }))
+        .unwrap();
+        assert_eq!(theme.mode, ThemeMode::Dark);
+        assert_eq!(theme.token("primary"), Some("#2563eb"));
+
+        assert_eq!(theme_from_json(&json!({})).unwrap(), Theme::light());
+        assert!(theme_from_json(&json!("dark")).is_err());
+        assert!(theme_from_json(&json!({ "mode": "sepia" })).is_err());
+        assert!(theme_from_json(&json!({ "overrides": { "primary": 3 } })).is_err());
     }
 }

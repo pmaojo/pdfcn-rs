@@ -1,8 +1,10 @@
 mod gap;
+pub mod theme;
 mod tokens;
 mod utilities;
 
 pub use gap::rewrite_gaps;
+pub use theme::{Theme, ThemeMode};
 
 use std::collections::BTreeSet;
 
@@ -43,11 +45,19 @@ pub fn extract_classes(html: &str) -> BTreeSet<String> {
 
 /// Builds a minified, self-contained stylesheet for exactly the utility
 /// classes referenced in `html`, plus the default print-safety rules.
+/// Semantic tokens resolve against shadcn's light theme.
 pub fn build_stylesheet(html: &str) -> String {
+    build_stylesheet_with_theme(html, &Theme::light())
+}
+
+/// Like [`build_stylesheet`], but semantic token utilities resolve through
+/// `theme` -- its mode picks shadcn's light or dark token table and its
+/// overrides rebrand individual tokens (e.g. `primary` -> `#2563eb`).
+pub fn build_stylesheet_with_theme(html: &str, theme: &Theme) -> String {
     let classes = extract_classes(html);
     let mut css = String::from(PRINT_RULES);
     for class in &classes {
-        if let Some(decl) = utilities::resolve(class) {
+        if let Some(decl) = utilities::resolve_with(class, theme) {
             let escaped = css_escape_class(class);
             css.push_str(&format!(".{escaped}{{{decl}}}\n"));
         }
@@ -62,7 +72,7 @@ fn css_escape_class(class: &str) -> String {
     class
         .chars()
         .map(|c| {
-            if c == '.' || c == ':' || c == '/' {
+            if matches!(c, '.' | ':' | '/' | '[' | ']') {
                 format!("\\{c}")
             } else {
                 c.to_string()
