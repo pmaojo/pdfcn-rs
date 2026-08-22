@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -78,6 +79,12 @@ pub struct BuildArgs {
     /// Comma-separated PDF document keywords metadata
     #[arg(long)]
     keywords: Option<String>,
+    /// SVG side channel for %Vector placeholders (`%Vector(id="...")`):
+    /// repeatable `--svg ID=PATH`, where PATH is a .svg file whose text is
+    /// embedded under that id (the vector substrate; requires pdfcn-core
+    /// built with its `vector` cargo feature).
+    #[arg(long = "svg", value_name = "ID=PATH")]
+    svg: Vec<String>,
 }
 
 /// Fetches one `http(s)://` image URL for `--fetch-remote-images`. Returns
@@ -177,6 +184,15 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
         .keywords
         .map(|k| k.split(',').map(|s| s.trim().to_string()).collect())
         .unwrap_or_default();
+    let mut svg_assets = BTreeMap::new();
+    for entry in &args.svg {
+        let Some((id, path)) = entry.split_once('=') else {
+            anyhow::bail!("invalid --svg '{entry}', expected ID=PATH (a .svg file)")
+        };
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("--svg {id}: cannot read {path}: {e}"))?;
+        svg_assets.insert(id.to_string(), source);
+    }
     let options = RenderOptions {
         page,
         theme: parse_theme(&args.theme)?,
@@ -192,6 +208,7 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
             keywords,
             producer: None,
         },
+        svg_assets,
     };
     let fetcher: Option<&pdfcn_core::RemoteImageFetcher> =
         args.fetch_remote_images.then_some(&fetch_remote_image);

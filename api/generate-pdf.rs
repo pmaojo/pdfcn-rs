@@ -113,6 +113,12 @@ struct GenerateRequest {
     /// Plain PDF document metadata (title/author/subject/keywords/producer).
     #[serde(default)]
     metadata: Option<MetadataDto>,
+    /// SVG side channel for `%Vector(id="...")` placeholders (the vector
+    /// substrate): id -> SVG source text, plain UTF-8 (JSON needs no base64).
+    /// Requires a binary built with pdfcn-core's `vector` cargo feature;
+    /// without it these are accepted and ignored.
+    #[serde(default)]
+    svgs: BTreeMap<String, String>,
 }
 
 /// Resolves `- include` against a request's `partials` map.
@@ -235,6 +241,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
             .metadata
             .map(MetadataDto::into_document_metadata)
             .unwrap_or_default(),
+        svg_assets: req.svgs,
     };
 
     // Partials are validated up front (a syntax error in one is a client

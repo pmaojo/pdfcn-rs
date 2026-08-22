@@ -14,6 +14,7 @@
 
 use crate::page::PageConfig;
 use pdfcn_styles::Theme;
+use std::collections::BTreeMap;
 
 /// The full set of rendering choices threaded through the `render*` family:
 /// page geometry and theme (consumed at the HTML-generation stage), plus
@@ -58,6 +59,20 @@ pub struct RenderOptions {
     /// tunable rather than what turns it on.
     pub image_optimization: Option<ImageOptimization>,
     pub metadata: DocumentMetadata,
+    /// The side channel for the Wave 1 vector substrate: `id -> SVG source`
+    /// for `%Vector(id="...")` placeholders (`<img src="pdfcn-vector:{id}">`).
+    /// An SVG payload is arbitrary-length XML -- hex- or base64-encoding it
+    /// into an attribute would bloat every intermediate representation and
+    /// cap at the attribute-size sanity of the whole pipeline, so the markup
+    /// carries only the id and the caller supplies the bytes here, exactly
+    /// like fonts and images travel outside the template.
+    ///
+    /// Consumed only when the crate is built with the opt-in `vector` cargo
+    /// feature; without it the map is accepted and ignored (placeholders
+    /// degrade like any unresolved image). Charts v2 and `%Barcode` don't use
+    /// this channel: their payloads are small, self-describing specs encoded
+    /// in the src itself, so they stay stateless.
+    pub svg_assets: BTreeMap<String, String>,
 }
 
 impl RenderOptions {

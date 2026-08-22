@@ -31,6 +31,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 const QRCODE_SCHEME: &str = "pdfcn-qrcode:";
+/// The Wave 1 vector-substrate schemes (`%Vector`, Charts v2, `%Barcode`).
+/// Charts and barcodes carry their (small, self-describing) spec hex-encoded
+/// in the src -- the exact convention `%QRCode` proved; arbitrary caller
+/// SVG travels through `RenderOptions::svg_assets` keyed by the id instead,
+/// because an XML document doesn't belong URL-encoded inside an attribute.
+#[cfg(feature = "vector")]
+const VECTOR_SCHEME: &str = "pdfcn-vector:";
+#[cfg(feature = "vector")]
+const CHART_SCHEME: &str = "pdfcn-chart:";
+#[cfg(feature = "vector")]
+const BARCODE_SCHEME: &str = "pdfcn-barcode:";
 /// Payload cap before the QR encoder would need the largest symbol
 /// versions; anything bigger degrades to a broken-image placeholder rather
 /// than risking an oversized encode.
@@ -182,6 +193,86 @@ fn generate_qrcodes(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
         if let Some(png) = qrcode_png(&payload) {
             images.insert(src, png);
         }
+    }
+}
+
+/// Pass 1b (Ola 1.2): fills every vector-substrate placeholder -- `%Vector`
+/// side-channel lookups, Charts v2 specs and `%Barcode` payloads -- with real
+/// PNG bytes registered under the placeholder's own src. A placeholder whose
+/// SVG can't be produced (unknown id, malformed spec, unencodable payload)
+/// is left unresolved and degrades exactly like any missing image; nothing
+/// here fails or panics the render.
+/// No-op (and compiles to nothing) without the `vector` cargo feature.
+pub(crate) fn generate_vectors(
+    html: &str,
+    images: &mut BTreeMap<String, Vec<u8>>,
+    svg_assets: &BTreeMap<String, String>,
+) {
+    #[cfg(feature = "vector")]
+    {
+        use crate::{barcode, charts_svg, raster};
+        use serde_json::Value as JsonValue;
+
+        let mut boxes: BTreeMap<String, (Option<f64>, Option<f64>)> = BTreeMap::new();
+        for tag in scan_img_tags(html) {
+            let Some(src) = attr_value(&tag.attrs, "src").map(str::to_string) else {
+                continue;
+            };
+            if !(src.starts_with(VECTOR_SCHEME)
+                || src.starts_with(CHART_SCHEME)
+                || src.starts_with(BARCODE_SCHEME))
+            {
+                continue;
+            }
+            let (w, h) = attr_value(&tag.attrs, "style")
+                .map(parse_style)
+                .map(|s| (s.width_px, s.height_px))
+                .unwrap_or((None, None));
+            let entry = boxes.entry(src).or_insert((None, None));
+            if let Some(w) = w {
+                entry.0 = Some(entry.0.map_or(w, |prev| prev.max(w)));
+            }
+            if let Some(h) = h {
+                entry.1 = Some(entry.1.map_or(h, |prev| prev.max(h)));
+            }
+        }
+
+        for (src, (box_w, box_h)) in boxes {
+            if images.contains_key(&src) {
+                continue;
+            }
+            // One closure so any step can bail out with `?`: an unfillable
+            // placeholder is simply left unresolved.
+            let png = (|| {
+                if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
+                    let svg = svg_assets.get(id)?;
+                    return raster::svg_to_png(svg, box_w, box_h);
+                }
+                if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
+                    let bytes = hex_decode(spec_hex)?;
+                    let spec: JsonValue = serde_json::from_slice(&bytes).ok()?;
+                    let svg = charts_svg::chart_svg(&spec)?;
+                    return raster::svg_to_png(&svg, box_w, box_h);
+                }
+                if let Some(rest) = src.strip_prefix(BARCODE_SCHEME) {
+                    let (scheme, hex_value) = rest.split_once(':')?;
+                    let bytes = hex_decode(hex_value)?;
+                    let value = str::from_utf8(&bytes).ok()?;
+                    let w = box_w.unwrap_or(240.0);
+                    let h = box_h.unwrap_or(60.0);
+                    let svg = barcode::barcode_svg(scheme, value, w, h)?;
+                    return raster::svg_to_png(&svg, Some(w), Some(h));
+                }
+                None
+            })();
+            if let Some(png) = png {
+                images.insert(src, png);
+            }
+        }
+    }
+    #[cfg(not(feature = "vector"))]
+    {
+        let _ = (html, images, svg_assets);
     }
 }
 
@@ -365,12 +456,21 @@ fn downscale_to_limits(
     Some(out)
 }
 
-/// Runs every pass over the rendered HTML + image map, in place for the
-/// map and by value for the HTML. Call this right before handing both to
-/// `printpdf`. Cover cropping runs first, slicing from each source's full
-/// resolution; resolution normalization runs last, capping everything at
-/// print scale without disturbing sources that already have a crop.
+/// The pre-vector entry point, kept for the asset pass's own test suite;
+/// production code always goes through [`prepare_assets_with_vectors`] so
+/// the side channel reaches the substrate.
+#[cfg(test)]
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
+    prepare_assets_with_vectors(html, images, &BTreeMap::new())
+}
+
+/// Like [`prepare_assets`], with the vector substrate's side channel:
+/// `id -> SVG source` backing `<img src="pdfcn-vector:{id}">` placeholders.
+pub(crate) fn prepare_assets_with_vectors(
+    html: &str,
+    images: &mut BTreeMap<String, Vec<u8>>,
+    svg_assets: &BTreeMap<String, String>,
+) -> String {
     // Cover-crop before normalizing: a crop slices from the source's full
     // resolution, so it must run while those bytes are intact --
     // normalizing first would shrink the pool it samples and bake that
@@ -378,6 +478,7 @@ pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Str
     // would come out 75x75 instead of 100x100).
     let rewritten = apply_cover_crops(html, images);
     generate_qrcodes(html, images);
+    generate_vectors(html, images, svg_assets);
     // The original stays registered under its own src untouched, so
     // normalization -- last, capping everything at box * MAX_PRINT_SCALE --
     // parks any src that has a cropped variant aside: its visual role is

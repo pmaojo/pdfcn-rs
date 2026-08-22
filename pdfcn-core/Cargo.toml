@@ -7,6 +7,14 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Orchestrates parsing, template evaluation, component expansion, styling and PDF rendering"
 
+[features]
+# The Wave 1 vector substrate (Ola 1.2/1.3): `%Vector`, Charts v2 and
+# `%Barcode` all emit SVG placeholders that this crate rasterizes to PNG
+# (~300dpi of their layout box) just before layout. Off by default so the
+# serverless binary is untouched; enabling it pulls in resvg and turns on
+# the matching component set in pdfcn-components.
+vector = ["dep:resvg", "pdfcn-components/vector"]
+
 [dependencies]
 pdfcn-parser = { workspace = true }
 pdfcn-template = { workspace = true }
@@ -19,6 +27,7 @@ serde_yaml = { workspace = true }
 printpdf = { workspace = true }
 image = { workspace = true }
 qrcodegen = { workspace = true }
+resvg = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

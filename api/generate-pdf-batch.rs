@@ -147,6 +147,12 @@ struct BatchRequest {
     /// `header_text`/`footer_text`/`image_optimization` work here.
     #[serde(default)]
     metadata: Option<MetadataDto>,
+    /// SVG side channel for `%Vector(id="...")` placeholders (the vector
+    /// substrate), shared by every document in the batch: id -> SVG source
+    /// text. Requires a binary built with pdfcn-core's `vector` cargo
+    /// feature; without it these are accepted and ignored.
+    #[serde(default)]
+    svgs: BTreeMap<String, String>,
 }
 
 fn default_data() -> serde_json::Value {
@@ -312,6 +318,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
             .metadata
             .map(MetadataDto::into_document_metadata)
             .unwrap_or_default(),
+        svg_assets: req.svgs,
     };
 
     let loader: Box<dyn PartialLoader + Send + Sync> = if req.partials.is_empty() {
