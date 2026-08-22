@@ -1,0 +1,9 @@
+{
+  "name": "pdfcn-rs",
+  "description": "Write and build pdfcn-rs HAML-like templates into PDFs — components, Tailwind-style utilities, and the opt-in vector/factur-x Cargo features.",
+  "version": "0.1.0",
+  "author": { "name": "pmaojo" },
+  "homepage": "https://github.com/pmaojo/pdfcn-rs",
+  "repository": "https://github.com/pmaojo/pdfcn-rs",
+  "license": "MIT"
+}
