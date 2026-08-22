@@ -21,3 +21,14 @@ image = { workspace = true }
 qrcodegen = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
+
+# `harness = false` hands argument parsing to criterion. `test = false` keeps
+# `cargo test` from also running the bench binary in its one-iteration test
+# mode: these benchmarks render real documents through the layout engine, and
+# paying for that on every `cargo test` would make the suite slower for no
+# added coverage -- the golden snapshots already exercise the same path.
+[[bench]]
+name = "render"
+harness = false
+test = false
