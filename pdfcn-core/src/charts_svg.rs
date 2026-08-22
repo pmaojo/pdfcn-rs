@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn sparkline_is_a_single_stroke_with_an_area_fill() {
-        let svg = svg_of(json!({ "k": "spark", "v": [3, 1, 4, 1, 5, 9, 2, 6] }));
+        let svg = svg_of(json!({ "k": "spark", "s": [3, 1, 4, 1, 5, 9, 2, 6] }));
         assert_eq!(svg.matches("<polyline").count(), 1, "{svg}");
         assert!(svg.contains("<polygon"), "{svg}");
     }

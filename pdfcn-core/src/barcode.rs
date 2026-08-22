@@ -192,8 +192,9 @@ fn ean13_digits(value: &str) -> Option<[u8; 13]> {
     for (slot, d) in digits.iter_mut().zip(bytes) {
         *slot = d - b'0';
     }
-    let present = bytes.len();
-    let total: usize = (0..present)
+    // The checksum always covers the first 12 digits; the 13th, when
+    // present, is the check digit being validated (never part of the sum).
+    let total: usize = (0..12)
         .map(|i| usize::from(digits[i]) * if i % 2 == 0 { 1 } else { 3 })
         .sum();
     let check = ((10 - total % 10) % 10) as u8;
