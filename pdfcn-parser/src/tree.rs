@@ -107,11 +107,7 @@ impl<'a> Cursor<'a> {
             LineHead::Directive { keyword, rest } if keyword == "if" => {
                 let mut branches = vec![(rest, self.parse_children(indent)?)];
                 let mut else_body = None;
-                loop {
-                    let Some((ci, next_line_no, content)) = self.lines.get(self.pos).copied()
-                    else {
-                        break;
-                    };
+                while let Some((ci, next_line_no, content)) = self.lines.get(self.pos).copied() {
                     if ci != indent {
                         break;
                     }
