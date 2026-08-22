@@ -210,7 +210,12 @@ mod tests {
     fn multi_series_is_accepted_via_the_series_attribute() {
         let out = line_chart(&[a("series", r#"[[10, 20], [5, 8]]"#)]).into_string();
         let spec: JsonValue = serde_json::from_str(&payload(&out)).unwrap();
-        assert_eq!(spec["s"], json!([[10.0, 20.0], [5.0, 8.0]]));
+        // serde_json distinguishes Number(10) from Number(10.0), so compare
+        // through as_f64 rather than raw Value equality.
+        assert_eq!(spec["s"][0][0].as_f64(), Some(10.0));
+        assert_eq!(spec["s"][0][1].as_f64(), Some(20.0));
+        assert_eq!(spec["s"][1][0].as_f64(), Some(5.0));
+        assert_eq!(spec["s"][1][1].as_f64(), Some(8.0));
     }
 
     #[test]

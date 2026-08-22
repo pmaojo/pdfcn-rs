@@ -59,13 +59,12 @@ mod tests {
 
     fn decode_src(out: &str) -> String {
         let marker = r#"src="pdfcn-barcode:"#;
-        let rest = out
+        let value = out
             .split(marker)
             .nth(1)
             .and_then(|r| r.split('"').next())
             .unwrap();
-        let (scheme_hexed, _) = rest.split_once('"').unwrap();
-        let hexed = scheme_hexed.split(':').nth(1).unwrap();
+        let hexed = value.split(':').nth(1).unwrap();
         (0..hexed.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&hexed[i..i + 2], 16).unwrap())
