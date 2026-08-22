@@ -44,7 +44,13 @@ name = "pdfcn_vercel"
 path = "src/lib.rs"
 
 [dependencies]
-pdfcn-core = { workspace = true }
+# Explicit `features` rather than relying on pdfcn-core's own `default`:
+# Cargo unifies a dependency's features across every workspace member that
+# requests it, so a bare `default-features = true` edge here would still
+# pull vector/factur-x in even if some other crate's build asked for
+# `--no-default-features` -- this deployed function wants them
+# unconditionally, not by accident of unification.
+pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x"] }
 pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
 http = { version = "1", default-features = false }
@@ -69,7 +75,12 @@ pdfcn-parser = { path = "pdfcn-parser", version = "0.1.0" }
 pdfcn-template = { path = "pdfcn-template", version = "0.1.0" }
 pdfcn-components = { path = "pdfcn-components", version = "0.1.0" }
 pdfcn-styles = { path = "pdfcn-styles", version = "0.1.0" }
-pdfcn-core = { path = "pdfcn-core", version = "0.1.0" }
+# `default-features = false` here is required, not just documentation:
+# Cargo ignores a member's own `default-features` override on a
+# `workspace = true` dependency unless the workspace-level entry itself
+# specifies one -- each dependent below opts back into exactly the
+# features it wants via its own `features = [...]`.
+pdfcn-core = { path = "pdfcn-core", version = "0.1.0", default-features = false }
 
 winnow = "0.6"
 serde = { version = "1", features = ["derive"] }

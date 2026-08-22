@@ -8,19 +8,25 @@ rust-version.workspace = true
 description = "Orchestrates parsing, template evaluation, component expansion, styling and PDF rendering"
 
 [features]
+default = ["vector", "factur-x"]
+
 # The Wave 1 vector substrate (Ola 1.2/1.3): `%Vector`, Charts v2 and
 # `%Barcode` all emit SVG placeholders that this crate rasterizes to PNG
-# (~300dpi of their layout box) just before layout. Off by default so the
-# serverless binary is untouched; enabling it pulls in resvg and turns on
-# the matching component set in pdfcn-components.
+# (~300dpi of their layout box) just before layout. On by default -- it's
+# not a heavy addition (resvg, already in the dependency tree via other
+# paths in practice) -- but stays a real Cargo feature so a deployment
+# that wants the smallest possible binary can opt out explicitly with
+# `--no-default-features`; enabling it pulls in resvg and turns on the
+# matching component set in pdfcn-components.
 vector = ["dep:resvg", "pdfcn-components/vector"]
 
 # Ola 3: post-processes printpdf's own output to splice in a Factur-X
 # EN 16931/CII invoice attachment (embedded XML + PDF/A-3 catalog
-# structure). Off by default -- adds a direct `lopdf` dependency, but see
-# the comment on the workspace `lopdf` entry: it's the same version
-# printpdf already resolves transitively, so this doesn't grow the
-# default build's dependency tree at all, only pdfcn-core's own surface.
+# structure). On by default, same reasoning as `vector` above -- adds a
+# direct `lopdf` dependency, but see the comment on the workspace `lopdf`
+# entry: it's the same version printpdf already resolves transitively, so
+# this doesn't grow the default build's dependency tree at all, only
+# pdfcn-core's own surface. `--no-default-features` opts back out.
 factur-x = ["dep:lopdf"]
 
 [dependencies]

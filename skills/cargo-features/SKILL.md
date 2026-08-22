@@ -1,26 +1,45 @@
 ---
 name: cargo-features
-description: Build and use pdfcn-rs's opt-in Cargo features — vector (Charts v2, %Barcode, %Vector) and factur-x (EN 16931 invoice embedding) — including CLI flags, function signatures, and why they're feature-gated. Use when building the CLI with extra features, adding a chart/barcode to a template, or embedding a Factur-X invoice.
+description: Build and use pdfcn-rs's vector (Charts v2, %Barcode, %Vector) and factur-x (EN 16931 invoice embedding) Cargo features, both on by default — CLI flags, function signatures, how to opt out with --no-default-features, and why they're feature-gated at all. Use when building the CLI, adding a chart/barcode to a template, or embedding a Factur-X invoice.
 ---
 
-# pdfcn-rs opt-in Cargo features
+# pdfcn-rs Cargo features: vector and factur-x
 
-pdfcn-rs's default build is deliberately minimal — it's what ships as the
-serverless `pdfcn-vercel` function, and CI enforces a binary-size
-tripwire on it. Two capabilities are real but live behind Cargo features,
-off by default, so they never reach that build unless explicitly enabled:
+pdfcn-rs ships as the serverless `pdfcn-vercel` function, and CI enforces
+a binary-size tripwire on it (currently ~18.4MB against a 60MB
+tripwire — plenty of headroom). Two capabilities live behind named Cargo
+features rather than always-on code, but both ship **on by default**
+since neither is heavy (~1.8MB combined): a deployment that wants the
+smallest possible binary opts back out explicitly:
 
 ```sh
-cargo build -p pdfcn-cli --features vector,factur-x
-cargo test --workspace --features pdfcn-core/vector,pdfcn-components/vector,pdfcn-cli/vector
-cargo test --workspace --features pdfcn-core/factur-x,pdfcn-cli/factur-x
+cargo build -p pdfcn-cli --no-default-features   # drops both vector and factur-x
+cargo test -p pdfcn-cli --no-default-features    # test this combination too
+```
+
+Use `-p pdfcn-cli`, not `--workspace`, for the opt-out: the deployed
+`pdfcn-vercel` function and the `pdfcn-node` napi bindings each request
+`vector`/`factur-x` unconditionally on their own dependency edge (no
+opt-out for those two, by design), so a `--workspace --no-default-features`
+build still ends up compiling `pdfcn-core` with both features anyway --
+Cargo unifies a shared dependency's features across every workspace
+member being built together.
+
+The plain default build already has both:
+
+```sh
+cargo build -p pdfcn-cli
 ```
 
 Adding a new heavy capability to this project should follow the same
-pattern: a new named feature in `pdfcn-core/Cargo.toml`, forwarded through
-`pdfcn-cli/Cargo.toml` and `pdfcn-components/Cargo.toml` as needed, never
-added to `pdfcn-vercel`'s default dependency graph. Verify with `cargo
-tree --edges features -p pdfcn-vercel`.
+gating pattern (a new named feature in `pdfcn-core/Cargo.toml`, forwarded
+through `pdfcn-cli/Cargo.toml` and `pdfcn-components/Cargo.toml` as
+needed) so it can be compiled out with `--no-default-features` -- but
+whether the new feature defaults on or off is a real judgment call
+against the size gate, not an automatic "off" the way it would be for a
+heavier addition. Verify either way with `cargo tree --edges features -p
+pdfcn-vercel` so the default build's actual dependency graph is never a
+surprise.
 
 ## `vector` — Charts v2, %Barcode, %Vector
 

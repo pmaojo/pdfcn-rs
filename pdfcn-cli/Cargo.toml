@@ -12,15 +12,25 @@ name = "pdfcn"
 path = "src/main.rs"
 
 [features]
+default = ["vector", "factur-x"]
 # Forwards to pdfcn-core's own `vector` feature (Charts v2, %Barcode,
-# %Vector). Off by default, matching pdfcn-core: `--svg` and the chart/
-# barcode components are otherwise accepted but render a disabled-feature
+# %Vector). On by default, matching pdfcn-core -- `cargo build -p
+# pdfcn-cli --no-default-features` opts back out; without it, `--svg` and
+# the chart/barcode components are accepted but render a disabled-feature
 # marker, never a silent no-op.
 vector = ["pdfcn-core/vector"]
 factur-x = ["pdfcn-core/factur-x"]
 
 [dependencies]
-pdfcn-core = { workspace = true }
+# `default-features = false` + explicit forwarding via the `vector`/
+# `factur-x` features above: a bare `pdfcn-core = { workspace = true }`
+# edge would request pdfcn-core's own defaults regardless of this crate's
+# `--no-default-features`, since Cargo unifies a dependency's features
+# across every workspace member that requests it -- without this, the
+# opt-out documented above would only ever look like it worked (the CLI
+# binary's own dead code gets stripped either way) without actually
+# skipping compiling resvg/lopdf into pdfcn-core.
+pdfcn-core = { workspace = true, default-features = false }
 clap = { workspace = true }
 notify = { workspace = true }
 axum = { workspace = true }

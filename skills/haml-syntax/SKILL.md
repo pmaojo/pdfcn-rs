@@ -45,9 +45,10 @@ level is its nesting.
 `Select` `Label` `Checkbox` `RadioItem` `Progress` `Breadcrumb`
 `Pagination` `BarChart` `QRCode` `PageFooter`
 
-Behind the opt-in `vector` Cargo feature (see the `cargo-features`
-skill): `LineChart` `StackedBarChart` `PieChart` `Sparkline` `Barcode`
-`Vector`. Built without that feature, these expand to an explicit marker
+Behind the `vector` Cargo feature, on by default (see the
+`cargo-features` skill): `LineChart` `StackedBarChart` `PieChart`
+`Sparkline` `Barcode` `Vector`. Built with `--no-default-features` (or
+otherwise without that feature), these expand to an explicit marker
 naming the disabled feature — never a silent no-op.
 
 `%Card(image="cover.jpg")` gives a card a full-bleed cover photo; the

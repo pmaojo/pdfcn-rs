@@ -5,8 +5,9 @@ mod html_render;
 mod options;
 mod page;
 // The Wave 1 vector substrate (Ola 1.2/1.3): SVG rasterization and the
-// chart/barcode SVG generators. Compiled only behind the opt-in `vector`
-// cargo feature -- the default build never sees them (see Cargo.toml).
+// chart/barcode SVG generators. Behind the `vector` cargo feature, on by
+// default (see Cargo.toml) -- `--no-default-features` compiles it out
+// entirely for a deployment that wants the smallest possible binary.
 #[cfg(feature = "vector")]
 mod barcode;
 #[cfg(feature = "vector")]
@@ -15,8 +16,8 @@ mod charts_svg;
 mod raster;
 
 // Ola 3: post-processes printpdf's own output to splice in a Factur-X
-// invoice attachment. Compiled only behind the opt-in `factur-x` cargo
-// feature -- the default build never sees `lopdf` (see Cargo.toml).
+// invoice attachment. Behind the `factur-x` cargo feature, on by default
+// (see Cargo.toml) -- same `--no-default-features` opt-out as `vector`.
 #[cfg(feature = "factur-x")]
 mod factur_x;
 
