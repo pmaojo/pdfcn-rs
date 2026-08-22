@@ -24,6 +24,23 @@ const SPACING: &[(&str, &str)] = &[
     ("16", "4rem"),
     ("20", "5rem"),
     ("24", "6rem"),
+    // The scale used to stop here, so every one of Tailwind's larger steps
+    // (`h-48`, `w-64`, `p-96`, ...) silently resolved to nothing -- not a
+    // smaller box, no CSS rule at all. `%Card`'s own cover image uses `h-48`
+    // (pdfcn-components/src/lib.rs) and was hitting exactly this gap.
+    ("28", "7rem"),
+    ("32", "8rem"),
+    ("36", "9rem"),
+    ("40", "10rem"),
+    ("44", "11rem"),
+    ("48", "12rem"),
+    ("52", "13rem"),
+    ("56", "14rem"),
+    ("60", "15rem"),
+    ("64", "16rem"),
+    ("72", "18rem"),
+    ("80", "20rem"),
+    ("96", "24rem"),
 ];
 
 const FONT_SIZE: &[(&str, &str)] = &[
@@ -470,6 +487,17 @@ mod tests {
             resolve("bg-red-600").as_deref(),
             Some("background-color:#dc2626")
         );
+    }
+
+    /// The spacing scale used to stop at "24" (6rem); anything past it
+    /// (`h-48`, used by `%Card`'s cover image, among others) resolved to
+    /// `None` -- an unrecognized class, not a smaller box.
+    #[test]
+    fn resolves_the_extended_spacing_scale_past_24() {
+        assert_eq!(resolve("h-48").as_deref(), Some("height:12rem"));
+        assert_eq!(resolve("h-96").as_deref(), Some("height:24rem"));
+        assert_eq!(resolve("w-64").as_deref(), Some("width:16rem"));
+        assert_eq!(resolve("p-32").as_deref(), Some("padding:8rem"));
     }
 
     #[test]

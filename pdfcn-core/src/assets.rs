@@ -537,6 +537,22 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (300, 150));
     }
 
+    /// `%Card`'s cover image only ever declares a height in `style=""` --
+    /// its width is `w-full`, a class, unknowable pre-layout. Height alone
+    /// must still bound the embedded resolution rather than falling through
+    /// to the boxless `MAX_IMAGE_DIMENSION_PX` cap (4096px): a 4000x3000
+    /// product photo in a 192px-tall card slot should ship around
+    /// 768x576 (192 * MAX_PRINT_SCALE), not 4096px wide.
+    #[test]
+    fn a_height_only_box_still_bounds_the_embedded_resolution() {
+        let src = "photo.png";
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(4000, 3000, [1, 2, 3]))]);
+        let html = format!(r#"<img src="{src}" style="height:192px;object-fit:cover">"#);
+        prepare_assets(&html, &mut images);
+        let decoded = image::load_from_memory(&images[src]).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (768, 576));
+    }
+
     #[test]
     fn a_source_within_its_boxs_resolution_is_untouched() {
         let src = "photo.png";
