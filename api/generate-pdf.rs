@@ -7,10 +7,11 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
-use pdfcn_core::{img_srcs, render_html, render_pdf_with_assets, EvalError, Orientation, PageConfig, PartialLoader, PageSize};
+use pdfcn_core::{img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError, Orientation, PageConfig, PartialLoader, PageSize, Theme};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::Duration;
 use vercel_runtime::{run, service_fn, Error, Request, Response};
 
@@ -65,15 +66,14 @@ struct GenerateRequest {
     filename: String,
     /// Caller-supplied fonts: family name -> base64-encoded TTF/OTF bytes.
     /// Embedded alongside (and, per family name, overriding) the built-in
-    /// typefaces, so `template` can use `font-family: "<name>"` for any key
+    /// typefaces, so `template` can use font-family "<name>" for any key
     /// given here -- e.g. a client's brand font.
     #[serde(default)]
     fonts: std::collections::HashMap<String, String>,
-    /// Caller-supplied images: `<img src="...">` value -> base64-encoded
-    /// JPEG/PNG bytes. `template` references a key via `%img(src="<key>")`
-    /// (or plain `<img src="<key>">`). Preferred over a remote URL when
-    /// both name the same `src` -- no fetch is attempted for a `src`
-    /// already resolved this way.
+    /// Caller-supplied images: img src value -> base64-encoded JPEG/PNG
+    /// bytes. `template` references a key via an img tag with that src.
+    /// Preferred over a remote URL when both name the same src -- no fetch
+    /// is attempted for a src already resolved this way.
     #[serde(default)]
     images: std::collections::HashMap<String, String>,
     /// Caller-supplied partials for `- include "name"`: partial name (as
@@ -81,6 +81,12 @@ struct GenerateRequest {
     /// compose a multi-partial document without hosting any template files.
     #[serde(default)]
     partials: std::collections::BTreeMap<String, String>,
+    /// Optional document theme: mode picks shadcn's light or dark token
+    /// table; overrides rebrand individual semantic tokens (e.g. primary
+    /// to a brand hex), recoloring every utility and component variant
+    /// built on them without touching the template.
+    #[serde(default)]
+    theme: Option<serde_json::Value>,
 }
 
 /// Resolves `- include` against a request's `partials` map.
@@ -105,20 +111,32 @@ fn default_filename() -> String {
     "document.pdf".to_string()
 }
 
-/// Cap on a single fetched image and on how many distinct `http(s):`
-/// sources one request will fetch, so one template can't turn a single PDF
-/// render into an unbounded number of slow/large outbound requests.
+/// Cap on a single fetched image and on how many distinct http(s) sources
+/// one request will fetch, so one template can't turn a single PDF render
+/// into an unbounded number of slow/large outbound requests.
 const MAX_REMOTE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_REMOTE_IMAGES_PER_REQUEST: usize = 12;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// The optional shared-secret gate, read exactly once per isolate. Reading
+/// it inside the handler would hide the dependency from tests and re-parse
+/// the environment on every request; a serverless isolate is long-lived
+/// enough that startup-time capture is the composition root.
+static API_KEY: OnceLock<Option<String>> = OnceLock::new();
+
+fn api_key() -> Option<&'static str> {
+    API_KEY
+        .get_or_init(|| std::env::var("PDFCN_API_KEY").ok().filter(|k| !k.is_empty()))
+        .as_deref()
+}
+
 /// True for an IP a template's image URL must never be allowed to reach:
 /// loopback, private/link-local ranges, multicast, unspecified, and IPv4
 /// mapped into IPv6. `template`/`data` are caller-controlled input on a
-/// public endpoint, so an unresolved image `src` is exactly the SSRF
-/// vector that let a template probe internal services or, on AWS (which
-/// Vercel Functions run on), the `169.254.169.254` instance-metadata
-/// endpoint -- this is what keeps that closed off.
+/// public endpoint, so an unresolved image src is exactly the SSRF vector
+/// that let a template probe internal services or, on AWS (which Vercel
+/// Functions run on), the 169.254.169.254 instance-metadata endpoint --
+/// this is what keeps that closed off.
 fn is_disallowed_target(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -143,7 +161,7 @@ fn is_disallowed_target(ip: IpAddr) -> bool {
     }
 }
 
-/// Resolves `host:port`, rejecting the target if it has no public IP among
+/// Resolves host:port, rejecting the target if it has no public IP among
 /// its resolved addresses (a hostname can resolve to several; every one of
 /// them must be public) or fails to resolve at all.
 async fn resolve_public_addr(host: &str, port: u16) -> Result<SocketAddr, &'static str> {
@@ -157,44 +175,79 @@ async fn resolve_public_addr(host: &str, port: u16) -> Result<SocketAddr, &'stat
         .ok_or("resolves only to a private/internal address")
 }
 
-/// Fetches one `http(s)://` image URL, resolving and validating its host
-/// first (see [`is_disallowed_target`]), then requesting that literal
-/// validated address with redirects disabled -- a redirect target gets its
-/// own validated fetch instead of being followed blindly, closing off
-/// SSRF-via-redirect. Errors and oversized responses degrade to `None`
-/// (the `<img>` renders as a broken-image placeholder) rather than failing
-/// the whole request over one bad image, matching a local file that isn't
-/// found.
+/// Fetches one http(s) image URL, resolving and validating its host first
+/// (see [`is_disallowed_target`]), then requesting that literal validated
+/// address with redirects disabled -- a redirect target gets its own
+/// validated fetch instead of being followed blindly, closing off
+/// SSRF-via-redirect (and, because every hop is re-validated against the
+/// same scheme/host/IP rules, this is a fetch-side guard rather than an
+/// open redirect: no user-facing Location is ever echoed). The validated
+/// address is pinned onto the reqwest client via resolve(), so the
+/// connection cannot land anywhere other than the vetted IP -- without the
+/// pin, reqwest's internal DNS lookup re-opens a TOCTOU window that a
+/// short-TTL rebinding record can slip a private address through. Errors
+/// and oversized responses degrade to None (the img renders as a
+/// broken-image placeholder) rather than failing the whole request over
+/// one bad image, matching a local file that isn't found.
 async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
     let mut url = reqwest::Url::parse(url_str).ok()?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return None;
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(FETCH_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()?;
+    // Pinned to the last validated origin, rebuilt only when a redirect
+    // changes host or port -- not on every hop.
+    let mut client: Option<reqwest::Client> = None;
+    let mut pinned_host = String::new();
+    let mut pinned_port = 0u16;
 
     // Bounded, not recursive: each hop is itself resolved and validated
     // before being requested, so a chain can't smuggle a private target in
-    // past the first hop.
+    // past the first hop. The scheme check repeats per hop for the same
+    // reason: reqwest only speaks http(s), but saying so here makes the
+    // invariant local instead of incidental.
     for _ in 0..5 {
+        if url.scheme() != "http" && url.scheme() != "https" {
+            return None;
+        }
         let host = url.host_str()?.to_string();
         let port = url.port_or_known_default()?;
         let addr = resolve_public_addr(&host, port).await.ok()?;
 
-        let resp = client
+        let rebuild = match &client {
+            Some(_) => pinned_host != host || pinned_port != port,
+            None => true,
+        };
+        if rebuild {
+            // resolve() pins the exact address just validated: reqwest
+            // connects to addr and skips its own DNS lookup entirely.
+            // Without this there is a TOCTOU window between the validation
+            // above and reqwest's internal resolution -- a short-TTL
+            // rebinding record can answer the first lookup with a public
+            // IP and the second with 127.0.0.1. The explicit Host header
+            // below keeps the request semantically addressed to the
+            // original hostname.
+            let built = reqwest::Client::builder()
+                .timeout(FETCH_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve(host.as_str(), addr)
+                .build()
+                .ok()?;
+            client = Some(built);
+            pinned_host = host;
+            pinned_port = port;
+        }
+        let bound = client.as_ref()?;
+
+        let resp = bound
             .get(url.clone())
-            // Connect to the address we already validated, not whatever a
-            // second DNS lookup inside reqwest might return (DNS
-            // rebinding) -- reqwest still sends the original Host header.
-            .header(reqwest::header::HOST, format!("{host}:{port}"))
+            .header(
+                reqwest::header::HOST,
+                format!("{}:{port}", pinned_host),
+            )
             .send()
             .await
             .ok()?;
-        let _ = addr; // resolution success is the check; reqwest does its own connect
 
         if resp.status().is_redirection() {
             let location = resp.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
@@ -222,10 +275,10 @@ async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
 async fn handler(event: Request) -> Result<Response<Vec<u8>>, Error> {
     // Optional shared-secret gate: when PDFCN_API_KEY is set (production
     // env vars, not sandbox .env), every request must present it in the
-    // `x-api-key` header. Unset means the endpoint stays open -- the
-    // default for the public sandbox.
-    if let Ok(expected) = std::env::var("PDFCN_API_KEY") {
-        if !expected.is_empty() && !authorized(event.headers(), &expected) {
+    // x-api-key header. Unset means the endpoint stays open -- the default
+    // for the public sandbox.
+    if let Some(expected) = api_key() {
+        if !authorized(event.headers(), expected) {
             return Ok(Response::builder()
                 .status(401)
                 .body(b"missing or invalid x-api-key header".to_vec())?);
@@ -242,8 +295,8 @@ async fn handler(event: Request) -> Result<Response<Vec<u8>>, Error> {
 }
 
 /// The auth decision, isolated from HTTP plumbing so it's testable without
-/// a live request: a request is authorized iff its `x-api-key` header
-/// equals the configured key.
+/// a live request: a request is authorized iff its x-api-key header equals
+/// the configured key.
 fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
     headers
         .get("x-api-key")
@@ -251,11 +304,29 @@ fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
         == Some(expected_key)
 }
 
+/// Decodes one base64-keyed map (fonts or images), rejecting the request
+/// with a client-facing message if any value is malformed.
+fn decode_base64_map(
+    raw: &std::collections::HashMap<String, String>,
+    kind: &str,
+) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    let mut out = BTreeMap::new();
+    for (key, b64) in raw {
+        match STANDARD.decode(b64) {
+            Ok(bytes) => {
+                out.insert(key.clone(), bytes);
+            }
+            Err(e) => return Err(format!("invalid base64 for {kind} \"{key}\": {e}")),
+        }
+    }
+    Ok(out)
+}
+
 async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
     let req: GenerateRequest = if body.is_empty() {
         return Ok(Response::builder()
             .status(400)
-            .body(b"missing JSON body: {\"template\": ..., \"data\": ...}".to_vec())?);
+            .body(b"missing JSON body: provide template and data".to_vec())?);
     } else {
         match serde_json::from_str(body) {
             Ok(req) => req,
@@ -272,33 +343,37 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         .map(PageConfigDto::into_page_config)
         .unwrap_or_default();
 
-    let mut fonts: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    for (family, b64) in &req.fonts {
-        match STANDARD.decode(b64) {
-            Ok(bytes) => {
-                fonts.insert(family.clone(), bytes);
-            }
-            Err(e) => {
-                return Ok(Response::builder()
-                    .status(400)
-                    .body(format!("invalid base64 for font \"{family}\": {e}").into_bytes())?)
-            }
+    // Caller mistakes are 400s before any rendering starts.
+    let fonts = match decode_base64_map(&req.fonts, "font") {
+        Ok(fonts) => fonts,
+        Err(msg) => {
+            return Ok(Response::builder()
+                .status(400)
+                .body(msg.into_bytes())?)
         }
-    }
+    };
+    let mut images = match decode_base64_map(&req.images, "image") {
+        Ok(images) => images,
+        Err(msg) => {
+            return Ok(Response::builder()
+                .status(400)
+                .body(msg.into_bytes())?)
+        }
+    };
 
-    let mut images: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    for (src, b64) in &req.images {
-        match STANDARD.decode(b64) {
-            Ok(bytes) => {
-                images.insert(src.clone(), bytes);
-            }
-            Err(e) => {
+    // The theme is validated up front (a malformed one is a client
+    // mistake, a 400) rather than discovered mid-render.
+    let theme: Theme = match &req.theme {
+        Some(value) => match theme_from_json(value) {
+            Ok(theme) => theme,
+            Err(msg) => {
                 return Ok(Response::builder()
                     .status(400)
-                    .body(format!("invalid base64 for image \"{src}\": {e}").into_bytes())?)
+                    .body(format!("invalid theme: {msg}").into_bytes())?)
             }
-        }
-    }
+        },
+        None => Theme::light(),
+    };
 
     // Partials are validated up front (a syntax error in one is a client
     // mistake, a 400) rather than discovered mid-render as a generic
@@ -324,7 +399,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         Box::new(MemoryPartials { partials: parsed })
     };
 
-    let html = match render_html(&req.template, &req.data, loader.as_ref()) {
+    let html = match render_html_with_theme(&req.template, &req.data, loader.as_ref(), &theme) {
         Ok(html) => html,
         Err(e) => {
             return Ok(Response::builder()
@@ -334,12 +409,12 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         }
     };
 
-    // Any `<img src="http(s)://...">` not already covered by the caller's
-    // own `images` map is fetched here -- see `fetch_remote_image` for the
-    // SSRF guards. `render_pdf`/`render_with_assets` themselves stay
-    // network-free (NFR-3); this fetching is specific to this HTTP
-    // handler, which is the one place that both takes arbitrary
-    // caller-supplied URLs and has an async runtime to fetch them on.
+    // Any http(s) img src not already covered by the caller's own images
+    // map is fetched here -- see fetch_remote_image for the SSRF guards.
+    // render_pdf/render_with_assets themselves stay network-free (NFR-3);
+    // this fetching is specific to this HTTP handler, which is the one
+    // place that both takes arbitrary caller-supplied URLs and has an
+    // async runtime to fetch them on.
     let remote_srcs: Vec<String> = img_srcs(&html)
         .into_iter()
         .filter(|src| {
@@ -388,9 +463,12 @@ mod tests {
 
     #[tokio::test]
     async fn generates_a_pdf_for_a_minimal_request() {
-        let body =
-            br#"{"template": "%h1 Invoice\n%p Total: {{ total }}", "data": {"total": "$42.00"}}"#;
-        let resp = handle_body(std::str::from_utf8(body).unwrap()).await;
+        let body = serde_json::json!({
+            "template": "%h1 Invoice\n%p Total: {{ total }}",
+            "data": { "total": "$42.00" }
+        })
+        .to_string();
+        let resp = handle_body(&body).await;
         assert_eq!(resp.status(), 200);
         assert!(resp.body().starts_with(b"%PDF"));
     }
@@ -455,8 +533,8 @@ mod tests {
     }
 
     /// The index.html sandbox's "Catalog example (images)" sends exactly
-    /// this shape (template + data + a base64 `images` map) to
-    /// `/api/generate-pdf`. This pins that the browser sandbox's request
+    /// this shape (template + data + a base64 images map) to
+    /// /api/generate-pdf. This pins that the browser sandbox's request
     /// actually renders, with the images embedded, not just the CLI path.
     #[tokio::test]
     async fn sandbox_catalog_example_request_renders_with_images() {

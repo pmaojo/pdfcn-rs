@@ -4,6 +4,7 @@
 //! document layout: spacing, flex/grid, typography, color, borders.
 
 use crate::tokens;
+use crate::theme::Theme;
 
 const SPACING: &[(&str, &str)] = &[
     ("0", "0"),
@@ -76,18 +77,80 @@ fn lookup<'a>(table: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
     table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 
+/// Parses a Tailwind-style arbitrary value -- the `[...]` suffix of
+/// `w-[220px]`, `p-[13px]`, `bg-[#0ea5e9]` -- into the literal CSS value,
+/// so callers aren't stuck on the fixed spacing/size/color scales. Only
+/// two shapes are accepted, matching how the utilities below use it:
+/// a CSS length (`px`/`rem`/`em`/`%`, optional `-` sign) or a hex color
+/// (`#rgb`/`#rrggbb`). Anything else returns `None` -- an unknown shape
+/// degrades to "class not recognized", never to emitting unvalidated CSS.
+fn arbitrary_value(bracketed: &str) -> Option<String> {
+    let inner = bracketed.strip_prefix('[')?.strip_suffix(']')?;
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    // Hex color: #rgb or #rrggbb.
+    if let Some(hex) = inner.strip_prefix('#') {
+        return (matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| format!("#{hex}"));
+    }
+    // CSS length: optional '-', decimal digits, one optional unit
+    // (px/rem/em/%; a bare number is accepted too, as the engine treats
+    // unitless lengths as px).
+    let magnitude = inner.strip_prefix('-').unwrap_or(inner);
+    let (number, unit) = magnitude
+        .find(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .map_or((magnitude, ""), |split| (&magnitude[..split], &magnitude[split..]));
+    let valid_number = !number.is_empty()
+        && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && number.chars().filter(|c| *c == '.').count() <= 1
+        && number.parse::<f64>().is_ok();
+    let valid_unit = matches!(unit, "" | "px" | "rem" | "em" | "%");
+    (valid_number && valid_unit).then(|| {
+        let sign = if inner.starts_with('-') { "-" } else { "" };
+        format!("{sign}{number}{unit}")
+    })
+}
+
+/// The value for a size-style utility suffix: the spacing scale first,
+/// then an arbitrary `[...]` length. (`px`/`rem`/`em`/`%`/unitless.)
+fn scale_or_arbitrary(key: &str) -> Option<String> {
+    lookup(SPACING, key)
+        .map(str::to_string)
+        .or_else(|| arbitrary_value(key))
+}
+
+/// Converts a `Nrem` length to the equivalent px at CSS's 16px root size;
+/// anything else passes through unchanged. Used where the engine's
+/// rem handling is known-broken (border-radius), not as a general
+/// normalization.
+fn rem_to_px(value: &str) -> String {
+    if let Some(magnitude) = value.strip_suffix("rem") {
+        if let Ok(n) = magnitude.parse::<f64>() {
+            return format!("{}px", n * 16.0);
+        }
+    }
+    value.to_string()
+}
+
 /// Resolves a color-utility suffix (the part after `bg-`/`text-`/`border-`)
-/// against, in order: the hand-picked palette, shadcn's semantic theme
-/// tokens, then the full Tailwind/shadcn scales. The palette and theme
-/// tokens keep winning where they overlap with a scale entry.
-fn resolve_color(key: &str) -> Option<&'static str> {
+/// against, in order: the hand-picked palette, the theme (per-token brand
+/// overrides first, then the light/dark token table -- see
+/// [`crate::theme::Theme`]), then the full Tailwind/shadcn scales. The
+/// palette keeps winning where it overlaps with a token, as before; an
+/// explicit override wins over both, since overriding is exactly how a
+/// caller rebrands a semantic token.
+fn resolve_color(key: &str, theme: &Theme) -> Option<String> {
     lookup(PALETTE, key)
-        .or_else(|| tokens::color(key))
-        .or_else(|| tokens::scale_color(key))
+        .map(str::to_string)
+        .or_else(|| theme.token(key).map(str::to_string))
+        .or_else(|| tokens::scale_color(key).map(str::to_string))
+        .or_else(|| arbitrary_value(key).filter(|v| v.starts_with('#')))
 }
 
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
-    let value = lookup(SPACING, scale)?;
+    let value = scale_or_arbitrary(scale)?;
     Some(
         props
             .iter()
@@ -113,7 +176,10 @@ fn is_offset_class(class: &str) -> bool {
 /// top of it. `negative` pulls an absolutely-positioned overlay -- a badge,
 /// a price tag -- half off an edge (`-top-2`).
 fn inset_decls(props: &[&str], key: &str, negative: bool) -> Option<String> {
-    let value = lookup(SPACING, key).or_else(|| lookup(INSET_FRACTIONS, key))?;
+    let value = lookup(SPACING, key)
+        .map(str::to_string)
+        .or_else(|| lookup(INSET_FRACTIONS, key).map(str::to_string))
+        .or_else(|| arbitrary_value(key))?;
     let value = if negative && value != "0" {
         format!("-{value}")
     } else {
@@ -132,7 +198,18 @@ fn inset_decls(props: &[&str], key: &str, negative: bool) -> Option<String> {
 /// braces), e.g. `"p-4"` -> `"padding:1rem"`. Returns `None` for classes
 /// this subset doesn't recognize (they're silently skipped, matching how
 /// an unknown Tailwind class would just do nothing without a build step).
+///
+/// Theme-aware: semantic token utilities (`bg-primary`, ...) resolve
+/// through `theme` -- see [`crate::theme::Theme`]. Most callers want
+/// [`resolve_with`]; this light-mode default stays for callers without a
+/// document theme.
 pub fn resolve(class: &str) -> Option<String> {
+    resolve_with(class, &Theme::light())
+}
+
+/// Like [`resolve`], but semantic tokens resolve through `theme`'s mode
+/// and overrides.
+pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
     if let Some(rest) = class.strip_prefix("p-") {
         return spacing_decls(&["padding"], rest);
     }
@@ -259,23 +336,41 @@ pub fn resolve(class: &str) -> Option<String> {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
         }
-        if let Some(color) = resolve_color(rest) {
+        // Arbitrary values: a hex (`text-[#334155]`) is a color, anything
+        // else (`text-[15px]`) is a font size.
+        if let Some(value) = arbitrary_value(rest) {
+            return if value.starts_with('#') {
+                Some(format!("color:{value}"))
+            } else {
+                Some(format!("font-size:{value}"))
+            };
+        }
+        if let Some(color) = resolve_color(rest, theme) {
             return Some(format!("color:{color}"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("bg-") {
-        let color = resolve_color(rest)?;
+        let color = resolve_color(rest, theme)?;
         return Some(format!("background-color:{color}"));
     }
     if let Some(rest) = class.strip_prefix("border-") {
-        if let Some(color) = resolve_color(rest) {
+        if let Some(color) = resolve_color(rest, theme) {
             return Some(format!("border-color:{color}"));
+        }
+        // `border-[2px]`: an arbitrary length is a border width.
+        if let Some(value) = arbitrary_value(rest).filter(|v| !v.starts_with('#')) {
+            return Some(format!("border-width:{value};border-style:solid"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("rounded-") {
-        let value = tokens::radius(rest)?;
+        let value = tokens::radius(rest)
+            .map(str::to_string)
+            .or_else(|| arbitrary_value(rest))?;
+        // px, never rem: the engine treats a rem-unit border-radius as 0
+        // (see the comment on `tokens::RADIUS`). Convert, don't rename.
+        let value = rem_to_px(&value);
         return Some(format!("border-radius:{value}"));
     }
     if let Some(rest) = class.strip_prefix("shadow-") {
@@ -450,5 +545,81 @@ mod tests {
         assert_ne!(resolve("shadow-sm"), resolve("shadow-xl"));
         assert_eq!(resolve("rounded-2xl").as_deref(), Some("border-radius:16px"));
         assert_eq!(resolve("rounded-3xl").as_deref(), Some("border-radius:24px"));
+    }
+
+    /// Arbitrary values (`w-[220px]`, `text-[15px]`, `bg-[#0ea5e9]`, ...)
+    /// escape the fixed scales without emitting unvalidated CSS.
+    #[test]
+    fn resolves_arbitrary_lengths_and_colors() {
+        assert_eq!(resolve("w-[220px]").as_deref(), Some("width:220px"));
+        assert_eq!(resolve("p-[13px]").as_deref(), Some("padding:13px"));
+        assert_eq!(resolve("mt-[3.5rem]").as_deref(), Some("margin-top:3.5rem"));
+        assert_eq!(resolve("h-[10%]").as_deref(), Some("height:10%"));
+        assert_eq!(resolve("gap-[8px]").as_deref(), Some("gap:8px"));
+        assert_eq!(resolve("top-[12px]").as_deref(), Some("top:12px"));
+        assert_eq!(resolve("-top-[6px]").as_deref(), Some("top:-6px"));
+        assert_eq!(resolve("text-[15px]").as_deref(), Some("font-size:15px"));
+        assert_eq!(resolve("text-[#334155]").as_deref(), Some("color:#334155"));
+        assert_eq!(resolve("bg-[#0ea5e9]").as_deref(), Some("background-color:#0ea5e9"));
+        assert_eq!(resolve("rounded-[10px]").as_deref(), Some("border-radius:10px"));
+    }
+
+    /// Malformed or unsupported arbitrary shapes must be rejected, not
+    /// passed through as CSS -- the class name is attacker-influenced input.
+    #[test]
+    fn rejects_malformed_arbitrary_values() {
+        for class in [
+            "w-[]",
+            "w-[ ]",
+            "w-[abc]",
+            "w-[10pt]",
+            "w-[..px]",
+            "bg-[url(http://x)]",
+            "bg-[#12345]",
+            "text-[var(--x)]",
+            "p-[calc(1px+2px)]",
+        ] {
+            assert_eq!(resolve(class), None, "{class} must not resolve");
+        }
+    }
+
+    /// The engine treats a rem-unit border-radius as 0 (see tokens::RADIUS),
+    /// so an arbitrary rem radius must be converted, not renamed (0.5rem is
+    /// 8px, never "0.5px").
+    #[test]
+    fn converts_arbitrary_rem_radii_to_px() {
+        assert_eq!(resolve("rounded-[0.5rem]").as_deref(), Some("border-radius:8px"));
+    }
+
+    #[test]
+    fn an_arbitrary_border_length_is_a_width_not_a_color() {
+        assert_eq!(
+            resolve("border-[2px]").as_deref(),
+            Some("border-width:2px;border-style:solid")
+        );
+        assert_eq!(resolve("border-[#94a3b8]").as_deref(), Some("border-color:#94a3b8"));
+    }
+
+    /// Semantic tokens resolve through the theme: dark mode flips surfaces,
+    /// and an explicit override rebrands every utility built on that token.
+    #[test]
+    fn semantic_tokens_follow_the_theme() {
+        let mut theme = crate::theme::Theme::dark();
+        theme
+            .overrides
+            .insert("primary".to_string(), "#2563eb".to_string());
+        assert_eq!(
+            resolve_with("bg-background", &theme).as_deref(),
+            Some("background-color:hsl(222.2, 84%, 4.9%)")
+        );
+        assert_eq!(
+            resolve_with("bg-primary", &theme).as_deref(),
+            Some("background-color:#2563eb")
+        );
+        // Light default stays untouched for other callers.
+        assert_eq!(
+            resolve("bg-primary").as_deref(),
+            Some("background-color:hsl(222.2, 47.4%, 11.2%)")
+        );
     }
 }
