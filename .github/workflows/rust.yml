@@ -10,13 +10,74 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  test:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
+    # `--workspace` is load-bearing, not decoration. The repository root is a
+    # real package (`pdfcn-vercel`, the Vercel Function), not a virtual
+    # manifest, so a bare `cargo test` resolves to that one package and builds
+    # exactly two test binaries: api/generate-pdf.rs and
+    # api/generate-pdf-batch.rs. Every `#[cfg(test)] mod tests` in
+    # pdfcn-core, pdfcn-components, pdfcn-styles, pdfcn-parser and
+    # pdfcn-template -- the large majority of the suite -- was silently never
+    # run on a pull request.
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --verbose
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Report the deployed function's size on every run, and trip only on a jump
+  # big enough to mean something went wrong.
+  #
+  # This is a smoke alarm, not a diet. Vercel's ceiling is 250 MB uncompressed
+  # and the function measured 16.6 MB when this job was added, so there is
+  # roughly an order of magnitude of headroom: a capability that legitimately
+  # needs a few more megabytes should just take them. What the job is here to
+  # catch is the accident -- a heavy optional dependency that was supposed to
+  # sit behind a cargo feature quietly ending up in the default build.
+  #
+  # Two rules keep the measurement honest:
+  #   * build `-p pdfcn-vercel` explicitly, never `--workspace`. With
+  #     resolver = "2" features are still unified across the packages built in
+  #     a single invocation, so a workspace build would switch on whatever
+  #     optional feature any other crate defaults to and measure a binary
+  #     nobody deploys.
+  #   * print the resolved feature graph too. Size is the lagging indicator;
+  #     an unexpected optional dependency appearing in the graph is the
+  #     leading one, and it is visible in the log before it is visible in the
+  #     byte count.
+  binary-size:
+    runs-on: ubuntu-latest
+    env:
+      # Stripped size tripwire in bytes. Deliberately loose. Raise it in the
+      # pull request that needs the room, with the reason in the commit
+      # message.
+      MAX_BINARY_BYTES: 60000000
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the Vercel function
+      run: cargo build --release -p pdfcn-vercel --bin generate-pdf
+    - name: Enforce the size ceiling
+      run: |
+        size=$(stat -c%s target/release/generate-pdf)
+        echo "generate-pdf: ${size} bytes (tripwire ${MAX_BINARY_BYTES}, Vercel's limit is 250MB)"
+        echo "generate-pdf: ${size} bytes" >> "$GITHUB_STEP_SUMMARY"
+        if [ "$size" -gt "$MAX_BINARY_BYTES" ]; then
+          echo "::error::generate-pdf is ${size} bytes, past the ${MAX_BINARY_BYTES} byte tripwire. That is a big enough jump to be worth explaining -- check whether an optional dependency landed in the default build."
+          exit 1
+        fi
+    - name: Record the resolved feature graph
+      run: cargo tree --edges features -p pdfcn-vercel

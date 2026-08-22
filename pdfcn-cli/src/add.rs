@@ -4,14 +4,12 @@
 
 fn snippet(component: &str) -> Option<&'static str> {
     match component {
-        "Card" => Some(
-            "%Card(title=\"{{ title }}\")\n  %p {{ body }}\n",
-        ),
+        "Card" => Some("%Card(title=\"{{ title }}\")\n  %p {{ body }}\n"),
         "Badge" => Some("%Badge(variant=\"default\" label=\"{{ label }}\")\n"),
-        "InvoiceTable" => Some(
-            "%InvoiceTable(rows={{ rows }} columns={{ columns }})\n",
-        ),
-        "SignatureBlock" => Some("%SignatureBlock(name=\"{{ signer_name }}\" label=\"Signature\")\n"),
+        "InvoiceTable" => Some("%InvoiceTable(rows={{ rows }} columns={{ columns }})\n"),
+        "SignatureBlock" => {
+            Some("%SignatureBlock(name=\"{{ signer_name }}\" label=\"Signature\")\n")
+        }
         "Grid" => Some("%Grid(cols=\"2\")\n  %div Left\n  %div Right\n"),
         _ => None,
     }

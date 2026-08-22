@@ -22,12 +22,7 @@ use crate::attr;
 fn parse_values(raw: Option<&str>) -> Option<Vec<f64>> {
     let raw = raw?;
     match serde_json::from_str::<JsonValue>(raw).ok()? {
-        JsonValue::Array(items) => Some(
-            items
-                .iter()
-                .map(|v| v.as_f64().unwrap_or(0.0))
-                .collect(),
-        ),
+        JsonValue::Array(items) => Some(items.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect()),
         _ => None,
     }
 }
@@ -100,8 +95,8 @@ mod tests {
 
     #[test]
     fn labels_render_under_their_bars() {
-        let out = bar_chart(&[a("values", "[1, 2]"), a("labels", r#"["Jan","Feb"]"#)])
-            .into_string();
+        let out =
+            bar_chart(&[a("values", "[1, 2]"), a("labels", r#"["Jan","Feb"]"#)]).into_string();
         assert!(out.contains("Jan"), "{out}");
         assert!(out.contains("Feb"), "{out}");
         assert_eq!(out.matches("text-xs").count(), 2, "{out}");
@@ -110,11 +105,9 @@ mod tests {
     #[test]
     fn missing_or_invalid_values_renders_a_visible_marker() {
         assert!(bar_chart(&[]).into_string().contains("non-empty"));
-        assert!(
-            bar_chart(&[a("values", "not json")])
-                .into_string()
-                .contains("non-empty")
-        );
+        assert!(bar_chart(&[a("values", "not json")])
+            .into_string()
+            .contains("non-empty"));
     }
 
     #[test]

@@ -299,7 +299,11 @@ fn badge(attrs: &[ResolvedAttr], children: Markup) -> Markup {
 /// or extend it via `class`.
 fn separator(attrs: &[ResolvedAttr]) -> Markup {
     let vertical = attr_or(attrs, "orientation", "horizontal") == "vertical";
-    let dim = if vertical { "h-full w-px" } else { "h-px w-full my-4" };
+    let dim = if vertical {
+        "h-full w-px"
+    } else {
+        "h-px w-full my-4"
+    };
     let extra = attr_or(attrs, "class", "");
     html! {
         div role="separator" class={ "separator shrink-0 bg-border " (dim) " " (extra) };
@@ -453,7 +457,10 @@ mod tests {
 
     #[test]
     fn separator_defaults_to_horizontal() {
-        let out = render("Separator", &[], html! {}).unwrap().unwrap().into_string();
+        let out = render("Separator", &[], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
         assert!(out.contains("h-px w-full"));
         assert!(!out.contains("h-full w-px"));
     }
@@ -492,7 +499,11 @@ mod tests {
     fn card_with_image_renders_a_full_bleed_cover_photo() {
         let out = render(
             "Card",
-            &[a("title", "Trail Runner"), a("image", "sneaker.png"), a("image-alt", "Trail Runner shoe")],
+            &[
+                a("title", "Trail Runner"),
+                a("image", "sneaker.png"),
+                a("image-alt", "Trail Runner shoe"),
+            ],
             html! {},
         )
         .unwrap()

@@ -10,8 +10,8 @@ pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_styles::{Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
-use std::collections::{BTreeMap, HashMap, BTreeSet, VecDeque};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -37,9 +37,18 @@ use serde_json::Value as JsonValue;
 /// same family name shadows the built-in one), and the document's CSS
 /// selects a family the normal way (`font-family: "My Brand Font"`).
 const BUILTIN_FONTS: &[(&str, &[u8])] = &[
-    ("Inter", include_bytes!("../assets/fonts/inter/Inter-Regular.ttf")),
-    ("Inter Bold", include_bytes!("../assets/fonts/inter/Inter-Bold.ttf")),
-    ("Inter Italic", include_bytes!("../assets/fonts/inter/Inter-Italic.ttf")),
+    (
+        "Inter",
+        include_bytes!("../assets/fonts/inter/Inter-Regular.ttf"),
+    ),
+    (
+        "Inter Bold",
+        include_bytes!("../assets/fonts/inter/Inter-Bold.ttf"),
+    ),
+    (
+        "Inter Italic",
+        include_bytes!("../assets/fonts/inter/Inter-Italic.ttf"),
+    ),
     (
         "Inter Bold Italic",
         include_bytes!("../assets/fonts/inter/Inter-BoldItalic.ttf"),
@@ -183,9 +192,7 @@ pub fn theme_from_json(value: &JsonValue) -> Result<Theme, String> {
             }
         }
         Some(_) => {
-            return Err(
-                "theme overrides must be an object of token name to CSS color".to_string(),
-            )
+            return Err("theme overrides must be an object of token name to CSS color".to_string())
         }
     }
     Ok(theme)
@@ -543,14 +550,10 @@ fn used_font_families(html: &str) -> BTreeSet<String> {
         // inline attribute's `)"` tail -- but never at a quote or comma,
         // since multi-word families arrive quoted ("Source Serif 4") and
         // stacks arrive comma-separated.
-        let end = after
-            .find([';', '}', '<', ')', '>'])
-            .unwrap_or(after.len());
+        let end = after.find([';', '}', '<', ')', '>']).unwrap_or(after.len());
         for name in after[..end].split(',') {
             let name = name.trim().trim_matches('"').trim_matches('\'').trim();
-            if !name.is_empty()
-                && !GENERIC_FAMILIES.contains(&name.to_ascii_lowercase().as_str())
-            {
+            if !name.is_empty() && !GENERIC_FAMILIES.contains(&name.to_ascii_lowercase().as_str()) {
                 out.insert(name.to_string());
             }
         }
@@ -572,7 +575,10 @@ mod tests {
         );
         assert_eq!(
             img_srcs(html),
-            vec!["cover.jpg".to_string(), "https://example.com/x.png".to_string()]
+            vec![
+                "cover.jpg".to_string(),
+                "https://example.com/x.png".to_string()
+            ]
         );
     }
 
@@ -770,7 +776,10 @@ mod tests {
         let resolved = pdfcn_template::evaluate(&second, &json!({ "n": 7 }), &NoPartials).unwrap();
         match &resolved[0] {
             pdfcn_template::Resolved::Element { children, .. } => {
-                assert_eq!(children[0], pdfcn_template::Resolved::Text("Cache me 7".into()));
+                assert_eq!(
+                    children[0],
+                    pdfcn_template::Resolved::Text("Cache me 7".into())
+                );
             }
             other => panic!("expected Element, got {other:?}"),
         }
@@ -789,15 +798,13 @@ mod tests {
     fn render_html_with_theme_resolves_tokens_end_to_end() {
         let source = "%p.bg-background.text-primary Body";
         let theme = Theme::dark();
-        let html =
-            render_html_with_theme(source, &json!({}), &NoPartials, &theme).unwrap();
+        let html = render_html_with_theme(source, &json!({}), &NoPartials, &theme).unwrap();
         assert!(html.contains("#020817"), "{html}");
         assert!(html.contains("#f8fafc"), "{html}");
 
         let mut branded = Theme::light();
         branded.overrides.insert("primary".into(), "#2563eb".into());
-        let html =
-            render_html_with_theme(source, &json!({}), &NoPartials, &branded).unwrap();
+        let html = render_html_with_theme(source, &json!({}), &NoPartials, &branded).unwrap();
         assert!(html.to_lowercase().contains("#2563eb"), "{html}");
     }
 

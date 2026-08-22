@@ -78,16 +78,9 @@ fn table(mode: ThemeMode) -> &'static [(&'static str, &'static str)] {
 }
 
 /// Resolves a shadcn semantic theme token (`primary`, `muted-foreground`,
-/// `border`, ...) to a literal CSS color.
-pub fn color(name: &str) -> Option<&'static str> {
-    THEME
-        .iter()
-        .find(|(token, _)| *token == name)
-        .map(|(_, value)| *value)
-}
-
-/// Like [`color`], but resolved against a mode's table -- [`ThemeMode::Dark`]
-/// yields shadcn's `.dark` values rather than the light `:root` ones.
+/// `border`, ...) to a literal CSS color, against a mode's table --
+/// [`ThemeMode::Dark`] yields shadcn's `.dark` values rather than the light
+/// `:root` ones.
 pub fn color_in(mode: ThemeMode, name: &str) -> Option<&'static str> {
     table(mode)
         .iter()
@@ -237,10 +230,7 @@ pub fn scale_color(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(n, _)| *n == scale_name)
         .map(|(_, s)| *s)?;
-    scale
-        .iter()
-        .find(|(s, _)| *s == shade)
-        .map(|(_, hex)| *hex)
+    scale.iter().find(|(s, _)| *s == shade).map(|(_, hex)| *hex)
 }
 
 /// shadcn's radius scale, keyed by the Tailwind `rounded-*` suffix (`sm`
@@ -269,9 +259,18 @@ pub fn radius(name: &str) -> Option<&'static str> {
 /// shadcn's elevation scale, keyed by the Tailwind `shadow-*` suffix.
 const SHADOW: &[(&str, &str)] = &[
     ("sm", "0 1px 2px 0 rgba(0,0,0,0.05)"),
-    ("md", "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)"),
-    ("lg", "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)"),
-    ("xl", "0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)"),
+    (
+        "md",
+        "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)",
+    ),
+    (
+        "lg",
+        "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)",
+    ),
+    (
+        "xl",
+        "0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
+    ),
 ];
 
 /// Resolves a `shadow-*` suffix to its literal `box-shadow` value.
@@ -285,14 +284,18 @@ mod tests {
 
     #[test]
     fn resolves_shadcn_semantic_theme_tokens() {
-        assert_eq!(color("primary"), Some("hsl(222.2, 47.4%, 11.2%)"));
-        assert_eq!(color("primary-foreground"), Some("hsl(210, 40%, 98%)"));
-        assert_eq!(color("input"), Some("hsl(214.3, 31.8%, 91.4%)"));
+        let light = ThemeMode::Light;
+        assert_eq!(color_in(light, "primary"), Some("hsl(222.2, 47.4%, 11.2%)"));
+        assert_eq!(
+            color_in(light, "primary-foreground"),
+            Some("hsl(210, 40%, 98%)")
+        );
+        assert_eq!(color_in(light, "input"), Some("hsl(214.3, 31.8%, 91.4%)"));
     }
 
     #[test]
     fn unknown_token_is_not_a_color() {
-        assert_eq!(color("not-a-token"), None);
+        assert_eq!(color_in(ThemeMode::Light, "not-a-token"), None);
     }
 
     /// A foreground token must contrast with its own surface, or the pairing
@@ -302,7 +305,7 @@ mod tests {
         for (name, _) in THEME {
             if let Some(surface) = name.strip_suffix("-foreground") {
                 assert!(
-                    color(surface).is_some(),
+                    color_in(ThemeMode::Light, surface).is_some(),
                     "{name} has no matching surface token"
                 );
             }

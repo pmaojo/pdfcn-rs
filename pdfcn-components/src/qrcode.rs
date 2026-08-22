@@ -73,8 +73,7 @@ mod tests {
 
     #[test]
     fn size_and_alt_are_honored() {
-        let out = qrcode(&[a("value", "x"), a("size", "48px"), a("alt", "Scan me")])
-            .into_string();
+        let out = qrcode(&[a("value", "x"), a("size", "48px"), a("alt", "Scan me")]).into_string();
         assert!(out.contains("width:48px;height:48px;"), "{out}");
         assert!(out.contains("alt=\"Scan me\""), "{out}");
     }
@@ -82,6 +81,8 @@ mod tests {
     #[test]
     fn empty_or_missing_value_renders_a_visible_marker() {
         assert!(qrcode(&[]).into_string().contains("non-empty"));
-        assert!(qrcode(&[a("value", "")]).into_string().contains("non-empty"));
+        assert!(qrcode(&[a("value", "")])
+            .into_string()
+            .contains("non-empty"));
     }
 }

@@ -59,7 +59,10 @@ pub enum EvalError {
         expr: String,
         source: minijinja::Error,
     },
-    NotIterable { binding: String, iterable: String },
+    NotIterable {
+        binding: String,
+        iterable: String,
+    },
     PartialNotFound(String),
 }
 
@@ -337,12 +340,10 @@ mod tests {
     /// caller precomputing indexes into the data.
     #[test]
     fn for_loop_exposes_loop_metadata() {
-        let doc = parse_document(
-            concat!(
-                "- for item in items\n",
-                "  %li(class=\"row\") #{{ loop.index1 }}/{{ loop.length }} {{ item }}",
-            ),
-        )
+        let doc = parse_document(concat!(
+            "- for item in items\n",
+            "  %li(class=\"row\") #{{ loop.index1 }}/{{ loop.length }} {{ item }}",
+        ))
         .unwrap();
         let ctx = json!({ "items": ["a", "b"] });
         let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
@@ -359,18 +360,18 @@ mod tests {
 
     #[test]
     fn for_loop_first_and_last_flags() {
-        let doc = parse_document(
-            "- for x in xs\n  %li\n    - if loop.first\n      %span FIRST",
-        )
-        .unwrap();
+        let doc =
+            parse_document("- for x in xs\n  %li\n    - if loop.first\n      %span FIRST").unwrap();
         let ctx = json!({ "xs": [1, 2] });
         let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
         // Only the first iteration emits the FIRST span.
         let span_count = resolved
             .iter()
-            .filter(|r| matches!(r, Resolved::Element { children, .. }
+            .filter(|r| {
+                matches!(r, Resolved::Element { children, .. }
                 if children.iter().any(|c| matches!(c,
-                    Resolved::Element { tag, .. } if tag == "span"))))
+                    Resolved::Element { tag, .. } if tag == "span")))
+            })
             .count();
         assert_eq!(span_count, 1);
     }
@@ -378,12 +379,10 @@ mod tests {
     /// `- set` binds an expression into the context for subsequent siblings.
     #[test]
     fn set_binds_a_value_for_later_nodes() {
-        let doc = parse_document(
-            concat!(
-                "- set total = price * qty\n",
-                "%p Total: {{ total }}",
-            ),
-        )
+        let doc = parse_document(concat!(
+            "- set total = price * qty\n",
+            "%p Total: {{ total }}",
+        ))
         .unwrap();
         let ctx = json!({ "price": 12, "qty": 4 });
         let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();

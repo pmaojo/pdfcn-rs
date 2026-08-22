@@ -21,8 +21,8 @@
 
 use std::collections::BTreeMap;
 
-pub use crate::tokens::ThemeMode;
 use crate::tokens;
+pub use crate::tokens::ThemeMode;
 
 /// A resolved document theme: shadcn's light or dark token set with
 /// optional per-token overrides layered on top.
@@ -84,10 +84,7 @@ mod tests {
         assert_eq!(theme.token("background"), Some("hsl(222.2, 84%, 4.9%)"));
         assert_eq!(theme.token("foreground"), Some("hsl(210, 40%, 98%)"));
         // Dark surfaces pair with light primary ink, like shadcn's .dark.
-        assert_eq!(
-            theme.token("primary"),
-            Some("hsl(210, 40%, 98%)")
-        );
+        assert_eq!(theme.token("primary"), Some("hsl(210, 40%, 98%)"));
     }
 
     #[test]
@@ -97,7 +94,10 @@ mod tests {
             .overrides
             .insert("primary".to_string(), "#2563eb".to_string());
         assert_eq!(theme.token("primary"), Some("#2563eb"));
-        assert_eq!(Theme::light().token("primary"), Some("hsl(222.2, 47.4%, 11.2%)"));
+        assert_eq!(
+            Theme::light().token("primary"),
+            Some("hsl(222.2, 47.4%, 11.2%)")
+        );
     }
 
     #[test]
@@ -110,8 +110,8 @@ mod tests {
     fn every_foreground_token_has_a_surface_in_both_modes() {
         for theme in [Theme::light(), Theme::dark()] {
             // Bare `foreground` is skipped: its surface counterpart is
-        // `background`, which doesn't fit the strip-suffix pairing below.
-        for name in ["primary-foreground", "card-foreground", "muted-foreground"] {
+            // `background`, which doesn't fit the strip-suffix pairing below.
+            for name in ["primary-foreground", "card-foreground", "muted-foreground"] {
                 let surface = name.strip_suffix("-foreground").unwrap();
                 assert!(
                     theme.token(surface).is_some(),

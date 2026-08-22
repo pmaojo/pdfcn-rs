@@ -10,16 +10,29 @@ pub enum ParseError {
         expected: usize,
         found: usize,
     },
-    UnknownDirective { line: usize, keyword: String },
-    MalformedFor { line: usize },
-    MalformedSet { line: usize },
-    TabIndent { line: usize },
+    UnknownDirective {
+        line: usize,
+        keyword: String,
+    },
+    MalformedFor {
+        line: usize,
+    },
+    MalformedSet {
+        line: usize,
+    },
+    TabIndent {
+        line: usize,
+    },
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::UnexpectedIndent { line, expected, found } => write!(
+            ParseError::UnexpectedIndent {
+                line,
+                expected,
+                found,
+            } => write!(
                 f,
                 "line {line}: unexpected indentation (expected {expected}, found {found})"
             ),
@@ -35,7 +48,10 @@ impl fmt::Display for ParseError {
                 "line {line}: malformed '- set' directive, expected 'set <name> = <expr>'"
             ),
             ParseError::TabIndent { line } => {
-                write!(f, "indentation must use spaces only (tabs found at line {line})")
+                write!(
+                    f,
+                    "indentation must use spaces only (tabs found at line {line})"
+                )
             }
         }
     }
@@ -91,16 +107,15 @@ impl<'a> Cursor<'a> {
             LineHead::Directive { keyword, rest } if keyword == "if" => {
                 let mut branches = vec![(rest, self.parse_children(indent)?)];
                 let mut else_body = None;
-                loop {
-                    let Some((ci, next_line_no, content)) = self.lines.get(self.pos).copied()
-                    else {
-                        break;
-                    };
+                while let Some((ci, next_line_no, content)) = self.lines.get(self.pos).copied() {
                     if ci != indent {
                         break;
                     }
                     match lexer::parse_line(content) {
-                        Ok(LineHead::Directive { keyword: k2, rest: r2 }) if k2 == "elif" => {
+                        Ok(LineHead::Directive {
+                            keyword: k2,
+                            rest: r2,
+                        }) if k2 == "elif" => {
                             self.pos += 1;
                             branches.push((r2, self.parse_children(indent)?));
                         }
@@ -113,7 +128,10 @@ impl<'a> Cursor<'a> {
                         _ => break,
                     }
                 }
-                Ok(Node::If { branches, else_body })
+                Ok(Node::If {
+                    branches,
+                    else_body,
+                })
             }
             LineHead::Directive { keyword, rest } if keyword == "for" => {
                 let (binding, iterable) = rest
@@ -227,6 +245,9 @@ pub fn parse_document(source: &str) -> Result<Document, ParseError> {
         let indent = raw.len() - stripped.len();
         lines.push((indent, idx + 1, stripped.trim_end()));
     }
-    let mut cursor = Cursor { lines: &lines, pos: 0 };
+    let mut cursor = Cursor {
+        lines: &lines,
+        pos: 0,
+    };
     cursor.parse_siblings(0)
 }

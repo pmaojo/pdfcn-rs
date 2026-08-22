@@ -17,7 +17,10 @@ fn fetch_remote_image(url: &str) -> Option<Vec<u8>> {
         .build()
         .ok()?;
     let resp = client.get(url).send().ok()?.error_for_status().ok()?;
-    if resp.content_length().is_some_and(|len| len > MAX_REMOTE_IMAGE_BYTES) {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_REMOTE_IMAGE_BYTES)
+    {
         eprintln!("warning: skipping {url} ({MAX_REMOTE_IMAGE_BYTES} byte limit exceeded)");
         return None;
     }
@@ -34,9 +37,9 @@ fn parse_size(s: &str) -> anyhow::Result<PageSize> {
         "a4" => Ok(PageSize::A4),
         "letter" => Ok(PageSize::Letter),
         custom => {
-            let (w, h) = custom
-                .split_once('x')
-                .ok_or_else(|| anyhow::anyhow!("invalid --size '{s}', expected a4, letter, or <width>x<height>"))?;
+            let (w, h) = custom.split_once('x').ok_or_else(|| {
+                anyhow::anyhow!("invalid --size '{s}', expected a4, letter, or <width>x<height>")
+            })?;
             Ok(PageSize::Custom {
                 width_mm: w.parse()?,
                 height_mm: h.parse()?,

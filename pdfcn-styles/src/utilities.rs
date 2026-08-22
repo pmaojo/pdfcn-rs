@@ -3,8 +3,8 @@
 //! table for every class name. Not a full Tailwind JIT — enough for
 //! document layout: spacing, flex/grid, typography, color, borders.
 
-use crate::tokens;
 use crate::theme::Theme;
+use crate::tokens;
 
 const SPACING: &[(&str, &str)] = &[
     ("0", "0"),
@@ -101,7 +101,9 @@ fn arbitrary_value(bracketed: &str) -> Option<String> {
     let magnitude = inner.strip_prefix('-').unwrap_or(inner);
     let (number, unit) = magnitude
         .find(|c: char| c.is_ascii_alphabetic() || c == '%')
-        .map_or((magnitude, ""), |split| (&magnitude[..split], &magnitude[split..]));
+        .map_or((magnitude, ""), |split| {
+            (&magnitude[..split], &magnitude[split..])
+        });
     let valid_number = !number.is_empty()
         && number.chars().all(|c| c.is_ascii_digit() || c == '.')
         && number.chars().filter(|c| *c == '.').count() <= 1
@@ -464,15 +466,30 @@ mod tests {
     /// names the palette has no entry for, never an override of one.
     #[test]
     fn palette_colors_still_win_over_tokens() {
-        assert_eq!(resolve("bg-red-600").as_deref(), Some("background-color:#dc2626"));
+        assert_eq!(
+            resolve("bg-red-600").as_deref(),
+            Some("background-color:#dc2626")
+        );
     }
 
     #[test]
     fn resolves_the_full_neutral_and_accent_scales() {
-        assert_eq!(resolve("bg-slate-950").as_deref(), Some("background-color:#020617"));
-        assert_eq!(resolve("bg-zinc-100").as_deref(), Some("background-color:#f4f4f5"));
-        assert_eq!(resolve("bg-neutral-500").as_deref(), Some("background-color:#737373"));
-        assert_eq!(resolve("bg-stone-800").as_deref(), Some("background-color:#292524"));
+        assert_eq!(
+            resolve("bg-slate-950").as_deref(),
+            Some("background-color:#020617")
+        );
+        assert_eq!(
+            resolve("bg-zinc-100").as_deref(),
+            Some("background-color:#f4f4f5")
+        );
+        assert_eq!(
+            resolve("bg-neutral-500").as_deref(),
+            Some("background-color:#737373")
+        );
+        assert_eq!(
+            resolve("bg-stone-800").as_deref(),
+            Some("background-color:#292524")
+        );
     }
 
     /// The new component modules (Alert/Avatar/form fields/nav) lean on
@@ -521,9 +538,18 @@ mod tests {
     #[test]
     fn resolves_object_fit_and_position_for_composed_images() {
         assert_eq!(resolve("object-cover").as_deref(), Some("object-fit:cover"));
-        assert_eq!(resolve("object-contain").as_deref(), Some("object-fit:contain"));
-        assert_eq!(resolve("object-top").as_deref(), Some("object-position:top"));
-        assert_eq!(resolve("object-center").as_deref(), Some("object-position:center"));
+        assert_eq!(
+            resolve("object-contain").as_deref(),
+            Some("object-fit:contain")
+        );
+        assert_eq!(
+            resolve("object-top").as_deref(),
+            Some("object-position:top")
+        );
+        assert_eq!(
+            resolve("object-center").as_deref(),
+            Some("object-position:center")
+        );
     }
 
     /// Axis-specific gaps previously fell into the bare `gap-` prefix branch,
@@ -543,8 +569,14 @@ mod tests {
         assert!(resolve("shadow-lg").is_some());
         assert!(resolve("shadow-xl").is_some());
         assert_ne!(resolve("shadow-sm"), resolve("shadow-xl"));
-        assert_eq!(resolve("rounded-2xl").as_deref(), Some("border-radius:16px"));
-        assert_eq!(resolve("rounded-3xl").as_deref(), Some("border-radius:24px"));
+        assert_eq!(
+            resolve("rounded-2xl").as_deref(),
+            Some("border-radius:16px")
+        );
+        assert_eq!(
+            resolve("rounded-3xl").as_deref(),
+            Some("border-radius:24px")
+        );
     }
 
     /// Arbitrary values (`w-[220px]`, `text-[15px]`, `bg-[#0ea5e9]`, ...)
@@ -560,8 +592,14 @@ mod tests {
         assert_eq!(resolve("-top-[6px]").as_deref(), Some("top:-6px"));
         assert_eq!(resolve("text-[15px]").as_deref(), Some("font-size:15px"));
         assert_eq!(resolve("text-[#334155]").as_deref(), Some("color:#334155"));
-        assert_eq!(resolve("bg-[#0ea5e9]").as_deref(), Some("background-color:#0ea5e9"));
-        assert_eq!(resolve("rounded-[10px]").as_deref(), Some("border-radius:10px"));
+        assert_eq!(
+            resolve("bg-[#0ea5e9]").as_deref(),
+            Some("background-color:#0ea5e9")
+        );
+        assert_eq!(
+            resolve("rounded-[10px]").as_deref(),
+            Some("border-radius:10px")
+        );
     }
 
     /// Malformed or unsupported arbitrary shapes must be rejected, not
@@ -588,7 +626,10 @@ mod tests {
     /// 8px, never "0.5px").
     #[test]
     fn converts_arbitrary_rem_radii_to_px() {
-        assert_eq!(resolve("rounded-[0.5rem]").as_deref(), Some("border-radius:8px"));
+        assert_eq!(
+            resolve("rounded-[0.5rem]").as_deref(),
+            Some("border-radius:8px")
+        );
     }
 
     #[test]
@@ -597,7 +638,10 @@ mod tests {
             resolve("border-[2px]").as_deref(),
             Some("border-width:2px;border-style:solid")
         );
-        assert_eq!(resolve("border-[#94a3b8]").as_deref(), Some("border-color:#94a3b8"));
+        assert_eq!(
+            resolve("border-[#94a3b8]").as_deref(),
+            Some("border-color:#94a3b8")
+        );
     }
 
     /// Semantic tokens resolve through the theme: dark mode flips surfaces,
