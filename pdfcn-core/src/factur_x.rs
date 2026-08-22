@@ -172,6 +172,15 @@ fn add_output_intent(doc: &mut Document, icc_srgb_profile: &[u8]) -> Result<(), 
     Ok(())
 }
 
+/// ISO 19005-2/3's PDF/A Extension Schema mechanism, populated with the
+/// Factur-X namespace. A validator like veraPDF rejects any custom XMP
+/// namespace it doesn't already recognize as "Extension schema not
+/// defined" / "Omission of extension schema description" unless the
+/// producer declares it this way -- this is what makes the `fx:` block
+/// below legal PDF/A-3B rather than merely well-formed XML. The
+/// `pdfaExtension`/`pdfaSchema`/`pdfaProperty` namespace URIs are the
+/// fixed ones ISO 19005 itself defines for this mechanism, not
+/// Factur-X-specific.
 fn xmp_packet(profile: FacturXProfile) -> String {
     format!(
         "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n\
@@ -180,6 +189,48 @@ fn xmp_packet(profile: FacturXProfile) -> String {
     <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\">\n\
       <pdfaid:part>3</pdfaid:part>\n\
       <pdfaid:conformance>B</pdfaid:conformance>\n\
+    </rdf:Description>\n\
+    <rdf:Description rdf:about=\"\"\n\
+        xmlns:pdfaExtension=\"http://www.aiim.org/pdfa/ns/extension/\"\n\
+        xmlns:pdfaSchema=\"http://www.aiim.org/pdfa/ns/schema#\"\n\
+        xmlns:pdfaProperty=\"http://www.aiim.org/pdfa/ns/property#\">\n\
+      <pdfaExtension:schemas>\n\
+        <rdf:Bag>\n\
+          <rdf:li rdf:parseType=\"Resource\">\n\
+            <pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>\n\
+            <pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>\n\
+            <pdfaSchema:prefix>fx</pdfaSchema:prefix>\n\
+            <pdfaSchema:property>\n\
+              <rdf:Seq>\n\
+                <rdf:li rdf:parseType=\"Resource\">\n\
+                  <pdfaProperty:name>DocumentFileName</pdfaProperty:name>\n\
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>\n\
+                  <pdfaProperty:category>external</pdfaProperty:category>\n\
+                  <pdfaProperty:description>name of the embedded XML invoice file</pdfaProperty:description>\n\
+                </rdf:li>\n\
+                <rdf:li rdf:parseType=\"Resource\">\n\
+                  <pdfaProperty:name>DocumentType</pdfaProperty:name>\n\
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>\n\
+                  <pdfaProperty:category>external</pdfaProperty:category>\n\
+                  <pdfaProperty:description>type of the hybrid document, always INVOICE</pdfaProperty:description>\n\
+                </rdf:li>\n\
+                <rdf:li rdf:parseType=\"Resource\">\n\
+                  <pdfaProperty:name>Version</pdfaProperty:name>\n\
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>\n\
+                  <pdfaProperty:category>external</pdfaProperty:category>\n\
+                  <pdfaProperty:description>version of the Factur-X XML schema</pdfaProperty:description>\n\
+                </rdf:li>\n\
+                <rdf:li rdf:parseType=\"Resource\">\n\
+                  <pdfaProperty:name>ConformanceLevel</pdfaProperty:name>\n\
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>\n\
+                  <pdfaProperty:category>external</pdfaProperty:category>\n\
+                  <pdfaProperty:description>conformance level of the embedded Factur-X data</pdfaProperty:description>\n\
+                </rdf:li>\n\
+              </rdf:Seq>\n\
+            </pdfaSchema:property>\n\
+          </rdf:li>\n\
+        </rdf:Bag>\n\
+      </pdfaExtension:schemas>\n\
     </rdf:Description>\n\
     <rdf:Description rdf:about=\"\" xmlns:fx=\"urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#\">\n\
       <fx:DocumentType>INVOICE</fx:DocumentType>\n\
@@ -292,6 +343,18 @@ mod tests {
         );
         assert!(
             xmp.contains("<fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>"),
+            "{xmp}"
+        );
+        // The extension schema block declaring the `fx` namespace --
+        // without it a PDF/A validator rejects the file for an
+        // undeclared custom namespace, even though the fx: block above
+        // is well-formed XML.
+        assert!(
+            xmp.contains("<pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>"),
+            "{xmp}"
+        );
+        assert!(
+            xmp.contains("<pdfaSchema:prefix>fx</pdfaSchema:prefix>"),
             "{xmp}"
         );
     }

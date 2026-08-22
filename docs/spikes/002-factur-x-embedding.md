@@ -94,6 +94,15 @@ while describing the wrong transfer curve. Rather than guess:
   well-specified text/structure this session can construct correctly and
   verify by re-parsing the output with `lopdf` -- not something requiring
   an external, hard-to-verify binary asset.
+- **Update:** the XMP block also declares the ISO 19005-2/3 PDF/A
+  Extension Schema for the `fx:` namespace (`pdfaExtension:schemas` /
+  `pdfaSchema:*` / `pdfaProperty:*`, fixed URIs the standard itself
+  defines). Without it, a validator has no way to know the custom `fx:`
+  namespace is legal and rejects the file for an undeclared extension
+  schema even though the `fx:` block is well-formed XML -- unlike the ICC
+  profile, this is exact ISO-specified structure, not a binary asset that
+  would need fabricating, so it's fully implemented rather than left as a
+  documented gap.
 
 ## Not yet done, called out explicitly
 

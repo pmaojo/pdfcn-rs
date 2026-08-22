@@ -15,13 +15,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-Two opt-in Cargo features exist beyond the default build — always test
-each of them explicitly too, since CI does, and a change gated behind a
-feature is only proven correct if it's actually compiled:
+`vector` (Charts v2/`%Barcode`/`%Vector`) and `factur-x` (invoice
+embedding) are on by default -- but still real Cargo features (see
+"Cargo features" below), so also test with them explicitly off, since a
+change gated behind `#[cfg(feature = "...")]` is only proven correct in
+both states:
 
 ```sh
-cargo test --workspace --features pdfcn-core/vector,pdfcn-components/vector,pdfcn-cli/vector
-cargo test --workspace --features pdfcn-core/factur-x,pdfcn-cli/factur-x
+cargo test -p pdfcn-core --no-default-features   # per-package, not --workspace:
+cargo test -p pdfcn-cli --no-default-features    # pdfcn-vercel/pdfcn-node hard-require
+cargo test --workspace                           # both features regardless of the flag,
+                                                  # so a workspace-wide --no-default-features
+                                                  # wouldn't actually disable them there
 ```
 
 The serverless binary (`pdfcn-vercel`, the root package under `api/`) has
@@ -30,7 +35,7 @@ would unify features across packages and defeat the gate):
 
 ```sh
 cargo build --release -p pdfcn-vercel --bin generate-pdf
-cargo tree --edges features -p pdfcn-vercel   # confirm resvg/lopdf absent
+cargo tree --edges features -p pdfcn-vercel   # resvg/lopdf are expected now
 ```
 
 ## Workspace layout
@@ -41,7 +46,7 @@ cargo tree --edges features -p pdfcn-vercel   # confirm resvg/lopdf absent
 | `pdfcn-template` | `{{ interpolation }}`, `- for`, `- if`, `- include` (`minijinja`) |
 | `pdfcn-components` | `%InvoiceTable`, `%Badge`, `%Card`, `%LineChart`, `%Barcode`, ... registry |
 | `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
-| `pdfcn-core` | Orchestrates the pipeline; HTML → PDF; the two opt-in Cargo features live here |
+| `pdfcn-core` | Orchestrates the pipeline; HTML → PDF; the two Cargo features (`vector`, `factur-x`, both on by default) live here |
 | `pdfcn-cli` | `pdfcn new / add / build / dev` |
 | `api/generate-pdf.rs`, `api/generate-pdf-batch.rs` | Vercel Function handlers |
 | `pdfcn-node` | `napi-rs` bindings for Next.js |
@@ -49,10 +54,15 @@ cargo tree --edges features -p pdfcn-vercel   # confirm resvg/lopdf absent
 
 ## Conventions that matter here
 
-- **Every new capability that isn't tiny goes behind an opt-in Cargo
-  feature**, off by default (`vector` for Charts v2/`%Barcode`/`%Vector`,
-  `factur-x` for invoice embedding). Verify with `cargo tree --edges
-  features -p pdfcn-vercel` that the default build never sees it.
+- **Every new capability that isn't tiny goes behind a named Cargo
+  feature** (`vector` for Charts v2/`%Barcode`/`%Vector`, `factur-x` for
+  invoice embedding are the existing examples) so it can be compiled out
+  with `--no-default-features` -- that doesn't mean off by default,
+  though: both of those ship on by default because they're each only a
+  couple MB. Whether a *new* one defaults on or off is a real judgment
+  call against the size gate below, not an automatic "off". Verify with
+  `cargo tree --edges features -p pdfcn-vercel` either way, so the actual
+  dependency graph of the default build is never a surprise.
 - **Nothing panics on bad input.** A malformed component, an unencodable
   barcode value, a corrupt input PDF — all degrade to `None`/an explicit
   error/an inline marker, never a crash. Grep for `unwrap()`/`expect()`

@@ -60,8 +60,16 @@ pub fn build_stylesheet(html: &str) -> String {
 /// overrides rebrand individual tokens (e.g. `primary` -> `#2563eb`).
 pub fn build_stylesheet_with_theme(html: &str, theme: &Theme) -> String {
     let classes = extract_classes(html);
+    build_stylesheet_from_classes(&classes, theme)
+}
+
+/// Like [`build_stylesheet_with_theme`], but for a caller that already has
+/// the distinct utility classes in hand (e.g. as a cache key derived from
+/// them) and wants to skip re-scanning the HTML for `class="..."`
+/// attributes.
+pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) -> String {
     let mut css = String::from(PRINT_RULES);
-    for class in &classes {
+    for class in classes {
         if let Some(decl) = utilities::resolve_with(class, theme) {
             let escaped = css_escape_class(class);
             css.push_str(&format!(".{escaped}{{{decl}}}\n"));

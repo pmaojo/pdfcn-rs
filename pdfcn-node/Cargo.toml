@@ -11,7 +11,9 @@ description = "napi-rs bindings so a Next.js app can call pdfcn-core directly"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pdfcn-core = { workspace = true }
+# See the root Cargo.toml's pdfcn-core dependency for why this is
+# explicit rather than relying on pdfcn-core's own `default`.
+pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x"] }
 napi = { workspace = true }
 napi-derive = { workspace = true }
 serde_json = { workspace = true }

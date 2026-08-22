@@ -43,11 +43,15 @@ jobs:
   # big enough to mean something went wrong.
   #
   # This is a smoke alarm, not a diet. Vercel's ceiling is 250 MB uncompressed
-  # and the function measured 16.6 MB when this job was added, so there is
-  # roughly an order of magnitude of headroom: a capability that legitimately
-  # needs a few more megabytes should just take them. What the job is here to
-  # catch is the accident -- a heavy optional dependency that was supposed to
-  # sit behind a cargo feature quietly ending up in the default build.
+  # and the function measured 16.6 MB when this job was added (18.4 MB once
+  # `vector`/`factur-x` became default features -- both are Cargo features
+  # a deployment can still turn off with `--no-default-features` if it wants
+  # the smallest possible binary, they just aren't off by default anymore),
+  # so there is roughly an order of magnitude of headroom: a capability that
+  # legitimately needs a few more megabytes should just take them. What the
+  # job is here to catch is the accident -- a *future* heavy dependency that
+  # was supposed to be opt-in quietly ending up pulled into every build
+  # regardless of feature flags.
   #
   # Two rules keep the measurement honest:
   #   * build `-p pdfcn-vercel` explicitly, never `--workspace`. With
@@ -58,7 +62,8 @@ jobs:
   #   * print the resolved feature graph too. Size is the lagging indicator;
   #     an unexpected optional dependency appearing in the graph is the
   #     leading one, and it is visible in the log before it is visible in the
-  #     byte count.
+  #     byte count. (`resvg`/`lopdf` are expected here now -- watch for
+  #     anything else.)
   binary-size:
     runs-on: ubuntu-latest
     env:

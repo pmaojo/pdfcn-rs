@@ -367,7 +367,11 @@ fn sector_path(cx: f64, cy: f64, r_outer: f64, r_inner: f64, start: f64, end: f6
         cy + r_outer * rad(start).sin(),
     );
     let (ex, ey) = (cx + r_outer * rad(end).cos(), cy + r_outer * rad(end).sin());
-    let large = (end - start) > 180.0;
+    // SVG's arc-flag grammar is exactly `0` | `1` -- a Rust `bool`
+    // interpolated directly here would print as the literal text
+    // `false`/`true`, which resvg (correctly) rejects as invalid `d`
+    // syntax, silently drawing nothing rather than a malformed sector.
+    let large = i32::from((end - start) > 180.0);
     if r_inner <= 0.0 {
         format!(
             "M {cx:.2} {cy:.2} L {sx:.2} {sy:.2} A {r_outer:.2} {r_outer:.2} 0 {large} 1 {ex:.2} {ey:.2} Z"
@@ -514,6 +518,23 @@ mod tests {
 
     fn svg_of(spec: JsonValue) -> String {
         chart_svg(&spec).expect("spec should render")
+    }
+
+    /// A regression guard for a real bug: `sector_path` used to interpolate
+    /// a Rust `bool` straight into the arc's large-arc-flag, printing the
+    /// literal text `false`/`true` -- invalid per SVG's `flag ::= "0" |
+    /// "1"` path grammar. resvg rejected the whole `d` attribute and drew
+    /// nothing, while the legend (separate elements) rendered fine, making
+    /// the bug easy to miss without checking the actual path text.
+    #[test]
+    fn pie_sector_arc_flags_are_numeric_not_the_word_false_or_true() {
+        let svg = svg_of(json!({
+            "k": "pie", "v": [38.0, 24.0, 21.0, 17.0],
+            "lb": ["Direct", "Referral", "Search", "Social"],
+            "d": true, "w": 220.0, "h": 180.0
+        }));
+        assert!(!svg.contains("false") && !svg.contains("true"), "{svg}");
+        assert!(svg.matches(" A ").count() >= 4, "{svg}");
     }
 
     #[test]

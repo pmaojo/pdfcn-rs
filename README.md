@@ -125,19 +125,23 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
-## Charts, barcodes and raw SVG (opt-in `vector` feature)
+## Charts, barcodes and raw SVG (`vector` Cargo feature, on by default)
 
 `%LineChart`, `%StackedBarChart`, `%PieChart`, `%Sparkline`, `%Barcode` and a
 generic `%Vector` escape hatch all render through one shared substrate: the
 component expands to an `<img src="pdfcn-chart:...">` / `pdfcn-barcode:...` /
 `pdfcn-vector:{id}` placeholder, and an asset-preparation pass rasterizes it
-to a print-density PNG (`resvg`, ~300dpi) before layout. None of this ships
-in the default build — it's entirely behind the `vector` Cargo feature, kept
-off by default so the serverless binary (`pdfcn-vercel`/`api/generate-pdf.rs`)
-never links `resvg` unless a deployment opts in:
+to a print-density PNG (`resvg`, ~300dpi) before layout. It's a real Cargo
+feature (`vector`) rather than always-on code, but ships on by default —
+it's not a heavy addition (~1.8MB on the serverless binary). A deployment
+that wants the smallest possible build opts back out explicitly:
 
 ```sh
-cargo run -p pdfcn-cli --features vector -- build examples/charts.haml \
+cargo build -p pdfcn-cli --no-default-features   # drops vector + factur-x
+```
+
+```sh
+cargo run -p pdfcn-cli -- build examples/charts.haml \
   -d examples/charts.json -o /tmp/charts.pdf --svg logo=examples/logo.svg
 ```
 
@@ -154,21 +158,22 @@ than a chart spec — its source travels through `RenderOptions.svg_assets`
 (id → SVG text) rather than inline markup, since SVG can be arbitrarily
 large. `examples/charts.haml` (data: `examples/charts.json`, SVG:
 `examples/logo.svg`) is a worked example combining all five. Built without
-the `vector` feature, every one of these components expands to an explicit
-marker naming the disabled feature instead of a silent no-op.
+the `vector` feature (e.g. built with `--no-default-features`), every one
+of these components expands to an explicit marker naming the disabled
+feature instead of a silent no-op.
 
-## Factur-X invoice embedding (opt-in `factur-x` feature)
+## Factur-X invoice embedding (`factur-x` Cargo feature, on by default)
 
 `pdfcn build --factur-x-xml invoice.xml` splices an EN 16931/CII invoice
 XML into the rendered PDF as a Factur-X-compliant attachment -- the same
 file is then both the human-readable invoice and the machine-readable
-e-invoice a client's accounting system parses. Behind its own opt-in
-`factur-x` Cargo feature (never in the default serverless build: it pulls
-in `lopdf`, only for direct object surgery on printpdf's own output,
-which has no embedded-file support of its own):
+e-invoice a client's accounting system parses. Ships on by default (its
+`lopdf` dependency is only for direct object surgery on printpdf's own
+output, which has no embedded-file support of its own; see
+`--no-default-features` above to opt out):
 
 ```sh
-cargo run -p pdfcn-cli --features factur-x -- build invoice.haml \
+cargo run -p pdfcn-cli -- build invoice.haml \
   -d invoice.json -o out.pdf --factur-x-xml invoice-en16931.xml \
   --factur-x-profile en16931
 ```
@@ -233,8 +238,8 @@ isn't confirmed.
 `AGENTS.md` has build/test/lint commands and this repo's conventions. A
 Claude Code plugin lives at `.claude-plugin/` + `skills/` (load with
 `claude --plugin-dir .`), with skills covering the HAML template syntax/
-components (`haml-syntax`) and the opt-in `vector`/`factur-x` Cargo
-features (`cargo-features`).
+components (`haml-syntax`) and the `vector`/`factur-x` Cargo features,
+on by default (`cargo-features`).
 
 ## Design notes
 
