@@ -34,6 +34,15 @@ path = "api/generate-pdf.rs"
 name = "generate-pdf-batch"
 path = "api/generate-pdf-batch.rs"
 
+# Deliberately NOT under `api/`: Vercel's own build discovers a serverless
+# function per file in that directory, so the code both handlers share
+# (the SSRF-guarded image fetcher, the api-key check, base64 map decoding)
+# lives here instead, where it's an ordinary lib target Cargo builds but
+# Vercel never turns into a third function.
+[lib]
+name = "pdfcn_vercel"
+path = "src/lib.rs"
+
 [dependencies]
 pdfcn-core = { workspace = true }
 pdfcn-parser = { workspace = true }

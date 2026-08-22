@@ -24,12 +24,11 @@ use pdfcn_core::{
     img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
     Orientation, PageConfig, PageSize, PartialLoader, Theme,
 };
+use pdfcn_vercel::auth::{api_key, authorized};
+use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::net::{IpAddr, SocketAddr};
-use std::sync::OnceLock;
-use std::time::Duration;
 use vercel_runtime::{run, service_fn, Error, Request, Response};
 
 /// Upper bound on documents per request. Serverless functions have hard
@@ -178,174 +177,6 @@ impl PartialLoader for MemoryPartials {
             .cloned()
             .ok_or_else(|| EvalError::PartialNotFound(path.to_string()))
     }
-}
-
-fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
-    headers.get("x-api-key").and_then(|v| v.to_str().ok()) == Some(expected_key)
-}
-
-/// Decodes one base64-keyed map (fonts or images), rejecting the request
-/// with a client-facing message if any value is malformed.
-fn decode_base64_map(
-    raw: &HashMap<String, String>,
-    kind: &str,
-) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    let mut out = BTreeMap::new();
-    for (key, b64) in raw {
-        match STANDARD.decode(b64) {
-            Ok(bytes) => {
-                out.insert(key.clone(), bytes);
-            }
-            Err(e) => return Err(format!("invalid base64 for {kind} \"{key}\": {e}")),
-        }
-    }
-    Ok(out)
-}
-
-// ---------------------------------------------------------------------------
-// Remote image fetching. Kept byte-for-byte in sync with generate-pdf.rs --
-// the api package is bin-only (Vercel builds each [[bin]] standalone), so
-// there is no lib target to share these through yet. Same SSRF guards, same
-// caps, same degrade-to-placeholder policy.
-// ---------------------------------------------------------------------------
-
-const MAX_REMOTE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
-const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// The optional shared-secret gate, read exactly once per isolate.
-/// Reading it inside the handler would hide the dependency from tests and
-/// re-parse the environment on every request; a serverless isolate is
-/// long-lived enough that startup-time capture is the composition root.
-static API_KEY: OnceLock<Option<String>> = OnceLock::new();
-
-fn api_key() -> Option<&'static str> {
-    API_KEY
-        .get_or_init(|| {
-            std::env::var("PDFCN_API_KEY")
-                .ok()
-                .filter(|k| !k.is_empty())
-        })
-        .as_deref()
-}
-
-fn is_disallowed_target(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_disallowed_target(IpAddr::V4(mapped));
-            }
-            v6.is_loopback()
-                || v6.is_multicast()
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7, unique local
-                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10, link-local
-        }
-    }
-}
-
-async fn resolve_public_addr(host: &str, port: u16) -> Result<SocketAddr, &'static str> {
-    let addrs = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| "DNS resolution failed")?
-        .collect::<Vec<_>>();
-    addrs
-        .into_iter()
-        .find(|addr| !is_disallowed_target(addr.ip()))
-        .ok_or("resolves only to a private/internal address")
-}
-
-async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
-    let mut url = reqwest::Url::parse(url_str).ok()?;
-    if url.scheme() != "http" && url.scheme() != "https" {
-        return None;
-    }
-
-    // Pinned to the last validated origin, rebuilt only when a redirect
-    // changes host or port -- not on every hop.
-    let mut client: Option<reqwest::Client> = None;
-    let mut pinned_host = String::new();
-    let mut pinned_port = 0u16;
-
-    // Bounded, not recursive: each hop is itself resolved and validated
-    // before being requested, so a chain can't smuggle a private target in
-    // past the first hop. The scheme check repeats per hop for the same
-    // reason: reqwest only speaks http(s), but saying so here makes the
-    // invariant local instead of incidental (and this is a fetch-side
-    // guard, not an open redirect: no user-facing Location is echoed).
-    for _ in 0..5 {
-        if url.scheme() != "http" && url.scheme() != "https" {
-            return None;
-        }
-        let host = url.host_str()?.to_string();
-        let port = url.port_or_known_default()?;
-        let addr = resolve_public_addr(&host, port).await.ok()?;
-
-        let rebuild = match &client {
-            Some(_) => pinned_host != host || pinned_port != port,
-            None => true,
-        };
-        if rebuild {
-            // `.resolve` pins the exact address just validated: reqwest
-            // connects to `addr` and skips its own DNS lookup entirely.
-            // Without this there is a TOCTOU window between the validation
-            // above and reqwest's internal resolution -- a short-TTL
-            // rebinding record can answer the first lookup with a public
-            // IP and the second with 127.0.0.1. The explicit Host header
-            // below keeps the request semantically addressed to the
-            // original hostname.
-            let built = reqwest::Client::builder()
-                .timeout(FETCH_TIMEOUT)
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve(host.as_str(), addr)
-                .build()
-                .ok()?;
-            client = Some(built);
-            pinned_host = host;
-            pinned_port = port;
-        }
-        let bound = client.as_ref()?;
-
-        let resp = bound
-            .get(url.clone())
-            .header(reqwest::header::HOST, format!("{}:{port}", pinned_host))
-            .send()
-            .await
-            .ok()?;
-
-        if resp.status().is_redirection() {
-            let location = resp
-                .headers()
-                .get(reqwest::header::LOCATION)?
-                .to_str()
-                .ok()?;
-            url = url.join(location).ok()?;
-            continue;
-        }
-        if !resp.status().is_success() {
-            return None;
-        }
-        if resp
-            .content_length()
-            .is_some_and(|len| len > MAX_REMOTE_IMAGE_BYTES)
-        {
-            return None;
-        }
-        let bytes = resp.bytes().await.ok()?;
-        if bytes.len() as u64 > MAX_REMOTE_IMAGE_BYTES {
-            return None;
-        }
-        return Some(bytes.to_vec());
-    }
-    None
 }
 
 /// One document's slot in the response: either a rendered PDF (base64) or
@@ -768,19 +599,9 @@ mod tests {
         assert!(authorized(&headers, "secret"));
     }
 
-    #[test]
-    fn private_and_loopback_targets_are_disallowed() {
-        for ip in [
-            "127.0.0.1",
-            "10.0.0.5",
-            "192.168.1.1",
-            "169.254.169.254",
-            "::1",
-        ] {
-            let ip: IpAddr = ip.parse().unwrap();
-            assert!(is_disallowed_target(ip), "{ip} should be disallowed");
-        }
-    }
+    // `is_disallowed_target`'s own coverage now lives with the function in
+    // `pdfcn_vercel::remote_image` -- see the matching note in
+    // `generate-pdf.rs`, whose copy of this test was the other duplicate.
 
     #[tokio::test]
     async fn a_non_http_scheme_is_never_fetched() {
