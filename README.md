@@ -162,6 +162,12 @@ the `vector` feature (e.g. built with `--no-default-features`), every one
 of these components expands to an explicit marker naming the disabled
 feature instead of a silent no-op.
 
+`POST /api/generate-pdf` takes the same `%Vector` SVG side channel as a
+top-level `svgs` request field (id → SVG text); `%LineChart`/`%Barcode`/…
+need no special field at all, just the component in `template`. `index.html`'s
+live sandbox has a "Charts, barcode & vector logo" example exercising all
+of it against the real endpoint.
+
 ## Factur-X invoice embedding (`factur-x` Cargo feature, on by default)
 
 `pdfcn build --factur-x-xml invoice.xml` splices an EN 16931/CII invoice
@@ -173,16 +179,18 @@ output, which has no embedded-file support of its own; see
 `--no-default-features` above to opt out):
 
 ```sh
-cargo run -p pdfcn-cli -- build invoice.haml \
-  -d invoice.json -o out.pdf --factur-x-xml invoice-en16931.xml \
-  --factur-x-profile en16931
+cargo run -p pdfcn-cli -- build examples/invoice.haml \
+  -d examples/invoice.json -o out.pdf \
+  --factur-x-xml examples/invoice-en16931.xml --factur-x-profile en16931
 ```
 
 `--factur-x-profile` accepts `minimum`, `basic-wl`, `basic`, `en16931`
 (default) or `extended` -- these only change the profile's XMP
 declaration, since every one of them maps to the same PDF/A-3B container.
-`pdfcn_core::embed_factur_x_invoice` is the same primitive for the API/
-napi bindings, taking already-rendered PDF bytes plus the XML.
+`pdfcn_core::embed_factur_x_invoice` is the same primitive for napi
+bindings, taking already-rendered PDF bytes plus the XML.
+`POST /api/generate-pdf` exposes it as a top-level `factur_x` request
+field: `{ "xml": "...", "profile"?: "en16931", "icc_base64"?: "..." }`.
 
 **PDF/A's `/OutputIntent` needs a real, caller-supplied sRGB ICC
 profile.** `--factur-x-icc profile.icc` embeds it; without it, the output

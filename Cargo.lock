@@ -2302,6 +2302,7 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
+ "lopdf",
  "pdfcn-core",
  "pdfcn-parser",
  "rayon",
