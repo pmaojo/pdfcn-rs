@@ -2,10 +2,12 @@ mod assets;
 mod data;
 mod error;
 mod html_render;
+mod options;
 mod page;
 
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
+pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_styles::{Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
@@ -276,13 +278,13 @@ pub fn render_html_with_theme(
 }
 
 /// Renders a complete HTML document (as produced by [`render_html`]) to PDF
-/// bytes in memory (FR-4), honoring `page`'s size/orientation/margins. Pure
-/// Rust: no headless browser, no external process, Vercel-safe (NFR-3).
-/// Uses only the built-in typefaces ([`BUILTIN_FONTS`]); for a document that
-/// needs a caller-supplied font (a brand typeface), use
-/// [`render_pdf_with_fonts`].
-pub fn render_pdf(html: &str, page: &PageConfig) -> Result<Vec<u8>, CoreError> {
-    render_pdf_with_fonts(html, page, &BTreeMap::new())
+/// bytes in memory (FR-4), honoring `options`'s page geometry, page
+/// decoration (header/footer/page-numbers) and metadata. Pure Rust: no
+/// headless browser, no external process, Vercel-safe (NFR-3). Uses only
+/// the built-in typefaces ([`BUILTIN_FONTS`]); for a document that needs a
+/// caller-supplied font (a brand typeface), use [`render_pdf_with_fonts`].
+pub fn render_pdf(html: &str, options: &RenderOptions) -> Result<Vec<u8>, CoreError> {
+    render_pdf_with_fonts(html, options, &BTreeMap::new())
 }
 
 /// Like [`render_pdf`], but `custom_fonts` (family name -> TTF/OTF bytes) is
@@ -292,10 +294,10 @@ pub fn render_pdf(html: &str, page: &PageConfig) -> Result<Vec<u8>, CoreError> {
 /// that built-in weight/style rather than adding a duplicate.
 pub fn render_pdf_with_fonts(
     html: &str,
-    page: &PageConfig,
+    options: &RenderOptions,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, CoreError> {
-    render_pdf_with_assets(html, page, custom_fonts, &BTreeMap::new())
+    render_pdf_with_assets(html, custom_fonts, &BTreeMap::new(), options)
 }
 
 /// Like [`render_pdf_with_fonts`], but `images` (the `<img src="...">` value
@@ -305,9 +307,9 @@ pub fn render_pdf_with_fonts(
 /// yourself" convention -- no network access at render time (NFR-3).
 pub fn render_pdf_with_assets(
     html: &str,
-    page: &PageConfig,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
     images: &BTreeMap<String, Vec<u8>>,
+    options: &RenderOptions,
 ) -> Result<Vec<u8>, CoreError> {
     // Post-render asset preparation runs here — the one choke point every
     // entry point (CLI, HTTP API, napi bindings) funnels through — so QR
@@ -317,14 +319,24 @@ pub fn render_pdf_with_assets(
     let html = assets::prepare_assets(html, &mut prepared_images);
     let html = html.as_str();
 
-    let (width_mm, height_mm) = page.page_size_mm();
-    let options = GeneratePdfOptions {
+    let (width_mm, height_mm) = options.page.page_size_mm();
+    // header_text/footer_text/show_page_numbers/skip_first_page are wired
+    // through exactly as printpdf's own API declares them, but currently
+    // render nothing -- see `RenderOptions::header_text`'s doc comment for
+    // the verified upstream gap. Left wired rather than dropped: correct
+    // today (a documented no-op) and self-healing if printpdf starts
+    // drawing them.
+    let pdf_options = GeneratePdfOptions {
         page_width: Some(width_mm),
         page_height: Some(height_mm),
-        margin_top: Some(page.margin_mm),
-        margin_right: Some(page.margin_mm),
-        margin_bottom: Some(page.margin_mm),
-        margin_left: Some(page.margin_mm),
+        margin_top: Some(options.page.margin_mm),
+        margin_right: Some(options.page.margin_mm),
+        margin_bottom: Some(options.page.margin_mm),
+        margin_left: Some(options.page.margin_mm),
+        header_text: options.header_text.clone(),
+        footer_text: options.footer_text.clone(),
+        show_page_numbers: Some(options.show_page_numbers),
+        skip_first_page: Some(options.skip_first_page),
         ..Default::default()
     };
     // Embed only the fonts the document can reach. Every built-in family
@@ -363,30 +375,91 @@ pub fn render_pdf_with_assets(
     }
 
     let mut warnings = Vec::new();
-    let doc = PdfDocument::from_html_with_cache(
+    let mut doc = PdfDocument::from_html_with_cache(
         html,
         &image_map,
         &fonts,
-        &options,
+        &pdf_options,
         &mut warnings,
         Some(pool),
     )
     .map_err(CoreError::Render)?;
 
+    // Set directly on the saved document rather than via printpdf's own
+    // `<meta name="pdf.metadata.*">` mechanism -- see `DocumentMetadata`'s
+    // doc comment for why. Only touches a field the caller actually set,
+    // leaving printpdf's own blank defaults for the rest.
+    let metadata = &options.metadata;
+    if let Some(title) = &metadata.title {
+        doc.metadata.info.document_title = title.clone();
+    }
+    if let Some(author) = &metadata.author {
+        doc.metadata.info.author = author.clone();
+    }
+    if let Some(subject) = &metadata.subject {
+        doc.metadata.info.subject = subject.clone();
+    }
+    if !metadata.keywords.is_empty() {
+        doc.metadata.info.keywords = metadata.keywords.clone();
+    }
+    if let Some(producer) = &metadata.producer {
+        doc.metadata.info.producer = producer.clone();
+    }
+
+    let save_options = PdfSaveOptions {
+        image_optimization: Some(to_printpdf_image_optimization(
+            options.image_optimization.as_ref(),
+        )),
+        ..Default::default()
+    };
     let mut save_warnings = Vec::new();
-    Ok(doc.save(&PdfSaveOptions::default(), &mut save_warnings))
+    Ok(doc.save(&save_options, &mut save_warnings))
 }
 
-/// End-to-end: `.haml` source + data context + page config -> PDF bytes.
-/// Uses only the built-in typefaces; see [`render_with_fonts`] for a
-/// caller-supplied font.
+/// Maps pdfcn's own [`ImageOptimization`] to printpdf's
+/// `ImageOptimizationOptions`/`ImageCompression`. Always returns a concrete
+/// value, falling back to printpdf's own per-field defaults (quality 0.85,
+/// a 2MB cap, format auto -- compression that's already on) for whichever
+/// fields the caller left unset, `opts: None` included: passing `None`
+/// straight through to `PdfSaveOptions.image_optimization` would disable
+/// image re-encoding entirely rather than leave it at its default, which is
+/// exactly the regression a golden-snapshot diff caught while wiring this.
+fn to_printpdf_image_optimization(
+    opts: Option<&ImageOptimization>,
+) -> printpdf::ImageOptimizationOptions {
+    let defaults = printpdf::ImageOptimizationOptions::default();
+    let Some(opts) = opts else { return defaults };
+    printpdf::ImageOptimizationOptions {
+        quality: opts.quality.or(defaults.quality),
+        max_image_size: opts.max_size.clone().or(defaults.max_image_size),
+        dither_greyscale: defaults.dither_greyscale,
+        convert_to_greyscale: opts.greyscale.or(defaults.convert_to_greyscale),
+        auto_optimize: defaults.auto_optimize,
+        format: opts
+            .format
+            .map(|format| match format {
+                ImageFormat::Auto => printpdf::ImageCompression::Auto,
+                ImageFormat::Jpeg => printpdf::ImageCompression::Jpeg,
+                ImageFormat::Lossless => printpdf::ImageCompression::Flate,
+                ImageFormat::Raw => printpdf::ImageCompression::None,
+            })
+            .or(defaults.format),
+    }
+}
+
+/// End-to-end: `.haml` source + data context + rendering options -> PDF
+/// bytes. Uses only the built-in typefaces; see [`render_with_fonts`] for a
+/// caller-supplied font. `options.theme` reaches the stylesheet build here
+/// -- this is the entry point CLI/napi callers should use for a themed
+/// document, rather than [`render_html`] (always light) plus
+/// [`render_pdf`].
 pub fn render(
     source: &str,
     data: &JsonValue,
-    page: &PageConfig,
     loader: &dyn PartialLoader,
+    options: &RenderOptions,
 ) -> Result<Vec<u8>, CoreError> {
-    render_with_fonts(source, data, page, loader, &BTreeMap::new())
+    render_with_fonts(source, data, loader, &BTreeMap::new(), options)
 }
 
 /// Like [`render`], but `custom_fonts` (family name -> TTF/OTF bytes) is
@@ -394,11 +467,18 @@ pub fn render(
 pub fn render_with_fonts(
     source: &str,
     data: &JsonValue,
-    page: &PageConfig,
     loader: &dyn PartialLoader,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
+    options: &RenderOptions,
 ) -> Result<Vec<u8>, CoreError> {
-    render_with_assets(source, data, page, loader, custom_fonts, &BTreeMap::new())
+    render_with_assets(
+        source,
+        data,
+        loader,
+        custom_fonts,
+        &BTreeMap::new(),
+        options,
+    )
 }
 
 /// Like [`render_with_fonts`], but also embeds `images` (see
@@ -406,13 +486,13 @@ pub fn render_with_fonts(
 pub fn render_with_assets(
     source: &str,
     data: &JsonValue,
-    page: &PageConfig,
     loader: &dyn PartialLoader,
     custom_fonts: &BTreeMap<String, Vec<u8>>,
     images: &BTreeMap<String, Vec<u8>>,
+    options: &RenderOptions,
 ) -> Result<Vec<u8>, CoreError> {
-    let html = render_html(source, data, loader)?;
-    render_pdf_with_assets(&html, page, custom_fonts, images)
+    let html = render_html_with_theme(source, data, loader, &options.theme)?;
+    render_pdf_with_assets(&html, custom_fonts, images, options)
 }
 
 /// Convenience for the CLI: reads `template_path` and `data_path` from
@@ -430,9 +510,9 @@ pub fn render_with_assets(
 pub fn render_files(
     template_path: &Path,
     data_path: &Path,
-    page: &PageConfig,
+    options: &RenderOptions,
 ) -> Result<Vec<u8>, CoreError> {
-    render_files_with_remote_images(template_path, data_path, page, None)
+    render_files_with_remote_images(template_path, data_path, options, None)
 }
 
 /// A caller-supplied `http(s):` image fetcher for
@@ -452,7 +532,7 @@ pub type RemoteImageFetcher = dyn Fn(&str) -> Option<Vec<u8>>;
 pub fn render_files_with_remote_images(
     template_path: &Path,
     data_path: &Path,
-    page: &PageConfig,
+    options: &RenderOptions,
     fetch_remote: Option<&RemoteImageFetcher>,
 ) -> Result<Vec<u8>, CoreError> {
     let source = std::fs::read_to_string(template_path)
@@ -470,9 +550,9 @@ pub fn render_files_with_remote_images(
         .map(Path::to_path_buf)
         .unwrap_or_default();
     let loader = FsPartialLoader::new(base_dir.clone());
-    let html = render_html(&source, &data, &loader)?;
+    let html = render_html_with_theme(&source, &data, &loader, &options.theme)?;
     let images = load_images(&html, &base_dir, fetch_remote);
-    render_pdf_with_assets(&html, page, &BTreeMap::new(), &images)
+    render_pdf_with_assets(&html, &BTreeMap::new(), &images, options)
 }
 
 /// Extracts every `src="..."` value from `<img ...>` tags in already
@@ -568,6 +648,69 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn image_optimization_none_keeps_printpdfs_own_default() {
+        let mapped = to_printpdf_image_optimization(None);
+        assert_eq!(mapped, printpdf::ImageOptimizationOptions::default());
+    }
+
+    #[test]
+    fn image_optimization_only_overrides_fields_the_caller_set() {
+        let opts = ImageOptimization {
+            quality: Some(0.5),
+            ..ImageOptimization::default()
+        };
+        let mapped = to_printpdf_image_optimization(Some(&opts));
+        let defaults = printpdf::ImageOptimizationOptions::default();
+        assert_eq!(mapped.quality, Some(0.5));
+        assert_eq!(mapped.max_image_size, defaults.max_image_size);
+        assert_eq!(mapped.auto_optimize, defaults.auto_optimize);
+    }
+
+    #[test]
+    fn image_optimization_maps_every_format_variant() {
+        for (pdfcn, printpdf) in [
+            (ImageFormat::Auto, printpdf::ImageCompression::Auto),
+            (ImageFormat::Jpeg, printpdf::ImageCompression::Jpeg),
+            (ImageFormat::Lossless, printpdf::ImageCompression::Flate),
+            (ImageFormat::Raw, printpdf::ImageCompression::None),
+        ] {
+            let opts = ImageOptimization {
+                format: Some(pdfcn),
+                ..ImageOptimization::default()
+            };
+            assert_eq!(
+                to_printpdf_image_optimization(Some(&opts)).format,
+                Some(printpdf)
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_only_sets_fields_the_caller_provided() {
+        let options = RenderOptions {
+            metadata: DocumentMetadata {
+                title: Some("Invoice #42".to_string()),
+                author: Some("pdfcn".to_string()),
+                ..DocumentMetadata::default()
+            },
+            ..RenderOptions::default()
+        };
+        let bytes =
+            render_pdf_with_assets("<p>hi</p>", &BTreeMap::new(), &BTreeMap::new(), &options)
+                .unwrap();
+        let mut parse_warnings = Vec::new();
+        let doc = printpdf::parse_pdf_from_bytes(
+            &bytes,
+            &printpdf::PdfParseOptions::default(),
+            &mut parse_warnings,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata.info.document_title, "Invoice #42");
+        assert_eq!(doc.metadata.info.author, "pdfcn");
+        assert_eq!(doc.metadata.info.subject, "");
+    }
+
+    #[test]
     fn img_srcs_extracts_every_image_source_in_document_order() {
         let html = concat!(
             r#"<div><img class="a" src="cover.jpg" alt=""><p>x</p>"#,
@@ -657,7 +800,7 @@ mod tests {
     fn renders_a_minimal_document_to_pdf_bytes() {
         let source = "%h1 Invoice\n%p Total: {{ total }}";
         let data = json!({ "total": "$42.00" });
-        let bytes = render(source, &data, &PageConfig::default(), &NoPartials).unwrap();
+        let bytes = render(source, &data, &NoPartials, &RenderOptions::default()).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 
@@ -683,7 +826,7 @@ mod tests {
         assert!(html.contains("border-radius:16px"));
         assert!(html.contains("box-shadow"));
 
-        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        let bytes = render_pdf(&html, &RenderOptions::default()).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 
@@ -751,7 +894,7 @@ mod tests {
         let used = used_font_families(&html);
         assert_eq!(used, BTreeSet::from([DEFAULT_FONT_FAMILY.to_string()]));
         // End to end: still renders.
-        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        let bytes = render_pdf(&html, &RenderOptions::default()).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 
@@ -760,7 +903,7 @@ mod tests {
         let source = "%p(style=\"font-family:'Source Serif 4'\") Serif body";
         let html = render_html(source, &json!({}), &NoPartials).unwrap();
         assert!(used_font_families(&html).contains("Source Serif 4"));
-        let bytes = render_pdf(&html, &PageConfig::default()).unwrap();
+        let bytes = render_pdf(&html, &RenderOptions::default()).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 

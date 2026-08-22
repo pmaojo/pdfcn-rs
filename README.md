@@ -139,15 +139,28 @@ Both are demonstrated in `examples/catalog.haml`.
 - **`box-shadow` has no effect.** `shadow-sm`/`shadow-md`/etc. resolve to a
   real CSS declaration, but the renderer doesn't paint it — cards render
   flat, without a drop shadow.
-- **`object-fit` has no effect.** An image is scaled to exactly fill its
-  box on both axes (not cropped to cover, nor letterboxed to contain), so
-  a source image whose aspect ratio doesn't already match its box stretches
-  slightly. Pick a source image close to the box's aspect ratio (a `%Card`
-  image is `w-full h-48`) to keep the distortion imperceptible.
+- **`object-fit` has no effect in the renderer itself.** An image is scaled
+  to exactly fill its box on both axes (not cropped to cover, nor
+  letterboxed to contain). `pdfcn-core`'s asset-preparation pass works
+  around this by center-cropping the source ahead of time when *both* the
+  box's width and height are known in px (inline `style=""`, not classes) --
+  but a box with only one dimension known in px (e.g. `%Card`'s cover
+  image, whose width is the relative `w-full`) still can't be cropped, only
+  resolution-capped. Pick a source image close to the box's aspect ratio to
+  keep the distortion imperceptible in that case.
 - **`border-radius` needs a `px` value, not `rem`.** `pdfcn-styles`'
   `rounded-*` scale already emits `px` for this reason; a hand-written
   `style="border-radius:0.5rem"` renders square corners; `style="border-radius:8px"`
   renders the real rounded corners.
+- **`RenderOptions::header_text`/`footer_text`/`show_page_numbers`/
+  `skip_first_page` currently render nothing.** These map directly to
+  printpdf's own `GeneratePdfOptions` fields, but printpdf 0.12.6's actual
+  HTML-to-PDF call path (`layout_document_paged_v2`) never draws them,
+  even though the field is threaded all the way to a `FakePageConfig` and
+  azul-layout does contain header/footer-drawing code elsewhere, unused by
+  that path. Verified with a minimal reproduction outside pdfcn entirely.
+  Kept wired rather than removed, since it costs nothing and starts working
+  automatically if a future printpdf release fixes it.
 
 ## Design notes
 

@@ -191,7 +191,15 @@ fn card(attrs: &[ResolvedAttr], children: Markup) -> Markup {
     html! {
         div class={ "card relative overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm break-inside-avoid " (extra) } {
             @if let Some(src) = image {
-                img class="card-image w-full h-48 object-cover" src=(src) alt=(attr_or(attrs, "image-alt", ""));
+                // Height and object-fit live in `style=""`, not the `h-48
+                // object-cover` classes their names suggest: pdfcn-core's
+                // asset-preparation pass (crop-to-cover, resolution
+                // downscaling) only reads inline `style=""` box sizes --
+                // classes are invisible to it. `w-full` stays a class since
+                // it is relative to the card's own width, which isn't known
+                // until layout runs; there is no pre-layout px value to give
+                // it either way.
+                img class="card-image w-full object-cover" style="height:192px;object-fit:cover" src=(src) alt=(attr_or(attrs, "image-alt", ""));
             }
             div class="card-body p-4" {
                 @if let Some(t) = title {
@@ -397,8 +405,12 @@ fn cell_text(v: &JsonValue) -> String {
 /// document, wherever the content ends. It does not repeat on every page
 /// -- the layout engine has no verified support for `position:fixed`
 /// page repetition or `@page` margin boxes, so claiming per-page repetition
-/// would be a lie. For a per-document "Page X of Y" label, `%Pagination`
-/// takes data-driven values; for a letterhead footer line, this is it.
+/// would be a lie. printpdf's own native escape hatch for this
+/// (`RenderOptions::footer_text`/`header_text`, bypassing CSS entirely) is
+/// no better: verified to currently render nothing at all (see that
+/// field's doc comment). For a per-document "Page X of Y" label,
+/// `%Pagination` takes data-driven values; for a letterhead footer line,
+/// this is it.
 ///
 /// `left` / `center` / `right` (optional): slot text, interpolated by the
 /// template engine like any attribute (`left="{{ company.name }}"`).
@@ -553,6 +565,23 @@ mod tests {
         assert!(out.contains("card-image"));
         assert!(out.contains("absolute top-2 right-2 z-10"));
         assert!(!out.contains("inline-flex"));
+    }
+
+    /// The cover image's height and object-fit must be readable from inline
+    /// `style=""`, not just `class=""` -- that's the only box-size channel
+    /// `pdfcn-core`'s asset-preparation pass (crop-to-cover, resolution
+    /// downscaling) understands. A class-only box silently skips both
+    /// passes and a multi-megapixel photo ships uncompressed.
+    #[test]
+    fn card_image_box_size_is_readable_from_inline_style() {
+        let out = render("Card", &[a("image", "sneaker.png")], html! {})
+            .unwrap()
+            .unwrap()
+            .into_string();
+        assert!(
+            out.contains(r#"style="height:192px;object-fit:cover""#),
+            "{out}"
+        );
     }
 
     #[test]

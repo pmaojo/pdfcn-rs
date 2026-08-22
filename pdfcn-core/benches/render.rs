@@ -32,7 +32,7 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use pdfcn_core::{render_files, render_html, NoPartials, PageConfig};
+use pdfcn_core::{render_files, render_html, NoPartials, RenderOptions};
 
 /// One render of a typical invoice, repeated this many times, standing in for
 /// the batch endpoint's "one template, many rows" workload.
@@ -99,7 +99,7 @@ fn bench_html(c: &mut Criterion) {
 /// here.
 fn bench_pdf(c: &mut Criterion) {
     let dir = examples_dir();
-    let page = PageConfig::default();
+    let options = RenderOptions::default();
     let mut group = c.benchmark_group("render_pdf");
     // The layout engine dominates here, so a handful of samples is enough to
     // see a regression without making `cargo bench` unusable.
@@ -109,7 +109,7 @@ fn bench_pdf(c: &mut Criterion) {
         let data = dir.join(format!("{name}.json"));
         group.bench_function(name, |b| {
             b.iter(|| {
-                let bytes = render_files(black_box(&template), black_box(&data), &page);
+                let bytes = render_files(black_box(&template), black_box(&data), &options);
                 black_box(bytes.is_ok())
             })
         });

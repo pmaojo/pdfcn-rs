@@ -5,17 +5,16 @@
 //! dependencies (NFR-3) -- the whole request/response cycle is
 //! `pdfcn-core` plus this thin HTTP adapter.
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
 use pdfcn_core::{
     img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
-    Orientation, PageConfig, PageSize, PartialLoader, Theme,
+    Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
+use pdfcn_vercel::auth::{api_key, authorized};
+use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto};
+use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::OnceLock;
-use std::time::Duration;
 use vercel_runtime::{run, service_fn, Error, Request, Response};
 
 #[derive(Deserialize)]
@@ -90,6 +89,30 @@ struct GenerateRequest {
     /// built on them without touching the template.
     #[serde(default)]
     theme: Option<serde_json::Value>,
+    /// Repeated on every page (see `skip_first_page`). Currently has no
+    /// visible effect -- printpdf 0.12.6 doesn't render it yet; accepted
+    /// and wired through for forward compatibility (see
+    /// `pdfcn_core::RenderOptions::header_text`'s doc comment).
+    #[serde(default)]
+    header_text: Option<String>,
+    /// Repeated on every page. Same current no-op as `header_text`.
+    #[serde(default)]
+    footer_text: Option<String>,
+    /// Appends "Page X of Y" to the footer. Same current no-op.
+    #[serde(default)]
+    show_page_numbers: bool,
+    /// Suppresses header/footer/page-numbers on the first page (a cover).
+    /// Moot while the above render nothing.
+    #[serde(default)]
+    skip_first_page: bool,
+    /// Tunes image re-encoding at save time. Compression is already on by
+    /// default (printpdf's own quality 0.85 / 2MB cap); omitting this
+    /// keeps that default rather than disabling it.
+    #[serde(default)]
+    image_optimization: Option<ImageOptimizationDto>,
+    /// Plain PDF document metadata (title/author/subject/keywords/producer).
+    #[serde(default)]
+    metadata: Option<MetadataDto>,
 }
 
 /// Resolves `- include` against a request's `partials` map.
@@ -114,171 +137,11 @@ fn default_filename() -> String {
     "document.pdf".to_string()
 }
 
-/// Cap on a single fetched image and on how many distinct http(s) sources
-/// one request will fetch, so one template can't turn a single PDF render
-/// into an unbounded number of slow/large outbound requests.
-const MAX_REMOTE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+/// How many distinct http(s) sources one request will fetch, so one
+/// template can't turn a single PDF render into an unbounded number of
+/// slow/large outbound requests. Per-image size and timeout are shared with
+/// the batch endpoint -- see `pdfcn_vercel::remote_image`.
 const MAX_REMOTE_IMAGES_PER_REQUEST: usize = 12;
-const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// The optional shared-secret gate, read exactly once per isolate. Reading
-/// it inside the handler would hide the dependency from tests and re-parse
-/// the environment on every request; a serverless isolate is long-lived
-/// enough that startup-time capture is the composition root.
-static API_KEY: OnceLock<Option<String>> = OnceLock::new();
-
-fn api_key() -> Option<&'static str> {
-    API_KEY
-        .get_or_init(|| {
-            std::env::var("PDFCN_API_KEY")
-                .ok()
-                .filter(|k| !k.is_empty())
-        })
-        .as_deref()
-}
-
-/// True for an IP a template's image URL must never be allowed to reach:
-/// loopback, private/link-local ranges, multicast, unspecified, and IPv4
-/// mapped into IPv6. `template`/`data` are caller-controlled input on a
-/// public endpoint, so an unresolved image src is exactly the SSRF vector
-/// that let a template probe internal services or, on AWS (which Vercel
-/// Functions run on), the 169.254.169.254 instance-metadata endpoint --
-/// this is what keeps that closed off.
-fn is_disallowed_target(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_disallowed_target(IpAddr::V4(mapped));
-            }
-            v6.is_loopback()
-                || v6.is_multicast()
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7, unique local
-                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10, link-local
-        }
-    }
-}
-
-/// Resolves host:port, rejecting the target if it has no public IP among
-/// its resolved addresses (a hostname can resolve to several; every one of
-/// them must be public) or fails to resolve at all.
-async fn resolve_public_addr(host: &str, port: u16) -> Result<SocketAddr, &'static str> {
-    let addrs = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| "DNS resolution failed")?
-        .collect::<Vec<_>>();
-    addrs
-        .into_iter()
-        .find(|addr| !is_disallowed_target(addr.ip()))
-        .ok_or("resolves only to a private/internal address")
-}
-
-/// Fetches one http(s) image URL, resolving and validating its host first
-/// (see [`is_disallowed_target`]), then requesting that literal validated
-/// address with redirects disabled -- a redirect target gets its own
-/// validated fetch instead of being followed blindly, closing off
-/// SSRF-via-redirect (and, because every hop is re-validated against the
-/// same scheme/host/IP rules, this is a fetch-side guard rather than an
-/// open redirect: no user-facing Location is ever echoed). The validated
-/// address is pinned onto the reqwest client via resolve(), so the
-/// connection cannot land anywhere other than the vetted IP -- without the
-/// pin, reqwest's internal DNS lookup re-opens a TOCTOU window that a
-/// short-TTL rebinding record can slip a private address through. Errors
-/// and oversized responses degrade to None (the img renders as a
-/// broken-image placeholder) rather than failing the whole request over
-/// one bad image, matching a local file that isn't found.
-async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
-    let mut url = reqwest::Url::parse(url_str).ok()?;
-    if url.scheme() != "http" && url.scheme() != "https" {
-        return None;
-    }
-
-    // Pinned to the last validated origin, rebuilt only when a redirect
-    // changes host or port -- not on every hop.
-    let mut client: Option<reqwest::Client> = None;
-    let mut pinned_host = String::new();
-    let mut pinned_port = 0u16;
-
-    // Bounded, not recursive: each hop is itself resolved and validated
-    // before being requested, so a chain can't smuggle a private target in
-    // past the first hop. The scheme check repeats per hop for the same
-    // reason: reqwest only speaks http(s), but saying so here makes the
-    // invariant local instead of incidental.
-    for _ in 0..5 {
-        if url.scheme() != "http" && url.scheme() != "https" {
-            return None;
-        }
-        let host = url.host_str()?.to_string();
-        let port = url.port_or_known_default()?;
-        let addr = resolve_public_addr(&host, port).await.ok()?;
-
-        let rebuild = match &client {
-            Some(_) => pinned_host != host || pinned_port != port,
-            None => true,
-        };
-        if rebuild {
-            // resolve() pins the exact address just validated: reqwest
-            // connects to addr and skips its own DNS lookup entirely.
-            // Without this there is a TOCTOU window between the validation
-            // above and reqwest's internal resolution -- a short-TTL
-            // rebinding record can answer the first lookup with a public
-            // IP and the second with 127.0.0.1. The explicit Host header
-            // below keeps the request semantically addressed to the
-            // original hostname.
-            let built = reqwest::Client::builder()
-                .timeout(FETCH_TIMEOUT)
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve(host.as_str(), addr)
-                .build()
-                .ok()?;
-            client = Some(built);
-            pinned_host = host;
-            pinned_port = port;
-        }
-        let bound = client.as_ref()?;
-
-        let resp = bound
-            .get(url.clone())
-            .header(reqwest::header::HOST, format!("{}:{port}", pinned_host))
-            .send()
-            .await
-            .ok()?;
-
-        if resp.status().is_redirection() {
-            let location = resp
-                .headers()
-                .get(reqwest::header::LOCATION)?
-                .to_str()
-                .ok()?;
-            url = url.join(location).ok()?;
-            continue;
-        }
-        if !resp.status().is_success() {
-            return None;
-        }
-        if resp
-            .content_length()
-            .is_some_and(|len| len > MAX_REMOTE_IMAGE_BYTES)
-        {
-            return None;
-        }
-        let bytes = resp.bytes().await.ok()?;
-        if bytes.len() as u64 > MAX_REMOTE_IMAGE_BYTES {
-            return None;
-        }
-        return Some(bytes.to_vec());
-    }
-    None
-}
 
 async fn handler(event: Request) -> Result<Response<Vec<u8>>, Error> {
     // Optional shared-secret gate: when PDFCN_API_KEY is set (production
@@ -300,31 +163,6 @@ async fn handler(event: Request) -> Result<Response<Vec<u8>>, Error> {
             .status(400)
             .body(b"request body must be UTF-8 JSON".to_vec())?),
     }
-}
-
-/// The auth decision, isolated from HTTP plumbing so it's testable without
-/// a live request: a request is authorized iff its x-api-key header equals
-/// the configured key.
-fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
-    headers.get("x-api-key").and_then(|v| v.to_str().ok()) == Some(expected_key)
-}
-
-/// Decodes one base64-keyed map (fonts or images), rejecting the request
-/// with a client-facing message if any value is malformed.
-fn decode_base64_map(
-    raw: &std::collections::HashMap<String, String>,
-    kind: &str,
-) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    let mut out = BTreeMap::new();
-    for (key, b64) in raw {
-        match STANDARD.decode(b64) {
-            Ok(bytes) => {
-                out.insert(key.clone(), bytes);
-            }
-            Err(e) => return Err(format!("invalid base64 for {kind} \"{key}\": {e}")),
-        }
-    }
-    Ok(out)
 }
 
 async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
@@ -370,6 +208,33 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
             }
         },
         None => Theme::light(),
+    };
+
+    let image_optimization = match req
+        .image_optimization
+        .map(ImageOptimizationDto::into_image_optimization)
+    {
+        None => None,
+        Some(Ok(opts)) => Some(opts),
+        Some(Err(msg)) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
+    };
+    // `theme` is cloned here rather than moved: `render_html_with_theme`
+    // below still needs its own `&theme` borrow. Every other field is
+    // moved out of `req` -- only `req.template`/`req.data` (by reference,
+    // already used above) and `req.filename` (used later) are touched
+    // again, so the partial move is sound.
+    let render_options = RenderOptions {
+        page,
+        theme: theme.clone(),
+        header_text: req.header_text,
+        footer_text: req.footer_text,
+        show_page_numbers: req.show_page_numbers,
+        skip_first_page: req.skip_first_page,
+        image_optimization,
+        metadata: req
+            .metadata
+            .map(MetadataDto::into_document_metadata)
+            .unwrap_or_default(),
     };
 
     // Partials are validated up front (a syntax error in one is a client
@@ -427,7 +292,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         }
     }
 
-    match render_pdf_with_assets(&html, &page, &fonts, &images) {
+    match render_pdf_with_assets(&html, &fonts, &images, &render_options) {
         Ok(bytes) => Ok(Response::builder()
             .status(200)
             .header("Content-Type", "application/pdf")
@@ -551,37 +416,11 @@ mod tests {
         assert!(resp.body().starts_with(b"%PDF"));
     }
 
-    #[test]
-    fn private_and_loopback_targets_are_disallowed() {
-        for ip in [
-            "127.0.0.1",
-            "10.0.0.5",
-            "172.16.0.1",
-            "192.168.1.1",
-            "169.254.169.254",
-            "0.0.0.0",
-            "::1",
-            "fc00::1",
-            "fe80::1",
-        ] {
-            let ip: IpAddr = ip.parse().unwrap();
-            assert!(is_disallowed_target(ip), "{ip} should be disallowed");
-        }
-    }
-
-    #[test]
-    fn public_targets_are_allowed() {
-        for ip in ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111"] {
-            let ip: IpAddr = ip.parse().unwrap();
-            assert!(!is_disallowed_target(ip), "{ip} should be allowed");
-        }
-    }
-
-    #[test]
-    fn ipv4_mapped_ipv6_private_targets_are_disallowed() {
-        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
-        assert!(is_disallowed_target(ip));
-    }
+    // `is_disallowed_target`'s own coverage (loopback/private/link-local,
+    // IPv4-mapped IPv6, public addresses) now lives with the function
+    // itself in `pdfcn_vercel::remote_image`, alongside `generate-pdf-
+    // batch.rs`'s copy -- these were the same three tests duplicated a
+    // third time.
 
     #[tokio::test]
     async fn a_non_http_scheme_is_never_fetched() {
