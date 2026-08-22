@@ -8,9 +8,10 @@
 use http_body_util::BodyExt;
 use pdfcn_core::{
     img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
-    Orientation, PageConfig, PageSize, PartialLoader, Theme,
+    Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
+use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto};
 use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -88,6 +89,30 @@ struct GenerateRequest {
     /// built on them without touching the template.
     #[serde(default)]
     theme: Option<serde_json::Value>,
+    /// Repeated on every page (see `skip_first_page`). Currently has no
+    /// visible effect -- printpdf 0.12.6 doesn't render it yet; accepted
+    /// and wired through for forward compatibility (see
+    /// `pdfcn_core::RenderOptions::header_text`'s doc comment).
+    #[serde(default)]
+    header_text: Option<String>,
+    /// Repeated on every page. Same current no-op as `header_text`.
+    #[serde(default)]
+    footer_text: Option<String>,
+    /// Appends "Page X of Y" to the footer. Same current no-op.
+    #[serde(default)]
+    show_page_numbers: bool,
+    /// Suppresses header/footer/page-numbers on the first page (a cover).
+    /// Moot while the above render nothing.
+    #[serde(default)]
+    skip_first_page: bool,
+    /// Tunes image re-encoding at save time. Compression is already on by
+    /// default (printpdf's own quality 0.85 / 2MB cap); omitting this
+    /// keeps that default rather than disabling it.
+    #[serde(default)]
+    image_optimization: Option<ImageOptimizationDto>,
+    /// Plain PDF document metadata (title/author/subject/keywords/producer).
+    #[serde(default)]
+    metadata: Option<MetadataDto>,
 }
 
 /// Resolves `- include` against a request's `partials` map.
@@ -185,6 +210,33 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         None => Theme::light(),
     };
 
+    let image_optimization = match req
+        .image_optimization
+        .map(ImageOptimizationDto::into_image_optimization)
+    {
+        None => None,
+        Some(Ok(opts)) => Some(opts),
+        Some(Err(msg)) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
+    };
+    // `theme` is cloned here rather than moved: `render_html_with_theme`
+    // below still needs its own `&theme` borrow. Every other field is
+    // moved out of `req` -- only `req.template`/`req.data` (by reference,
+    // already used above) and `req.filename` (used later) are touched
+    // again, so the partial move is sound.
+    let render_options = RenderOptions {
+        page,
+        theme: theme.clone(),
+        header_text: req.header_text,
+        footer_text: req.footer_text,
+        show_page_numbers: req.show_page_numbers,
+        skip_first_page: req.skip_first_page,
+        image_optimization,
+        metadata: req
+            .metadata
+            .map(MetadataDto::into_document_metadata)
+            .unwrap_or_default(),
+    };
+
     // Partials are validated up front (a syntax error in one is a client
     // mistake, a 400) rather than discovered mid-render as a generic
     // partial-not-found.
@@ -240,7 +292,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         }
     }
 
-    match render_pdf_with_assets(&html, &page, &fonts, &images) {
+    match render_pdf_with_assets(&html, &fonts, &images, &render_options) {
         Ok(bytes) => Ok(Response::builder()
             .status(200)
             .header("Content-Type", "application/pdf")

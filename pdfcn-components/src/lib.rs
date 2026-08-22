@@ -405,8 +405,12 @@ fn cell_text(v: &JsonValue) -> String {
 /// document, wherever the content ends. It does not repeat on every page
 /// -- the layout engine has no verified support for `position:fixed`
 /// page repetition or `@page` margin boxes, so claiming per-page repetition
-/// would be a lie. For a per-document "Page X of Y" label, `%Pagination`
-/// takes data-driven values; for a letterhead footer line, this is it.
+/// would be a lie. printpdf's own native escape hatch for this
+/// (`RenderOptions::footer_text`/`header_text`, bypassing CSS entirely) is
+/// no better: verified to currently render nothing at all (see that
+/// field's doc comment). For a per-document "Page X of Y" label,
+/// `%Pagination` takes data-driven values; for a letterhead footer line,
+/// this is it.
 ///
 /// `left` / `center` / `right` (optional): slot text, interpolated by the
 /// template engine like any attribute (`left="{{ company.name }}"`).

@@ -7,4 +7,5 @@
 //! This is that lib target.
 
 pub mod auth;
+pub mod dto;
 pub mod remote_image;

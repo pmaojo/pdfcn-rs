@@ -22,9 +22,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
 use pdfcn_core::{
     img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
-    Orientation, PageConfig, PageSize, PartialLoader, Theme,
+    Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
+use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto};
 use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -122,6 +123,30 @@ struct BatchRequest {
     /// Caller-supplied partials for `- include`, shared by every document.
     #[serde(default)]
     partials: BTreeMap<String, String>,
+    /// Repeated on every page of every document (see `skip_first_page`).
+    /// Currently has no visible effect -- see `/api/generate-pdf`'s
+    /// `header_text` field for the verified upstream limitation.
+    #[serde(default)]
+    header_text: Option<String>,
+    /// Repeated on every page. Same current no-op as `header_text`.
+    #[serde(default)]
+    footer_text: Option<String>,
+    /// Appends "Page X of Y" to the footer. Same current no-op.
+    #[serde(default)]
+    show_page_numbers: bool,
+    /// Suppresses header/footer/page-numbers on the first page of every
+    /// document (a cover page). Moot while the above render nothing.
+    #[serde(default)]
+    skip_first_page: bool,
+    /// Shared image re-encoding tuning (see `/api/generate-pdf`'s
+    /// `image_optimization` field).
+    #[serde(default)]
+    image_optimization: Option<ImageOptimizationDto>,
+    /// Shared plain PDF document metadata, applied to every document in
+    /// the batch -- there is no per-document override, matching how
+    /// `header_text`/`footer_text`/`image_optimization` work here.
+    #[serde(default)]
+    metadata: Option<MetadataDto>,
 }
 
 fn default_data() -> serde_json::Value {
@@ -262,6 +287,33 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         None => Theme::light(),
     };
 
+    let image_optimization = match req
+        .image_optimization
+        .map(ImageOptimizationDto::into_image_optimization)
+    {
+        None => None,
+        Some(Ok(opts)) => Some(opts),
+        Some(Err(msg)) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
+    };
+    // Everything but `page` -- each document's own `RenderOptions` is built
+    // per document by cloning this template and setting `page`, since page
+    // config is the one field with a per-document override. `theme` is
+    // cloned rather than moved: Phase 1 below still needs its own `&theme`
+    // borrow inside the rayon closure.
+    let shared_options = RenderOptions {
+        page: PageConfig::default(),
+        theme: theme.clone(),
+        header_text: req.header_text,
+        footer_text: req.footer_text,
+        show_page_numbers: req.show_page_numbers,
+        skip_first_page: req.skip_first_page,
+        image_optimization,
+        metadata: req
+            .metadata
+            .map(MetadataDto::into_document_metadata)
+            .unwrap_or_default(),
+    };
+
     let loader: Box<dyn PartialLoader + Send + Sync> = if req.partials.is_empty() {
         Box::new(pdfcn_core::NoPartials)
     } else {
@@ -356,7 +408,11 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
                     Err(msg) => DocOutcome::Failed(msg),
                     Ok(html) => {
                         let page = page.or(default_page).unwrap_or_default();
-                        match render_pdf_with_assets(&html, &page, &fonts, &images) {
+                        let options = RenderOptions {
+                            page,
+                            ..shared_options.clone()
+                        };
+                        match render_pdf_with_assets(&html, &fonts, &images, &options) {
                             Ok(bytes) => {
                                 let filename = match filename {
                                     Some(name) => name,

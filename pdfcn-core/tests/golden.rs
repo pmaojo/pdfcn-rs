@@ -38,7 +38,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pdfcn_core::{render_files, PageConfig};
+use pdfcn_core::{render_files, RenderOptions};
 use printpdf::{parse_pdf_from_bytes, render_to_svg, PdfParseOptions, PdfToSvgOptions};
 
 /// Every example that ships in `examples/`. These are the documents the
@@ -112,7 +112,7 @@ fn render_pages(example: &str) -> Vec<String> {
     let template = root.join("examples").join(format!("{example}.haml"));
     let data = root.join("examples").join(format!("{example}.json"));
 
-    let bytes = match render_files(&template, &data, &PageConfig::default()) {
+    let bytes = match render_files(&template, &data, &RenderOptions::default()) {
         Ok(bytes) => bytes,
         Err(e) => panic!("rendering {example} failed: {e:?}"),
     };
@@ -211,10 +211,10 @@ fn rendering_is_deterministic() {
     let root = repo_root();
     let template = root.join("examples").join("invoice.haml");
     let data = root.join("examples").join("invoice.json");
-    let page = PageConfig::default();
+    let options = RenderOptions::default();
 
-    let first = render_files(&template, &data, &page);
-    let second = render_files(&template, &data, &page);
+    let first = render_files(&template, &data, &options);
+    let second = render_files(&template, &data, &options);
     match (first, second) {
         (Ok(a), Ok(b)) => assert_eq!(
             a.len(),
