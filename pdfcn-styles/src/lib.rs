@@ -5,6 +5,11 @@ mod utilities;
 
 pub use gap::rewrite_gaps;
 pub use theme::{Theme, ThemeMode};
+// The doc comments below describe this crate's model in terms of `resolve()`
+// -- one class in, one flat declaration out. It lives in a private module, so
+// until now that vocabulary named something no caller could reach and no
+// non-test build referenced.
+pub use utilities::{resolve, resolve_with};
 
 use std::collections::BTreeSet;
 

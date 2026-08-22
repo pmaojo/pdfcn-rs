@@ -22,7 +22,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
 use pdfcn_core::{
     img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
-    Orientation, PageConfig, PartialLoader, PageSize, Theme,
+    Orientation, PageConfig, PageSize, PartialLoader, Theme,
 };
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -181,10 +181,7 @@ impl PartialLoader for MemoryPartials {
 }
 
 fn authorized(headers: &http::HeaderMap, expected_key: &str) -> bool {
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        == Some(expected_key)
+    headers.get("x-api-key").and_then(|v| v.to_str().ok()) == Some(expected_key)
 }
 
 /// Decodes one base64-keyed map (fonts or images), rejecting the request
@@ -223,7 +220,11 @@ static API_KEY: OnceLock<Option<String>> = OnceLock::new();
 
 fn api_key() -> Option<&'static str> {
     API_KEY
-        .get_or_init(|| std::env::var("PDFCN_API_KEY").ok().filter(|k| !k.is_empty()))
+        .get_or_init(|| {
+            std::env::var("PDFCN_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty())
+        })
         .as_deref()
 }
 
@@ -315,16 +316,17 @@ async fn fetch_remote_image(url_str: &str) -> Option<Vec<u8>> {
 
         let resp = bound
             .get(url.clone())
-            .header(
-                reqwest::header::HOST,
-                format!("{}:{port}", pinned_host),
-            )
+            .header(reqwest::header::HOST, format!("{}:{port}", pinned_host))
             .send()
             .await
             .ok()?;
 
         if resp.status().is_redirection() {
-            let location = resp.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)?
+                .to_str()
+                .ok()?;
             url = url.join(location).ok()?;
             continue;
         }
@@ -396,35 +398,25 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
             .body(b"documents must contain at least one entry".to_vec())?);
     }
     if req.documents.len() > MAX_DOCUMENTS {
-        return Ok(Response::builder()
-            .status(400)
-            .body(
-                format!(
-                    "too many documents: {} (max {MAX_DOCUMENTS}); split the batch",
-                    req.documents.len()
-                )
-                .into_bytes(),
-            )?);
+        return Ok(Response::builder().status(400).body(
+            format!(
+                "too many documents: {} (max {MAX_DOCUMENTS}); split the batch",
+                req.documents.len()
+            )
+            .into_bytes(),
+        )?);
     }
 
     // Everything shared is validated up front, exactly as the single
     // endpoint validates it: caller mistakes are 400s before any render.
     let fonts = match decode_base64_map(&req.fonts, "font") {
         Ok(fonts) => fonts,
-        Err(msg) => {
-            return Ok(Response::builder()
-                .status(400)
-                .body(msg.into_bytes())?)
-        }
+        Err(msg) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
     };
 
     let mut images = match decode_base64_map(&req.images, "image") {
         Ok(images) => images,
-        Err(msg) => {
-            return Ok(Response::builder()
-                .status(400)
-                .body(msg.into_bytes())?)
-        }
+        Err(msg) => return Ok(Response::builder().status(400).body(msg.into_bytes())?),
     };
 
     let theme: Theme = match &req.theme {
@@ -620,12 +612,6 @@ mod tests {
 
     #[tokio::test]
     async fn renders_two_documents_in_one_request() {
-        let body = format!(
-            r#"{{"documents": [{}, {}]}}"#,
-            minimal_doc("%h1 First\n%p {{ n }}").replace("{\"template\"", "{\"template\": \"%h1 First\\n%p {{ n }}\"}"),
-            "%h1 Second"
-        );
-        // Build explicitly -- string surgery above is unreadable.
         let body = serde_json::json!({
             "documents": [
                 { "template": "%h1 First\n%p Total: {{ n }}", "data": { "n": 7 } },
@@ -634,7 +620,12 @@ mod tests {
         })
         .to_string();
         let resp = handle_body(&body).await;
-        assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
+        assert_eq!(
+            resp.status(),
+            200,
+            "body: {:?}",
+            String::from_utf8_lossy(resp.body())
+        );
         let payload = json_response(&resp);
         assert_eq!(payload["count"], 2);
         assert_eq!(payload["ok"], 2);
@@ -678,7 +669,12 @@ mod tests {
         })
         .to_string();
         let resp = handle_body(&body).await;
-        assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
+        assert_eq!(
+            resp.status(),
+            200,
+            "body: {:?}",
+            String::from_utf8_lossy(resp.body())
+        );
         let payload = json_response(&resp);
         assert_eq!(payload["ok"], 2);
         assert_eq!(payload["failed"], 1);
@@ -700,7 +696,12 @@ mod tests {
         })
         .to_string();
         let resp = handle_body(&body).await;
-        assert_eq!(resp.status(), 200, "body: {:?}", String::from_utf8_lossy(resp.body()));
+        assert_eq!(
+            resp.status(),
+            200,
+            "body: {:?}",
+            String::from_utf8_lossy(resp.body())
+        );
         assert_eq!(json_response(&resp)["ok"], 1);
     }
 
@@ -769,7 +770,13 @@ mod tests {
 
     #[test]
     fn private_and_loopback_targets_are_disallowed() {
-        for ip in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "169.254.169.254", "::1"] {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "192.168.1.1",
+            "169.254.169.254",
+            "::1",
+        ] {
             let ip: IpAddr = ip.parse().unwrap();
             assert!(is_disallowed_target(ip), "{ip} should be disallowed");
         }
@@ -778,6 +785,8 @@ mod tests {
     #[tokio::test]
     async fn a_non_http_scheme_is_never_fetched() {
         assert!(fetch_remote_image("file:///etc/passwd").await.is_none());
-        assert!(fetch_remote_image("http://127.0.0.1:9/a.png").await.is_none());
+        assert!(fetch_remote_image("http://127.0.0.1:9/a.png")
+            .await
+            .is_none());
     }
 }

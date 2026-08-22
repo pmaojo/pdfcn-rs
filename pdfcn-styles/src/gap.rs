@@ -29,8 +29,8 @@ use std::ops::Range;
 /// `html_render::render_node`, which emits a matching `</img>`; the scanner
 /// tolerates both shapes.)
 const VOID_TAGS: &[&str] = &[
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-    "source", "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
 ];
 
 fn is_tag_name_char(c: char) -> bool {
@@ -126,9 +126,7 @@ fn scan_scope(s: &str) -> Vec<Node<'_>> {
         }
         // Comments, doctypes, and stray close tags (e.g. `</img>` from
         // render_node's uniform closing-tag emission) pass through verbatim.
-        if s[pos..].starts_with("<!--")
-            || s[pos..].starts_with("<!")
-            || s[pos..].starts_with("</")
+        if s[pos..].starts_with("<!--") || s[pos..].starts_with("<!") || s[pos..].starts_with("</")
         {
             let end = if s[pos..].starts_with("<!--") {
                 s[pos..].find("-->").map_or(s.len(), |i| pos + i + 3)
@@ -186,9 +184,7 @@ fn find_inner_span(s: &str, from: usize, tag: &str) -> Option<Range<usize>> {
     let mut depth = 1usize;
     let mut pos = from;
     while pos < s.len() {
-        let Some(lt) = s[pos..].find('<') else {
-            return None;
-        };
+        let lt = s[pos..].find('<')?;
         let abs = pos + lt;
         if s[abs..].starts_with("</") {
             let (close_tag, name_end) = tag_name_after(s, abs + 1);
@@ -432,9 +428,7 @@ mod tests {
 
     #[test]
     fn flex_row_gap_injects_mr_on_all_but_last_child() {
-        let out = rewrite_gaps(
-            r#"<div class="flex gap-2"><p>a</p><p>b</p><p>c</p></div>"#,
-        );
+        let out = rewrite_gaps(r#"<div class="flex gap-2"><p>a</p><p>b</p><p>c</p></div>"#);
         assert!(out.contains(r#"<p class="mr-2">a</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mr-2">b</p>"#), "{out}");
         assert!(out.contains("<p>c</p>"), "{out}");
@@ -442,9 +436,7 @@ mod tests {
 
     #[test]
     fn flex_column_gap_injects_mb_instead() {
-        let out = rewrite_gaps(
-            r#"<div class="flex flex-col gap-4"><p>a</p><p>b</p></div>"#,
-        );
+        let out = rewrite_gaps(r#"<div class="flex flex-col gap-4"><p>a</p><p>b</p></div>"#);
         assert!(out.contains(r#"<p class="mb-4">a</p>"#), "{out}");
         assert!(out.contains("<p>b</p>"), "{out}");
         assert!(!out.contains("mr-4"), "{out}");
@@ -452,12 +444,10 @@ mod tests {
 
     #[test]
     fn grid_gap_follows_row_geometry() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="grid grid-cols-2 gap-3">"#,
-                r#"<p>1</p><p>2</p><p>3</p><p>4</p></div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="grid grid-cols-2 gap-3">"#,
+            r#"<p>1</p><p>2</p><p>3</p><p>4</p></div>"#
+        ));
         assert!(out.contains(r#"<p class="mr-3 mb-3">1</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mb-3">2</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mr-3">3</p>"#), "{out}");
@@ -466,12 +456,10 @@ mod tests {
 
     #[test]
     fn partial_last_grid_row_gets_no_trailing_margins() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="grid grid-cols-2 gap-2">"#,
-                r#"<p>1</p><p>2</p><p>3</p></div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="grid grid-cols-2 gap-2">"#,
+            r#"<p>1</p><p>2</p><p>3</p></div>"#
+        ));
         assert!(out.contains(r#"<p class="mr-2 mb-2">1</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mb-2">2</p>"#), "{out}");
         // Item 3 sits alone in the last row: no mr (row end) and no mb
@@ -481,12 +469,10 @@ mod tests {
 
     #[test]
     fn gap_x_and_gap_y_split_the_axes() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="grid grid-cols-2 gap-x-6 gap-y-1">"#,
-                r#"<p>1</p><p>2</p><p>3</p><p>4</p></div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="grid grid-cols-2 gap-x-6 gap-y-1">"#,
+            r#"<p>1</p><p>2</p><p>3</p><p>4</p></div>"#
+        ));
         assert!(out.contains(r#"<p class="mr-6 mb-1">1</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mb-1">2</p>"#), "{out}");
         assert!(out.contains(r#"<p class="mr-6">3</p>"#), "{out}");
@@ -494,14 +480,12 @@ mod tests {
 
     #[test]
     fn absolute_children_are_skipped_so_overlays_keep_their_offset() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="flex gap-2">"#,
-                r#"<p>a</p>"#,
-                r#"<span class="absolute top-2 right-2">ribbon</span>"#,
-                r#"</div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="flex gap-2">"#,
+            r#"<p>a</p>"#,
+            r#"<span class="absolute top-2 right-2">ribbon</span>"#,
+            r#"</div>"#
+        ));
         assert!(out.contains(r#"<p class="mr-2">a</p>"#), "{out}");
         assert!(
             out.contains(r#"<span class="absolute top-2 right-2">"#),
@@ -511,13 +495,11 @@ mod tests {
 
     #[test]
     fn same_axis_margins_suppress_injection_opposite_axis_coexists() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="flex gap-2">"#,
-                r#"<p class="m-2">a</p><p class="ml-1">b</p><p>c</p>"#,
-                r#"</div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="flex gap-2">"#,
+            r#"<p class="m-2">a</p><p class="ml-1">b</p><p>c</p>"#,
+            r#"</div>"#
+        ));
         // All-axis m-2 suppresses the right-margin injection entirely...
         assert!(out.contains(r#"<p class="m-2">a</p>"#), "{out}");
         // ...while a left-only margin coexists: gap still applies on b's
@@ -543,14 +525,12 @@ mod tests {
 
     #[test]
     fn nested_containers_each_get_their_own_plan() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="flex flex-col gap-4">"#,
-                r#"<div class="flex gap-1"><p>a</p><p>b</p></div>"#,
-                r#"<p>c</p>"#,
-                r#"</div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="flex flex-col gap-4">"#,
+            r#"<div class="flex gap-1"><p>a</p><p>b</p></div>"#,
+            r#"<p>c</p>"#,
+            r#"</div>"#
+        ));
         // Inner flex row: a gets mr-1, b untouched.
         assert!(out.contains(r#"<p class="mr-1">a</p>"#), "{out}");
         assert!(out.contains("<p>b</p>"), "{out}");
@@ -561,8 +541,7 @@ mod tests {
 
     #[test]
     fn child_without_a_class_attribute_gets_one_added() {
-        let out =
-            rewrite_gaps(r#"<div class="flex gap-2"><span>a</span><span>b</span></div>"#);
+        let out = rewrite_gaps(r#"<div class="flex gap-2"><span>a</span><span>b</span></div>"#);
         assert!(
             out.contains(r#"<span class="mr-2">a</span>"#),
             "no-class child must gain a class attribute: {out}"
@@ -571,12 +550,10 @@ mod tests {
 
     #[test]
     fn void_elements_and_text_survive_inside_gap_containers() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="flex gap-2">"#,
-                r#"Hello <img src="x.png"> <span>world</span></div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="flex gap-2">"#,
+            r#"Hello <img src="x.png"> <span>world</span></div>"#
+        ));
         // An <img> is an in-flow flex item just like any other child, so it
         // participates in gap spacing too...
         assert!(out.contains("Hello <img"), "{out}");
@@ -588,8 +565,7 @@ mod tests {
 
     #[test]
     fn inline_flex_counts_as_a_flex_container() {
-        let out =
-            rewrite_gaps(r#"<div class="inline-flex gap-1"><i>a</i><i>b</i></div>"#);
+        let out = rewrite_gaps(r#"<div class="inline-flex gap-1"><i>a</i><i>b</i></div>"#);
         assert!(out.contains(r#"<i class="mr-1">a</i>"#), "{out}");
     }
 
@@ -598,14 +574,12 @@ mod tests {
     /// `m-2` workarounds.
     #[test]
     fn catalog_style_row_grid_is_rewritten() {
-        let out = rewrite_gaps(
-            concat!(
-                r#"<div class="grid grid-cols-2 break-inside-avoid gap-4">"#,
-                r#"<div class="card m-2">A</div>"#,
-                r#"<div class="card m-2">B</div>"#,
-                r#"</div>"#
-            ),
-        );
+        let out = rewrite_gaps(concat!(
+            r#"<div class="grid grid-cols-2 break-inside-avoid gap-4">"#,
+            r#"<div class="card m-2">A</div>"#,
+            r#"<div class="card m-2">B</div>"#,
+            r#"</div>"#
+        ));
         // Cards already carry m-2, so the rewriter must not stack mr-4/mb-4
         // on top of their own margins...
         assert!(out.contains(r#"<div class="card m-2">A</div>"#), "{out}");
