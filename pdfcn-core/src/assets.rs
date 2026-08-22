@@ -257,10 +257,10 @@ pub(crate) fn generate_vectors(
                 if let Some(rest) = src.strip_prefix(BARCODE_SCHEME) {
                     let (scheme, hex_value) = rest.split_once(':')?;
                     let bytes = hex_decode(hex_value)?;
-                    let value = str::from_utf8(&bytes).ok()?;
+                    let value = String::from_utf8(bytes).ok()?;
                     let w = box_w.unwrap_or(240.0);
                     let h = box_h.unwrap_or(60.0);
-                    let svg = barcode::barcode_svg(scheme, value, w, h)?;
+                    let svg = barcode::barcode_svg(scheme, &value, w, h)?;
                     return raster::svg_to_png(&svg, Some(w), Some(h));
                 }
                 None

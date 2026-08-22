@@ -90,10 +90,7 @@ fn series(spec: &JsonValue) -> Option<Vec<Vec<f64>>> {
     };
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let values: Vec<f64> = row
-            .iter()
-            .map(|v| v.as_f64())
-            .collect::<Option<Vec<_>>>()?;
+        let values: Vec<f64> = row.iter().map(|v| v.as_f64()).collect::<Option<Vec<_>>>()?;
         if values.iter().any(|v| !v.is_finite()) || values.iter().any(|v| *v < 0.0) {
             return None;
         }
@@ -466,7 +463,10 @@ fn sparkline_svg(spec: &JsonValue) -> Option<String> {
     let series = series(spec)?;
     let values = &series[0];
     let (w, h) = dims(spec);
-    let color_owned = colors(spec).into_iter().next().unwrap_or_else(|| PALETTE[0].to_string());
+    let color_owned = colors(spec)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| PALETTE[0].to_string());
     let color = color_owned.as_str();
 
     let min = values.iter().copied().fold(f64::INFINITY, f64::min);
@@ -487,7 +487,10 @@ fn sparkline_svg(spec: &JsonValue) -> Option<String> {
         .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
         .collect();
     let mut out = open_svg(w, h);
-    let first_x = points[0].split_once(',').map(|(x, _)| x.to_string()).unwrap_or_else(|| "0".to_string());
+    let first_x = points[0]
+        .split_once(',')
+        .map(|(x, _)| x.to_string())
+        .unwrap_or_else(|| "0".to_string());
     let last_x = w - pad;
     out.push_str(&format!(
         "<polygon fill=\"{color}\" fill-opacity=\"0.12\" stroke=\"none\" points=\"{},{:.1} {} {last_x:.1},{:.1}\"/>",

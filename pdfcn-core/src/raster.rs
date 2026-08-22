@@ -60,9 +60,11 @@ pub(crate) fn svg_to_png(
     box_w_px: Option<f64>,
     box_h_px: Option<f64>,
 ) -> Option<Vec<u8>> {
-    let mut options = Options::default();
-    options.fontdb = font_db();
-    options.font_family = "Inter".to_string();
+    let options = Options {
+        fontdb: font_db(),
+        font_family: "Inter".to_string(),
+        ..Options::default()
+    };
     let tree = Tree::from_str(svg, &options).ok()?;
     let viewport = tree.size();
     let (iw, ih) = (f64::from(viewport.width()), f64::from(viewport.height()));
