@@ -228,6 +228,14 @@ isn't confirmed.
   Kept wired rather than removed, since it costs nothing and starts working
   automatically if a future printpdf release fixes it.
 
+## For coding agents
+
+`AGENTS.md` has build/test/lint commands and this repo's conventions. A
+Claude Code plugin lives at `.claude-plugin/` + `skills/` (load with
+`claude --plugin-dir .`), with skills covering the HAML template syntax/
+components (`haml-syntax`) and the opt-in `vector`/`factur-x` Cargo
+features (`cargo-features`).
+
 ## Design notes
 
 - **No Chromium.** `pdfcn-core::render_pdf` calls `printpdf::PdfDocument::from_html`,
