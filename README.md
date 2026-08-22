@@ -125,6 +125,38 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
+## Charts, barcodes and raw SVG (opt-in `vector` feature)
+
+`%LineChart`, `%StackedBarChart`, `%PieChart`, `%Sparkline`, `%Barcode` and a
+generic `%Vector` escape hatch all render through one shared substrate: the
+component expands to an `<img src="pdfcn-chart:...">` / `pdfcn-barcode:...` /
+`pdfcn-vector:{id}` placeholder, and an asset-preparation pass rasterizes it
+to a print-density PNG (`resvg`, ~300dpi) before layout. None of this ships
+in the default build — it's entirely behind the `vector` Cargo feature, kept
+off by default so the serverless binary (`pdfcn-vercel`/`api/generate-pdf.rs`)
+never links `resvg` unless a deployment opts in:
+
+```sh
+cargo run -p pdfcn-cli --features vector -- build examples/charts.haml \
+  -d examples/charts.json -o /tmp/charts.pdf --svg logo=examples/logo.svg
+```
+
+```haml
+%LineChart(values={{ monthly_revenue }} xlabels={{ months }} w="480px" h="200px")
+%PieChart(values={{ channel_mix }} labels={{ channels }} donut="true" w="220px" h="180px")
+%Sparkline(values={{ signup_trend }} w="220px" h="60px")
+%Barcode(scheme="ean13" value="{{ shipment_id }}" w="240px" h="60px")
+%Vector(id="logo" w="90px" h="45px" alt="Company logo")
+```
+
+`%Vector` renders arbitrary caller-supplied SVG (a logo, a diagram) rather
+than a chart spec — its source travels through `RenderOptions.svg_assets`
+(id → SVG text) rather than inline markup, since SVG can be arbitrarily
+large. `examples/charts.haml` (data: `examples/charts.json`, SVG:
+`examples/logo.svg`) is a worked example combining all five. Built without
+the `vector` feature, every one of these components expands to an explicit
+marker naming the disabled feature instead of a silent no-op.
+
 ## Known limitations
 
 - **`gap` (flex and grid) has no effect.** Neither `display:flex` nor

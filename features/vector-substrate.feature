@@ -106,3 +106,15 @@ Feature: Wave 1 vector substrate — %Vector, Charts v2 and %Barcode over an opt
     Given the classes border-b-2, border-r-red-500, col-span-3, col-span-full and aspect-video
     When each is resolved
     Then each returns its directional or structural CSS equivalent
+
+  @covers(pdfcn-styles/src/gap.rs)
+  Scenario: Stacking margin between block children via space-y, no display class required
+    Given a plain block container with "space-y-4" and three element children
+    When the gap-rewrite pass runs
+    Then every child but the last carries an injected "mb-4"
+
+  @covers(pdfcn-styles/src/gap.rs)
+  Scenario: Requiring a flex row for space-x, matching real CSS's own limits
+    Given a container with "space-x-2" and no flex display class
+    When the gap-rewrite pass runs
+    Then no margin is injected, exactly as plain CSS would render it

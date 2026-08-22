@@ -1,0 +1,17 @@
+%DocumentLayout(size="a4")
+  %Header(title="Business Review" subtitle="{{ quarter }}")
+    %Vector(id="logo" w="90px" h="45px" alt="Company logo")
+
+  %Card(title="Monthly revenue")
+    %LineChart(values={{ monthly_revenue }} xlabels={{ months }} w="480px" h="200px")
+
+  .flex.justify-between.gap-4
+    %Card(title="Channel mix" class="w-full")
+      %PieChart(values={{ channel_mix }} labels={{ channels }} donut="true" w="220px" h="180px")
+
+    %Card(title="Signups, last 7 weeks" class="w-full")
+      %Sparkline(values={{ signup_trend }} w="220px" h="60px")
+
+  %Card(title="Shipment")
+    %p.text-sm.mb-2 Tracking barcode for the reference shipment below.
+    %Barcode(scheme="ean13" value="{{ shipment_id }}" w="240px" h="60px")
