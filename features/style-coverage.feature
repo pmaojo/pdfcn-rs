@@ -1,0 +1,44 @@
+Feature: Utility-class coverage — wider Tailwind subset, variants and unresolved-class audit
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario Outline: Resolving a utility class to its CSS declaration
+    Given a template using the class "<class>"
+    When the stylesheet is built
+    Then it contains the declaration "<declaration>"
+
+    Examples:
+      | class         | declaration                       |
+      | mx-auto       | margin-left:auto                  |
+      | -mt-2         | margin-top:-0.5rem                |
+      | w-1/2         | width:50%                         |
+      | min-w-0       | min-width:0                       |
+      | size-8        | width:2rem                        |
+      | bg-black/50   | background-color:rgba(0,0,0,0.5)  |
+      | underline     | text-decoration:underline         |
+      | truncate      | text-overflow:ellipsis            |
+      | text-center   | text-align:center                 |
+      | text-6xl      | font-size:3.75rem                 |
+      | border-dashed | border-style:dashed               |
+      | rounded-t-lg  | border-top-left-radius:8px        |
+      | justify-around| justify-content:space-around      |
+      | self-center   | align-self:center                 |
+
+  @covers(pdfcn-styles/src/lib.rs)
+  Scenario: Print and structural variants
+    Given a template using the classes "print:hidden first:pt-0 last:border-b-0"
+    When the stylesheet is built
+    Then "print:hidden" applies unconditionally as display:none
+    And "first:" and "last:" emit :first-child and :last-child rules
+    And "hover:" and "md:" variants are not recognized
+
+  @covers(pdfcn-styles/src/lib.rs)
+  Scenario: Reporting classes that resolve to no CSS
+    Given a template using the classes "p-4 flexx"
+    When unresolved classes are requested
+    Then "flexx" is reported and "p-4" is not
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario: Every utility used by examples and components resolves
+    Given the templates in "examples/" and the component sources
+    When their class attributes are audited against the stylesheet builder
+    Then only the known semantic marker classes are left unresolved

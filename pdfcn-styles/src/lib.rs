@@ -70,15 +70,60 @@ pub fn build_stylesheet_with_theme(html: &str, theme: &Theme) -> String {
 pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) -> String {
     let mut css = String::from(PRINT_RULES);
     for class in classes {
-        if let Some(decl) = utilities::resolve_with(class, theme) {
+        let Some((pseudo, base)) = split_variant(class) else {
+            continue;
+        };
+        if let Some(decl) = utilities::resolve_with(base, theme) {
             let selector = class_selector(class);
-            css.push_str(&format!("{selector}{{{decl}}}\n"));
+            css.push_str(&format!("{selector}{pseudo}{{{decl}}}\n"));
         }
     }
     if classes.contains("table-striped") {
         css.push_str(TABLE_STRIPED_RULE);
     }
     minify(&css).unwrap_or(css)
+}
+
+/// Splits a Tailwind variant prefix off `class`, returning the pseudo
+/// selector to append (empty for none) and the bare utility. The output is
+/// always print, so `print:` is unconditional and `screen:` never applies
+/// (`None`). Structural variants (`first:`, `last:`, `odd:`, `even:`) map to
+/// the matching `:first-child`/`:last-child`/`:nth-child` pseudo-class.
+/// Interactive (`hover:`, `focus:`) and responsive (`md:`) variants have no
+/// meaning in a PDF and are left unrecognized, like any unknown class.
+fn split_variant(class: &str) -> Option<(&'static str, &str)> {
+    let Some((variant, base)) = class.split_once(':') else {
+        return Some(("", class));
+    };
+    // `[...]` arbitrary values may themselves contain a colon; only a
+    // plain identifier before the colon is a variant.
+    let pseudo = match variant {
+        "print" => "",
+        "first" => ":first-child",
+        "last" => ":last-child",
+        "odd" => ":nth-child(odd)",
+        "even" => ":nth-child(even)",
+        _ => return None,
+    };
+    Some((pseudo, base))
+}
+
+/// The utility classes in `html` that resolve to no CSS -- typos, utilities
+/// this crate doesn't implement, or variants that can't apply to a PDF.
+/// Unknown classes are skipped silently when building the stylesheet (as an
+/// unknown Tailwind class would be), so this is the way to find out which
+/// ones were dropped. Classes that are plain markers rather than utilities
+/// (e.g. `card`, `table-striped`) are reported too; callers filter as needed.
+pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
+    extract_classes(html)
+        .into_iter()
+        .filter(|class| {
+            class != "table-striped"
+                && split_variant(class)
+                    .and_then(|(_, base)| utilities::resolve_with(base, theme))
+                    .is_none()
+        })
+        .collect()
 }
 
 /// Builds the CSS selector for one utility class. A plain class name (the
@@ -207,5 +252,43 @@ mod tests {
         let html = r#"<div class="px-2.5"></div><div class="w-full"></div>"#;
         let css = build_stylesheet(html);
         assert!(css.contains("width:100%"), "{css}");
+    }
+
+    #[test]
+    fn print_variant_applies_unconditionally_and_screen_never() {
+        let css = build_stylesheet(r#"<div class="print:hidden screen:block"></div>"#);
+        assert!(css.contains("display:none"), "{css}");
+        assert!(!css.contains("display:block"), "{css}");
+    }
+
+    #[test]
+    fn structural_variants_emit_pseudo_class_rules() {
+        let css = build_stylesheet(
+            r#"<ul><li class="first:pt-0 last:border-b-0 odd:bg-slate-50 even:bg-white"></li></ul>"#,
+        );
+        assert!(css.contains(":first-child"), "{css}");
+        assert!(css.contains(":last-child"), "{css}");
+        assert!(
+            css.contains("nth-child(odd)") || css.contains("nth-child(2n+1)"),
+            "{css}"
+        );
+        assert!(
+            css.contains("nth-child(even)") || css.contains("nth-child(2n)"),
+            "{css}"
+        );
+        assert!(!css.contains('\\'), "{css}");
+    }
+
+    #[test]
+    fn unresolved_classes_reports_typos_and_unsupported_variants() {
+        let theme = Theme::light();
+        let unresolved = unresolved_classes(
+            r#"<div class="p-4 flexx hover:bg-red-500 print:hidden"></div>"#,
+            &theme,
+        );
+        assert!(unresolved.contains("flexx"));
+        assert!(unresolved.contains("hover:bg-red-500"));
+        assert!(!unresolved.contains("p-4"));
+        assert!(!unresolved.contains("print:hidden"));
     }
 }
