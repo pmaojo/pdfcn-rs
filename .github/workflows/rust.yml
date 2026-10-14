@@ -26,6 +26,9 @@ jobs:
     # run on a pull request.
     - name: Run tests
       run: cargo test --workspace --verbose
+    # `sign` is opt-in, so the step above never compiles or tests it.
+    - name: Run signing tests
+      run: cargo test -p pdfcn-core --features sign --test sign --verbose
 
   lint:
     runs-on: ubuntu-latest
@@ -37,7 +40,7 @@ jobs:
     - name: Check formatting
       run: cargo fmt --all --check
     - name: Clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets --features pdfcn-core/sign,pdfcn-cli/sign -- -D warnings
 
   # Report the deployed function's size on every run, and trip only on a jump
   # big enough to mean something went wrong.

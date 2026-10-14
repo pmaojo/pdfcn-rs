@@ -294,7 +294,9 @@ fn ean8_svg(value: &str, w: f64, h: f64) -> Option<String> {
     let mut bars = bars_from_bits(&bits);
     for bar in &mut bars {
         let (start, end) = (bar.x, bar.x + bar.w - 1);
-        bar.tall = GUARD_RUNS.iter().any(|r| r.contains(&start) && r.contains(&end));
+        bar.tall = GUARD_RUNS
+            .iter()
+            .any(|r| r.contains(&start) && r.contains(&end));
         bar.x += EAN_QUIET_MODULES;
     }
     Some(svg_of(&bars, total, w, h))
@@ -321,13 +323,50 @@ fn nw_bits(pattern: &str) -> String {
 
 const CODE39_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. *$/+%";
 const CODE39_PATTERNS: [&str; 44] = [
-    "nnnwwnwnn", "wnnwnnnnw", "nnwwnnnnw", "wnwwnnnnn", "nnnwwnnnw", "wnnwwnnnn", "nnwwwnnnn",
-    "nnnwnnwnw", "wnnwnnwnn", "nnwwnnwnn", "wnnnnwnnw", "nnwnnwnnw", "wnwnnwnnn", "nnnnwwnnw",
-    "wnnnwwnnn", "nnwnwwnnn", "nnnnnwwnw", "wnnnnwwnn", "nnwnnwwnn", "nnnnwwwnn", "wnnnnnnww",
-    "nnwnnnnww", "wnwnnnnwn", "nnnnwnnww", "wnnnwnnwn", "nnwnwnnwn", "nnnnnnwww", "wnnnnnwwn",
-    "nnwnnnwwn", "nnnnwnwwn", "wwnnnnnnw", "nwwnnnnnw", "wwwnnnnnn", "nwnnwnnnw", "wwnnwnnnn",
-    "nwwnwnnnn", "nwnnnnwnw", "wwnnnnwnn", "nwwnnnwnn", "nwnnwnwnn", "nwnwnwnnn", "nwnwnnnwn",
-    "nwnnnwnwn", "nnnwnwnwn",
+    "nnnwwnwnn",
+    "wnnwnnnnw",
+    "nnwwnnnnw",
+    "wnwwnnnnn",
+    "nnnwwnnnw",
+    "wnnwwnnnn",
+    "nnwwwnnnn",
+    "nnnwnnwnw",
+    "wnnwnnwnn",
+    "nnwwnnwnn",
+    "wnnnnwnnw",
+    "nnwnnwnnw",
+    "wnwnnwnnn",
+    "nnnnwwnnw",
+    "wnnnwwnnn",
+    "nnwnwwnnn",
+    "nnnnnwwnw",
+    "wnnnnwwnn",
+    "nnwnnwwnn",
+    "nnnnwwwnn",
+    "wnnnnnnww",
+    "nnwnnnnww",
+    "wnwnnnnwn",
+    "nnnnwnnww",
+    "wnnnwnnwn",
+    "nnwnwnnwn",
+    "nnnnnnwww",
+    "wnnnnnwwn",
+    "nnwnnnwwn",
+    "nnnnwnwwn",
+    "wwnnnnnnw",
+    "nwwnnnnnw",
+    "wwwnnnnnn",
+    "nwnnwnnnw",
+    "wwnnwnnnn",
+    "nwwnwnnnn",
+    "nwnnnnwnw",
+    "wwnnnnwnn",
+    "nwwnnnwnn",
+    "nwnnwnwnn",
+    "nwnwnwnnn",
+    "nwnwnnnwn",
+    "nwnnnwnwn",
+    "nnnwnwnwn",
 ];
 const CODE39_QUIET_MODULES: u32 = 10;
 
@@ -338,7 +377,10 @@ fn code39_svg(value: &str, w: f64, h: f64) -> Option<String> {
         return None;
     }
     let mut bits = String::new();
-    for c in std::iter::once('*').chain(value.chars()).chain(std::iter::once('*')) {
+    for c in std::iter::once('*')
+        .chain(value.chars())
+        .chain(std::iter::once('*'))
+    {
         let idx = CODE39_CHARS.find(c)?;
         if !bits.is_empty() {
             bits.push('0'); // inter-character gap
@@ -363,13 +405,18 @@ fn itf_svg(value: &str, w: f64, h: f64) -> Option<String> {
         return None;
     }
     let digits: Vec<usize> = if value.len() % 2 == 1 {
-        std::iter::once(0usize).chain(value.bytes().map(|b| usize::from(b - b'0'))).collect()
+        std::iter::once(0usize)
+            .chain(value.bytes().map(|b| usize::from(b - b'0')))
+            .collect()
     } else {
         value.bytes().map(|b| usize::from(b - b'0')).collect()
     };
     let mut bits = String::from("1010"); // start: narrow bar/space/bar/space
     for pair in digits.chunks(2) {
-        let (bar, space) = (ITF_PATTERNS[pair[0]].as_bytes(), ITF_PATTERNS[pair[1]].as_bytes());
+        let (bar, space) = (
+            ITF_PATTERNS[pair[0]].as_bytes(),
+            ITF_PATTERNS[pair[1]].as_bytes(),
+        );
         for i in 0..5 {
             bits.push_str(&"1".repeat(if bar[i] == b'w' { 3 } else { 1 }));
             bits.push_str(&"0".repeat(if space[i] == b'w' { 3 } else { 1 }));
@@ -496,7 +543,14 @@ mod tests {
         assert_eq!(rects, 4 * 3 + 4, "{svg}");
         // total modules = 4 * 11 + 13 + 20 quiet = 77; first bar is 2 modules wide.
         let unit = 220.0 / 77.0;
-        assert!(svg.contains(&format!("x=\"{:.2}\" y=\"0\" width=\"{:.2}\"", 10.0 * unit, 2.0 * unit)), "{svg}");
+        assert!(
+            svg.contains(&format!(
+                "x=\"{:.2}\" y=\"0\" width=\"{:.2}\"",
+                10.0 * unit,
+                2.0 * unit
+            )),
+            "{svg}"
+        );
     }
 
     #[test]
@@ -509,7 +563,10 @@ mod tests {
         // The frame character must line up with its table slot.
         let star = CODE39_CHARS.find('*').unwrap();
         assert_eq!(CODE39_PATTERNS[star], "nwnnwnwnn");
-        assert_eq!(CODE39_PATTERNS[CODE39_CHARS.find('A').unwrap()], "wnnnnwnnw");
+        assert_eq!(
+            CODE39_PATTERNS[CODE39_CHARS.find('A').unwrap()],
+            "wnnnnwnnw"
+        );
         assert!(code39_svg("ABC-123", 300.0, 60.0).is_some());
         assert!(code39_svg("abc", 300.0, 60.0).is_some());
         assert_eq!(code39_svg("a*b", 300.0, 60.0), None);

@@ -19,9 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use printpdf::{
-    Actions, Color, Destination, LinkAnnotation, Op, PdfDocument, Pt, Rect,
-};
+use printpdf::{Actions, Color, Destination, LinkAnnotation, Op, PdfDocument, Pt, Rect};
 
 /// Marker colors: red channel 254 for links, 253 for jump targets; the
 /// 16-bit index travels in green/blue.
@@ -117,7 +115,12 @@ fn attr_value(tag: &str, name: &str) -> Option<String> {
             let value = after_trim[1..].trim_start();
             let (quote, body) = match value.chars().next()? {
                 q @ ('"' | '\'') => (q, &value[1..]),
-                _ => return value.split(|c: char| c.is_whitespace() || c == '>').next().map(str::to_string),
+                _ => {
+                    return value
+                        .split(|c: char| c.is_whitespace() || c == '>')
+                        .next()
+                        .map(str::to_string)
+                }
             };
             return body.find(quote).map(|e| body[..e].to_string());
         }
@@ -131,7 +134,11 @@ fn with_background(tag: &str, color: &str) -> String {
     let decl = format!("background-color:{color}");
     if let Some(pos) = tag.to_ascii_lowercase().find("style=") {
         let after = pos + "style=".len();
-        if let Some(q) = tag[after..].chars().next().filter(|c| *c == '"' || *c == '\'') {
+        if let Some(q) = tag[after..]
+            .chars()
+            .next()
+            .filter(|c| *c == '"' || *c == '\'')
+        {
             if let Some(close) = tag[after + 1..].find(q) {
                 let at = after + 1 + close;
                 return format!("{};{decl}{}", &tag[..at], &tag[at..]);
@@ -140,7 +147,10 @@ fn with_background(tag: &str, color: &str) -> String {
     }
     let body = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
     let self_closing = tag.trim_end_matches('>').ends_with('/');
-    format!("{body} style=\"{decl}\"{}>", if self_closing { " /" } else { "" })
+    format!(
+        "{body} style=\"{decl}\"{}>",
+        if self_closing { " /" } else { "" }
+    )
 }
 
 fn is_inline_tag(name: &str) -> bool {
@@ -209,7 +219,10 @@ pub(crate) fn plan(html: &str) -> Option<LinkPlan> {
     let link_spans: Vec<(usize, usize)> = link_tag
         .keys()
         .map(|&start| {
-            let end = html[start..].to_ascii_lowercase().find("</a").map_or(start, |c| start + c);
+            let end = html[start..]
+                .to_ascii_lowercase()
+                .find("</a")
+                .map_or(start, |c| start + c);
             (start, end)
         })
         .collect();
@@ -221,7 +234,10 @@ pub(crate) fn plan(html: &str) -> Option<LinkPlan> {
             // A background is not inherited: text wrapped in an inline child
             // (`<a><span class="underline">…`) paints that child's own box,
             // so the marker goes on those children too.
-            let close = html[tag.end..].to_ascii_lowercase().find("</a").unwrap_or(0);
+            let close = html[tag.end..]
+                .to_ascii_lowercase()
+                .find("</a")
+                .unwrap_or(0);
             for child in scan_tags(&html[tag.end..tag.end + close], is_inline_tag) {
                 let (cs, ce) = (tag.end + child.start, tag.end + child.end);
                 edits.push((cs, ce, with_background(&html[cs..ce], &color)));
@@ -229,7 +245,11 @@ pub(crate) fn plan(html: &str) -> Option<LinkPlan> {
         } else if inside_link(&link_spans, tag.start) {
             // handled with its anchor above
         } else if let Some(&i) = target_tag.get(&tag.start) {
-            edits.push((tag.start, tag.end, with_background(text, &marker(TARGET_RED, i + 1))));
+            edits.push((
+                tag.start,
+                tag.end,
+                with_background(text, &marker(TARGET_RED, i + 1)),
+            ));
         }
     }
     let mut marked_html = html.to_string();
@@ -436,9 +456,15 @@ mod tests {
     fn existing_style_is_extended_not_duplicated() {
         let tag = r#"<a href="https://x.dev" style="color:red">"#;
         let out = with_background(tag, "rgb(254,0,1)");
-        assert_eq!(out, r#"<a href="https://x.dev" style="color:red;background-color:rgb(254,0,1)">"#);
+        assert_eq!(
+            out,
+            r#"<a href="https://x.dev" style="color:red;background-color:rgb(254,0,1)">"#
+        );
         let bare = with_background(r#"<a href="https://x.dev">"#, "rgb(254,0,1)");
-        assert_eq!(bare, r#"<a href="https://x.dev" style="background-color:rgb(254,0,1)">"#);
+        assert_eq!(
+            bare,
+            r#"<a href="https://x.dev" style="background-color:rgb(254,0,1)">"#
+        );
     }
 
     #[test]

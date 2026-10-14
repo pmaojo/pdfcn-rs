@@ -214,6 +214,36 @@ Not yet validated against a real Factur-X/PDF-A validator (veraPDF,
 Mustang) in this environment -- see the spike doc for exactly what is and
 isn't confirmed.
 
+## Digital signatures (`sign` Cargo feature, opt-in)
+
+`pdfcn build --sign-p12 cert.p12 ...` signs the finished PDF with an X.509
+certificate: a PAdES baseline-B signature (`ETSI.CAdES.detached`, SHA-256,
+with `signing-certificate-v2`). RSA and ECDSA P-256 keys work, from a PKCS#12
+file or from PEM:
+
+```sh
+cargo install --path pdfcn-cli --features sign
+
+export PDFCN_SIGN_PASSWORD=...        # never a command-line argument
+pdfcn build invoice.haml --data invoice.json \
+  --factur-x-xml invoice.xml \
+  --sign-p12 company.p12 --sign-reason "Invoice issued" --sign-location Madrid
+
+# or PEM: the chain (signer first) and the key (PKCS#8, PKCS#1 or SEC1)
+pdfcn build ... --sign-cert chain.pem --sign-key key.pem
+```
+
+Signing is the last step, after Factur-X, and is added as an incremental
+update: every byte of the rendered PDF is left as it was and is covered by the
+signature. Signing the output again adds a second signature. From Rust:
+`SigningIdentity::from_pkcs12` / `from_pem`, then `sign_pdf`.
+
+Verified with poppler's `pdfsig` and pyHanko (valid, whole file covered).
+What it does **not** do: embed a trusted timestamp or revocation data
+(PAdES-B-T / B-LT, which a long-term archive needs), or sign with a key that
+lives in a smart card or HSM. A signature is only as trustworthy as the
+certificate behind it; for legal weight use a qualified certificate.
+
 ## Examples
 
 `examples/` holds runnable templates; `pdfcn build examples/<name>.haml -d examples/<name>.json -o out.pdf`.

@@ -108,6 +108,20 @@ resvg = "0.45"
 # to the dependency tree, only a direct edge to one already being built.
 lopdf = "0.44"
 qrcodegen = "1"
+# PAdES digital signatures (pdfcn-core's opt-in `sign` feature). RustCrypto,
+# pure Rust: no OpenSSL, so the feature stays buildable for musl/wasm targets.
+cms = { version = "0.2", features = ["std", "builder"] }
+x509-cert = { version = "0.2", features = ["pem"] }
+der = { version = "0.7", features = ["std", "pem"] }
+const-oid = "0.9"
+spki = "0.7"
+pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
+rsa = { version = "0.9", features = ["sha2"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+ecdsa = { version = "0.16", features = ["der", "signing"] }
+sha2 = "0.10"
+signature = "2"
+p12-keystore = "0.1"
 clap = { version = "4", features = ["derive"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 notify = "6"

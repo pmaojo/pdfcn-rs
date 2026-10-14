@@ -29,6 +29,15 @@ vector = ["dep:resvg", "pdfcn-components/vector"]
 # pdfcn-core's own surface. `--no-default-features` opts back out.
 factur-x = ["dep:lopdf"]
 
+# PAdES (ETSI.CAdES.detached) signing of a finished PDF with an X.509
+# certificate: RSA or ECDSA P-256, from PEM or PKCS#12. Opt-in, not in
+# `default`, so the default build and the Vercel function do not grow.
+sign = [
+    "dep:lopdf", "dep:cms", "dep:x509-cert", "dep:der", "dep:const-oid", "dep:spki",
+    "dep:pkcs8", "dep:rsa", "dep:p256", "dep:ecdsa", "dep:sha2", "dep:signature",
+    "dep:p12-keystore",
+]
+
 [dependencies]
 pdfcn-parser = { workspace = true }
 pdfcn-template = { workspace = true }
@@ -43,6 +52,18 @@ image = { workspace = true }
 qrcodegen = { workspace = true }
 resvg = { workspace = true, optional = true }
 lopdf = { workspace = true, optional = true }
+cms = { workspace = true, optional = true }
+x509-cert = { workspace = true, optional = true }
+der = { workspace = true, optional = true }
+const-oid = { workspace = true, optional = true }
+spki = { workspace = true, optional = true }
+pkcs8 = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }
+ecdsa = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+signature = { workspace = true, optional = true }
+p12-keystore = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
