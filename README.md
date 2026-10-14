@@ -238,11 +238,50 @@ update: every byte of the rendered PDF is left as it was and is covered by the
 signature. Signing the output again adds a second signature. From Rust:
 `SigningIdentity::from_pkcs12` / `from_pem`, then `sign_pdf`.
 
-Verified with poppler's `pdfsig` and pyHanko (valid, whole file covered).
-What it does **not** do: embed a trusted timestamp or revocation data
-(PAdES-B-T / B-LT, which a long-term archive needs), or sign with a key that
-lives in a smart card or HSM. A signature is only as trustworthy as the
-certificate behind it; for legal weight use a qualified certificate.
+### Trusted timestamp (PAdES-T)
+
+`--timestamp-url https://tsa.example/tsr` asks an RFC 3161 time-stamping
+authority to stamp the signature, which keeps it checkable after the
+certificate expires (the stamp proves it was made while the certificate was
+valid). Signing fails if the authority is unreachable, refuses, or answers
+for a different signature or nonce: a missing timestamp is never skipped
+silently. Many authorities are free; qualified ones (the ones with legal weight
+in the EU) are usually paid and may need credentials, which this does not send.
+From Rust: `sign_pdf_timestamped(pdf, &identity, &options, &|request| ...)`;
+pdfcn-core does no network I/O, so the transport is yours.
+
+Verified with poppler's `pdfsig` and pyHanko (signature and timestamp valid,
+whole file covered), against an OpenSSL time-stamping server.
+What it does **not** do: embed revocation data (PAdES-B-LT, for archives that
+must outlive the certificate chain), or sign with a key that lives in a smart
+card or HSM. A signature is only as trustworthy as the certificate behind it;
+for legal weight use a qualified certificate.
+
+## Spanish invoices: VERI*FACTU QR
+
+`%VerifactuQR` prints the QR the tax agency requires on invoices under Real
+Decreto 1007/2023. It encodes the AEAT verification URL built from the invoice's
+issuer NIF, series and number, date and total, so it cannot disagree with what
+the page says:
+
+```haml
+%VerifactuQR(nif="{{ issuer.nif }}" numserie="{{ invoice.series }}" fecha="{{ invoice.date }}" importe="{{ invoice.total }}")
+```
+
+`fecha` takes `dd-mm-yyyy` or `yyyy-mm-dd`; `importe` is a plain number (no
+currency symbol or thousands separator). Bad values render a visible error
+chip, never a QR that would send the customer to a "no such invoice" page.
+`env="test"` points at the AEAT pre-production service,
+`mode="no-verifactu"` at the non-VERI*FACTU endpoint (and drops the label).
+The symbol is 150 px (about 40 mm) with error correction M and the
+`VERI*FACTU` label above it; `size` overrides it. See `examples/verifactu`.
+
+This prints the QR for an invoice **your billing system has registered**. It does
+not create the invoice record, its hash chain or the submission to the AEAT, and
+it has not been checked against a live AEAT service. The URL format follows
+the published specification as described by several independent
+implementations; the AEAT's own document was not reachable when this was
+written, so compare against the current version before relying on it.
 
 ## Examples
 
@@ -255,6 +294,7 @@ The live demo (`index.html`) loads the same ones in its editor.
 | `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
 | `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
 | `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `verifactu` | Spanish invoice with the AEAT VERI*FACTU QR |
 | `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
 
 ## Known limitations

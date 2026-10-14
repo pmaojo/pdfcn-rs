@@ -1,0 +1,22 @@
+%DocumentLayout(size="a4")
+  %Header(title="Factura {{ invoice.series }}" subtitle="{{ invoice.date }}")
+    %Badge(variant="success" label="VERI*FACTU")
+
+  .flex.justify-between.mt-4
+    %Card(title="Emisor")
+      %p {{ issuer.name }}
+      %p.text-sm NIF {{ issuer.nif }}
+    %Card(title="Cliente")
+      %p {{ customer.name }}
+      %p.text-sm NIF {{ customer.nif }}
+
+  %InvoiceTable(rows={{ invoice.items }} columns={{ invoice.columns }})
+
+  .text-right.mt-4
+    %p Base imponible: {{ invoice.base }} EUR
+    %p IVA 21%: {{ invoice.vat }} EUR
+    %p.text-lg.font-semibold Total: {{ invoice.total }} EUR
+
+  .mt-8
+    %VerifactuQR(nif="{{ issuer.nif }}" numserie="{{ invoice.series }}" fecha="{{ invoice.date }}" importe="{{ invoice.total }}" env="test")
+    %p.text-xs.mt-2 Factura verificable en la sede electrónica de la AEAT.

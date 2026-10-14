@@ -17,6 +17,7 @@ mod nav;
 mod progress;
 mod qrcode;
 mod vector;
+mod verifactu;
 
 use std::fmt;
 
@@ -150,6 +151,7 @@ pub fn render(
         "Breadcrumb" => Some(nav::breadcrumb(attrs)),
         "Pagination" => Some(nav::pagination(attrs)),
         "QRCode" => Some(qrcode::qrcode(attrs)),
+        "VerifactuQR" => Some(verifactu::verifactu_qr(attrs)),
         "BarChart" => Some(chart::bar_chart(attrs)),
         // Wave 1 vector substrate: %Vector is always registered (it's just a
         // placeholder; it degrades like any unresolved image without the
