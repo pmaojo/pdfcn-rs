@@ -22,6 +22,12 @@ mod raster;
 #[cfg(feature = "factur-x")]
 mod factur_x;
 
+// PAdES signing of a finished PDF. Opt-in `sign` cargo feature.
+#[cfg(feature = "sign")]
+mod sign;
+#[cfg(feature = "sign")]
+pub use sign::{sign_pdf, SignError, SignOptions, SigningIdentity};
+
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
 #[cfg(feature = "factur-x")]

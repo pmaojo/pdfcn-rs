@@ -110,6 +110,74 @@ pub struct BuildArgs {
     #[cfg(feature = "factur-x")]
     #[arg(long, value_name = "PATH")]
     factur_x_icc: Option<PathBuf>,
+    /// Sign the PDF (PAdES, `ETSI.CAdES.detached`) with the key and chain in
+    /// this PKCS#12 file (`.p12` / `.pfx`). Needs the `sign` cargo feature.
+    /// The password is read from the environment (see `--sign-password-env`),
+    /// never from the command line, where `ps` and shell history would show it.
+    #[cfg(feature = "sign")]
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["sign_cert", "sign_key"])]
+    sign_p12: Option<PathBuf>,
+    /// PEM certificate chain to sign with, signer's own certificate first.
+    /// Use with `--sign-key`.
+    #[cfg(feature = "sign")]
+    #[arg(long, value_name = "PATH", requires = "sign_key")]
+    sign_cert: Option<PathBuf>,
+    /// PEM private key (PKCS#8, PKCS#1 RSA or SEC1 EC; PKCS#8 may be encrypted).
+    #[cfg(feature = "sign")]
+    #[arg(long, value_name = "PATH", requires = "sign_cert")]
+    sign_key: Option<PathBuf>,
+    /// Environment variable holding the PKCS#12 / private key password.
+    #[cfg(feature = "sign")]
+    #[arg(long, value_name = "VAR", default_value = "PDFCN_SIGN_PASSWORD")]
+    sign_password_env: String,
+    /// Reason recorded in the signature, e.g. "Invoice issued".
+    #[cfg(feature = "sign")]
+    #[arg(long)]
+    sign_reason: Option<String>,
+    /// Location recorded in the signature.
+    #[cfg(feature = "sign")]
+    #[arg(long)]
+    sign_location: Option<String>,
+    /// Contact information recorded in the signature.
+    #[cfg(feature = "sign")]
+    #[arg(long)]
+    sign_contact: Option<String>,
+    /// Signer name shown by viewers; defaults to the certificate's CN.
+    #[cfg(feature = "sign")]
+    #[arg(long)]
+    sign_name: Option<String>,
+}
+
+/// Loads the signing identity the `--sign-*` flags describe, or `None` when
+/// no signing was asked for.
+#[cfg(feature = "sign")]
+fn signing_identity(args: &BuildArgs) -> anyhow::Result<Option<pdfcn_core::SigningIdentity>> {
+    let password = std::env::var(&args.sign_password_env).ok();
+    let hint = || {
+        format!(
+            "check the password in ${} (it is {})",
+            args.sign_password_env,
+            if password.is_some() { "set" } else { "not set" }
+        )
+    };
+    if let Some(path) = &args.sign_p12 {
+        let data = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("--sign-p12: cannot read {path:?}: {e}"))?;
+        let identity =
+            pdfcn_core::SigningIdentity::from_pkcs12(&data, password.as_deref().unwrap_or(""))
+                .map_err(|e| anyhow::anyhow!("--sign-p12: {e}; {}", hint()))?;
+        return Ok(Some(identity));
+    }
+    if let (Some(cert), Some(key)) = (&args.sign_cert, &args.sign_key) {
+        let cert = std::fs::read_to_string(cert)
+            .map_err(|e| anyhow::anyhow!("--sign-cert: cannot read {cert:?}: {e}"))?;
+        let key = std::fs::read_to_string(key)
+            .map_err(|e| anyhow::anyhow!("--sign-key: cannot read {key:?}: {e}"))?;
+        let identity = pdfcn_core::SigningIdentity::from_pem(&cert, &key, password.as_deref())
+            .map_err(|e| anyhow::anyhow!("--sign-key: {e}; {}", hint()))?;
+        return Ok(Some(identity));
+    }
+    Ok(None)
 }
 
 #[cfg(feature = "factur-x")]
@@ -196,6 +264,9 @@ fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {
+    // Fail on a bad certificate or password before spending time rendering.
+    #[cfg(feature = "sign")]
+    let signer = signing_identity(&args)?;
     let page = PageConfig {
         size: parse_size(&args.size)?,
         orientation: parse_orientation(&args.orientation)?,
@@ -278,6 +349,27 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
             let profile = parse_factur_x_profile(&args.factur_x_profile)?;
             pdfcn_core::embed_factur_x_invoice(&bytes, &xml, profile, icc.as_deref())
                 .map_err(|e| anyhow::anyhow!("{e}"))?
+        }
+        None => bytes,
+    };
+    // Signing is the last step: any change to the bytes after it would
+    // invalidate the signature.
+    #[cfg(feature = "sign")]
+    let bytes = match signer {
+        Some(identity) => {
+            let signed = pdfcn_core::sign_pdf(
+                &bytes,
+                &identity,
+                &pdfcn_core::SignOptions {
+                    reason: args.sign_reason.clone(),
+                    location: args.sign_location.clone(),
+                    contact_info: args.sign_contact.clone(),
+                    name: args.sign_name.clone(),
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("signing failed: {e}"))?;
+            println!("Signed as {}", identity.subject());
+            signed
         }
         None => bytes,
     };

@@ -20,6 +20,9 @@ default = ["vector", "factur-x"]
 # marker, never a silent no-op.
 vector = ["pdfcn-core/vector"]
 factur-x = ["pdfcn-core/factur-x"]
+# PAdES signing of the output (`pdfcn build --sign-p12 ...`). Opt-in: it pulls
+# in the RustCrypto stack, which the default binary does not carry.
+sign = ["pdfcn-core/sign"]
 
 [dependencies]
 # `default-features = false` + explicit forwarding via the `vector`/
