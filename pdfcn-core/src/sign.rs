@@ -19,10 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cms::builder::{SignedDataBuilder, SignerInfoBuilder};
 use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
 use cms::content_info::ContentInfo;
-use cms::signed_data::{EncapsulatedContentInfo, SignerIdentifier};
+use cms::signed_data::{EncapsulatedContentInfo, SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
 use der::asn1::{OctetString, SetOfVec};
-use der::{Any, Decode, Encode};
+use der::{Any, Decode, Encode, Reader};
 use lopdf::{dictionary, Dictionary, IncrementalDocument, Object, ObjectId, StringFormat};
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
@@ -183,12 +183,44 @@ pub struct SignOptions {
     pub name: Option<String>,
 }
 
+/// How to reach a time-stamping authority: takes a DER `TimeStampReq`
+/// (RFC 3161) and returns the DER `TimeStampResp`. pdfcn-core does no network
+/// I/O itself, so the transport (HTTP POST with
+/// `Content-Type: application/timestamp-query`) belongs to the caller.
+pub type TimestampAuthority<'a> = &'a dyn Fn(&[u8]) -> Result<Vec<u8>, String>;
+
+/// Room kept for the timestamp token, which carries the TSA's certificates and
+/// whose size is only known after the request has been answered.
+const TIMESTAMP_RESERVE: usize = 12 * 1024;
+
 /// Signs `pdf`, returning the PDF with one more revision holding the
 /// signature. Needs a classic (non-encrypted) PDF such as pdfcn produces.
 pub fn sign_pdf(
     pdf: &[u8],
     identity: &SigningIdentity,
     options: &SignOptions,
+) -> Result<Vec<u8>, SignError> {
+    sign_impl(pdf, identity, options, None)
+}
+
+/// [`sign_pdf`] plus a trusted timestamp from `authority` over the signature
+/// (PAdES baseline-T): it proves the document was signed while the
+/// certificate was valid, which keeps the signature checkable after the
+/// certificate expires.
+pub fn sign_pdf_timestamped(
+    pdf: &[u8],
+    identity: &SigningIdentity,
+    options: &SignOptions,
+    authority: TimestampAuthority<'_>,
+) -> Result<Vec<u8>, SignError> {
+    sign_impl(pdf, identity, options, Some(authority))
+}
+
+fn sign_impl(
+    pdf: &[u8],
+    identity: &SigningIdentity,
+    options: &SignOptions,
+    authority: Option<TimestampAuthority<'_>>,
 ) -> Result<Vec<u8>, SignError> {
     let previous = lopdf::Document::load_mem(pdf)?;
     let mut doc = IncrementalDocument::create_from(pdf.to_vec(), previous);
@@ -210,7 +242,13 @@ pub fn sign_pdf(
 
     // The CMS length depends on the certificates and the key, not on the
     // digest, so a dry run with a dummy digest says how much room to leave.
-    let reserve = build_cms(identity, &[0; 32])?.len() + RESERVE_MARGIN;
+    let reserve = build_cms(identity, &[0; 32], None)?.len()
+        + RESERVE_MARGIN
+        + if authority.is_some() {
+            TIMESTAMP_RESERVE
+        } else {
+            0
+        };
 
     let signer_name = options
         .name
@@ -258,7 +296,7 @@ pub fn sign_pdf(
 
     let mut out = Vec::with_capacity(pdf.len() + 4 * reserve);
     doc.save_to(&mut out)?;
-    fill_signature(out, pdf.len(), identity, reserve)
+    fill_signature(out, pdf.len(), identity, reserve, authority)
 }
 
 fn common_name(identity: &SigningIdentity) -> String {
@@ -404,6 +442,7 @@ fn fill_signature(
     original_len: usize,
     identity: &SigningIdentity,
     reserve: usize,
+    authority: Option<TimestampAuthority<'_>>,
 ) -> Result<Vec<u8>, SignError> {
     let tail = &out[original_len..];
     let range_at = original_len
@@ -438,7 +477,7 @@ fn fill_signature(
     hasher.update(&out[after..]);
     let digest = hasher.finalize();
 
-    let cms = build_cms(identity, &digest)?;
+    let cms = build_cms(identity, &digest, authority)?;
     if cms.len() > reserve {
         return err(format!(
             "the signature ({} bytes) does not fit the {reserve} reserved",
@@ -454,7 +493,11 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-fn build_cms(identity: &SigningIdentity, digest: &[u8]) -> Result<Vec<u8>, SignError> {
+fn build_cms(
+    identity: &SigningIdentity,
+    digest: &[u8],
+    authority: Option<TimestampAuthority<'_>>,
+) -> Result<Vec<u8>, SignError> {
     let leaf = &identity.chain[0];
     let sid = SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
         issuer: leaf.tbs_certificate.issuer.clone(),
@@ -500,7 +543,136 @@ fn build_cms(identity: &SigningIdentity, digest: &[u8]) -> Result<Vec<u8>, SignE
         Key::Rsa(key) => sign_with!(key.as_ref(), rsa::pkcs1v15::Signature),
         Key::P256(key) => sign_with!(key, p256::ecdsa::DerSignature),
     };
-    Ok(info.to_der()?)
+    match authority {
+        Some(authority) => Ok(add_timestamp(info, authority)?.to_der()?),
+        None => Ok(info.to_der()?),
+    }
+}
+
+const OID_SIGNATURE_TIMESTAMP: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+
+/// Asks the authority to timestamp the signature value and stores the answer
+/// as the `signature-time-stamp-token` unsigned attribute (RFC 3161 / CAdES-T).
+/// Unsigned attributes are outside what the signature covers, so adding the
+/// token afterwards does not disturb it.
+fn add_timestamp(
+    info: ContentInfo,
+    authority: TimestampAuthority<'_>,
+) -> Result<ContentInfo, SignError> {
+    use x509_tsp::{MessageImprint, TimeStampReq, TimeStampResp, TspVersion};
+
+    let mut data: SignedData = info.content.decode_as()?;
+    let mut signer = data
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .cloned()
+        .ok_or_else(|| SignError("CMS has no signer".into()))?;
+
+    // The imprint is the hash of the signature value, not of the document.
+    let imprint = Sha256::digest(signer.signature.as_bytes());
+    // Binds the response to this request. Needs to be unpredictable only to the
+    // extent that a replayed response must not match: the imprint already ties
+    // it to this signature, so a digest of it plus the clock is plenty.
+    let nonce = Sha256::digest([imprint.as_slice(), pdf_date().as_bytes()].concat());
+    let nonce = der::asn1::Int::new(&nonce[..8].iter().map(|b| b & 0x7F).collect::<Vec<_>>())?;
+    let request = TimeStampReq {
+        version: TspVersion::V1,
+        message_imprint: MessageImprint {
+            hash_algorithm: spki::AlgorithmIdentifier {
+                oid: OID_SHA256,
+                parameters: Some(Any::null()),
+            },
+            hashed_message: OctetString::new(imprint.to_vec())?,
+        },
+        req_policy: None,
+        nonce: Some(nonce.clone()),
+        // Ask for the TSA certificate so a verifier does not have to look it up.
+        cert_req: true,
+        extensions: None,
+    };
+
+    let reply = authority(&request.to_der()?)
+        .map_err(|e| SignError(format!("timestamp authority: {e}")))?;
+    let reply = TimeStampResp::from_der(&reply)
+        .map_err(|e| SignError(format!("timestamp response: {e}")))?;
+    use cmpv2::status::PkiStatus;
+    if !matches!(
+        reply.status.status,
+        PkiStatus::Accepted | PkiStatus::GrantedWithMods
+    ) {
+        return err(format!(
+            "the timestamp authority refused the request ({:?})",
+            reply.status.status
+        ));
+    }
+    let token = reply
+        .time_stamp_token
+        .ok_or_else(|| SignError("the timestamp response carries no token".into()))?;
+    check_token(&token, &imprint, &nonce)?;
+
+    let mut values = SetOfVec::new();
+    values
+        .insert(Any::from_der(&token.to_der()?)?)
+        .map_err(|e| SignError(format!("ASN.1: {e}")))?;
+    let attribute = Attribute {
+        oid: OID_SIGNATURE_TIMESTAMP,
+        values,
+    };
+    let mut unsigned = SetOfVec::new();
+    unsigned
+        .insert(attribute)
+        .map_err(|e| SignError(format!("ASN.1: {e}")))?;
+    signer.unsigned_attrs = Some(unsigned);
+
+    data.signer_infos = cms::signed_data::SignerInfos(
+        SetOfVec::try_from(vec![signer]).map_err(|e| SignError(format!("ASN.1: {e}")))?,
+    );
+    Ok(ContentInfo {
+        content_type: info.content_type,
+        content: Any::encode_from(&data)?,
+    })
+}
+
+/// The token must stamp what we asked it to stamp. A TSA answering for a
+/// different imprint or nonce would produce a timestamp that proves nothing
+/// about this signature.
+fn check_token(
+    token: &ContentInfo,
+    imprint: &[u8],
+    nonce: &der::asn1::Int,
+) -> Result<(), SignError> {
+    // Read only as far as the TSTInfo. Decoding the whole SignedData would
+    // also parse its certificate SET OF strictly, and some authorities repeat
+    // their certificate in it; that is harmless here, so it must not be fatal.
+    let content_der = token.content.to_der()?;
+    let mut reader = der::SliceReader::new(&content_der)?;
+    let econtent = reader
+        .sequence(|seq| {
+            let _version: Any = Any::decode(seq)?;
+            let _digest_algorithms: Any = Any::decode(seq)?;
+            let content = EncapsulatedContentInfo::decode(seq)?;
+            // The certificates and signer infos follow; skip them unparsed.
+            while !seq.is_finished() {
+                Any::decode(seq)?;
+            }
+            Ok(content)
+        })
+        .map_err(|e| SignError(format!("timestamp token: {e}")))?
+        .econtent
+        .ok_or_else(|| SignError("timestamp token has no TSTInfo".into()))?;
+    let octets: OctetString = econtent.decode_as()?;
+    let tst = x509_tsp::TstInfo::from_der(octets.as_bytes())
+        .map_err(|e| SignError(format!("timestamp TSTInfo: {e}")))?;
+    if tst.message_imprint.hashed_message.as_bytes() != imprint {
+        return err("the timestamp is for a different signature (imprint mismatch)");
+    }
+    if tst.nonce.as_ref() != Some(nonce) {
+        return err("the timestamp response does not echo the request nonce");
+    }
+    Ok(())
 }
 
 /// `signing-certificate-v2` (RFC 5035): binds the signature to the signer's

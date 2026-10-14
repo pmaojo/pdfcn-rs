@@ -122,6 +122,8 @@ ecdsa = { version = "0.16", features = ["der", "signing"] }
 sha2 = "0.10"
 signature = "2"
 p12-keystore = "0.1"
+x509-tsp = "0.1"
+cmpv2 = "0.2"
 clap = { version = "4", features = ["derive"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 notify = "6"

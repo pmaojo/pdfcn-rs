@@ -26,7 +26,9 @@ mod factur_x;
 #[cfg(feature = "sign")]
 mod sign;
 #[cfg(feature = "sign")]
-pub use sign::{sign_pdf, SignError, SignOptions, SigningIdentity};
+pub use sign::{
+    sign_pdf, sign_pdf_timestamped, SignError, SignOptions, SigningIdentity, TimestampAuthority,
+};
 
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;
