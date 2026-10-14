@@ -2481,7 +2481,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 [[package]]
 name = "printpdf"
 version = "0.12.8"
-source = "git+https://github.com/pmaojo/printpdf?rev=9447017b873d3d82dc56957bb6f3b95a7f8f759f#9447017b873d3d82dc56957bb6f3b95a7f8f759f"
+source = "git+https://github.com/pmaojo/printpdf?rev=62b793076b4806e1fa348da2e1a355a5faa9b011#62b793076b4806e1fa348da2e1a355a5faa9b011"
 dependencies = [
  "allsorts-azul",
  "azul-core",
