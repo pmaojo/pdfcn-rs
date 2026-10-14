@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "azul-core"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=b1fc1b0785d007f799d47c49fd07f219ed31e486#b1fc1b0785d007f799d47c49fd07f219ed31e486"
+source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
 dependencies = [
  "azul-css",
  "gl-context-loader",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "azul-css"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=b1fc1b0785d007f799d47c49fd07f219ed31e486#b1fc1b0785d007f799d47c49fd07f219ed31e486"
+source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
 dependencies = [
  "azul-simplecss",
  "libm",
@@ -280,7 +280,7 @@ dependencies = [
 [[package]]
 name = "azul-layout"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=b1fc1b0785d007f799d47c49fd07f219ed31e486#b1fc1b0785d007f799d47c49fd07f219ed31e486"
+source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
 dependencies = [
  "allsorts-azul",
  "azul-core",
@@ -2481,7 +2481,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 [[package]]
 name = "printpdf"
 version = "0.12.8"
-source = "git+https://github.com/pmaojo/printpdf?rev=7a51cbd5a9268335a7e41c13372e83349460db85#7a51cbd5a9268335a7e41c13372e83349460db85"
+source = "git+https://github.com/pmaojo/printpdf?rev=9447017b873d3d82dc56957bb6f3b95a7f8f759f#9447017b873d3d82dc56957bb6f3b95a7f8f759f"
 dependencies = [
  "allsorts-azul",
  "azul-core",

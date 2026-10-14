@@ -107,3 +107,16 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
       | opacity    |
       | opacity-50 |
       | opacity-25 |
+
+  @covers(pdfcn-core/src/assets.rs)
+  Scenario Outline: object-fit and object-position are honored, also for relative-width boxes
+    Given an image in a box with "<style>"
+    When the document is rendered
+    Then the drawn output differs from the same image without object-fit
+    And a non-center object-position leaves the crop to the layout engine
+
+    Examples:
+      | style                                              |
+      | width:100%;height:150px;object-fit:cover           |
+      | width:100%;height:150px;object-fit:contain         |
+      | width:100%;height:150px;object-fit:cover;object-position:left |

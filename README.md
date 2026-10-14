@@ -225,15 +225,12 @@ isn't confirmed.
   honored, so `shadow-md`/`lg`/`xl` fold Tailwind's two layers into one.
 - **Text decoration stops about one glyph short** of the end of the text
   (engine width quirk on the underline/line-through bounds).
-- **`object-fit` has no effect in the renderer itself.** An image is scaled
-  to exactly fill its box on both axes (not cropped to cover, nor
-  letterboxed to contain). `pdfcn-core`'s asset-preparation pass works
-  around this by center-cropping the source ahead of time when *both* the
-  box's width and height are known in px (inline `style=""`, not classes) --
-  but a box with only one dimension known in px (e.g. `%Card`'s cover
-  image, whose width is the relative `w-full`) still can't be cropped, only
-  resolution-capped. Pick a source image close to the box's aspect ratio to
-  keep the distortion imperceptible in that case.
+- **`object-fit` / `object-position` work through the patched engine**
+  (`contain`, `cover`, `none`, `scale-down`, with a clip to the box), also
+  for boxes whose size only layout knows (a class like `w-full`). A box with
+  both dimensions in px still gets `pdfcn-core`'s asset pass first, which
+  center-crops the source to shrink the embedded image; a non-center
+  `object-position` skips that pass so the engine anchors the crop itself.
 - **`border-radius` needs a `px` value, not `rem`.** `pdfcn-styles`'
   `rounded-*` scale already emits `px` for this reason; a hand-written
   `style="border-radius:0.5rem"` renders square corners; `style="border-radius:8px"`

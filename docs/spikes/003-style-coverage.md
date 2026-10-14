@@ -125,3 +125,31 @@ the printpdf bridge also ignores it, so it needs both.
 Moving from printpdf 0.12.6/azul 0.0.14 to 0.12.8/0.0.16 changed the golden
 snapshots (one line each: engine-version noise); the pages were checked
 visually.
+
+## Round 5: `object-fit` fixed in the engine
+
+Re-probed on azul `master` (0.0.16) before assuming round-3's results held:
+
+| Utility | Result on 0.0.16 |
+|---|---|
+| `opacity` | fixed (round 4) |
+| `object-fit`, `object-position` | **were ignored** -> `fix/image-object-fit` (azul) + `fix/img-intrinsic-size` (printpdf) |
+| `vertical-align` (sub/super/length/%) | still no effect in printpdf's paged output even though text3 implements it and azul's own tests cover it; not yet root-caused (`<sup>`/`<sub>` also unchanged) |
+| `transform`, `text-shadow` | still ignored (`PushReferenceFrame`/`PushTextShadow` are no-ops in the bridge) |
+| `outline`, `grid-column-start` | still ignored |
+
+`object-fit` had two causes. azul read the property but never used it
+(`DisplayListItem::Image` always stretched; the inline path hardcodes
+`ObjectFit::Fill`), and printpdf hands layout `<img>` as a tagged 0x0
+placeholder, so there was no aspect ratio to fit. The first attempt, giving
+`<img>` `width`/`height` attributes from the decoded size, broke percentage
+widths: azul feeds the intrinsic width into the containing block, so catalog
+cards inflated to 480 px. Fix instead: printpdf registers the decoded sizes in
+the `ImageCache` it passes to layout, and azul looks a placeholder's tag up
+there at paint time. Box sizes are unchanged. `fix/image-object-fit` clips the
+fitted image to its box with a `PushClip`/`PopClip` pair, which pagination
+already keeps balanced.
+
+Lesson recorded for the next probe: `cargo` treats git dependencies as
+immutable, so editing `~/.cargo/git/checkouts/...` does not rebuild;
+`cargo clean -p <crate>` first.
