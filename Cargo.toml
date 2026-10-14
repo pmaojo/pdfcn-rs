@@ -135,7 +135,7 @@ strip = true
 # Pinned by commit so builds are reproducible; the three azul crates must come
 # from the same revision. Drop each entry once the fix is released upstream.
 [patch.crates-io]
-printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "62b793076b4806e1fa348da2e1a355a5faa9b011" }
-azul-layout = { git = "https://github.com/pmaojo/azul", rev = "b17cefc2636b284d50f3e90a2de0f726bd1f3ddb" }
-azul-core = { git = "https://github.com/pmaojo/azul", rev = "b17cefc2636b284d50f3e90a2de0f726bd1f3ddb" }
-azul-css = { git = "https://github.com/pmaojo/azul", rev = "b17cefc2636b284d50f3e90a2de0f726bd1f3ddb" }
+printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "b7d6b0cbe4692de754747a85bbb5f4f19786f91b" }
+azul-layout = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }
+azul-core = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }
+azul-css = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }

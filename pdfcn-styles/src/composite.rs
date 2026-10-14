@@ -22,7 +22,7 @@ use std::ops::Range;
 
 use crate::gap::{scan_scope, Element, Node};
 use crate::theme::Theme;
-use crate::utilities::color_value;
+use crate::utilities::{color_value, offset_value};
 
 /// Edge widths Tailwind offers for rings/outlines.
 const EDGE_WIDTHS: &[u32] = &[0, 1, 2, 4, 8];
@@ -137,8 +137,136 @@ fn compose_edge(
     }
 }
 
+/// `rotate-*`, `scale-*`, `translate-*`, `skew-*` and `origin-*` become one
+/// `transform` (they share a single CSS property, so they cannot be separate
+/// rules). Tailwind's order: translate, rotate, skew, scale.
+fn compose_transform(classes: &[&str], out: &mut Composed) {
+    let mut translate = (None::<String>, None::<String>);
+    let mut rotate = None::<String>;
+    let mut skew = (None::<String>, None::<String>);
+    let mut scale = (None::<String>, None::<String>);
+    let mut origin = None::<&'static str>;
+    let mut used: Vec<String> = Vec::new();
+    let signed = |neg: bool, v: String| {
+        if neg && v != "0" {
+            format!("-{v}")
+        } else {
+            v
+        }
+    };
+    let degrees = |key: &str| -> Option<String> {
+        if let Some(inner) = key.strip_prefix('[').and_then(|k| k.strip_suffix("deg]")) {
+            return inner.parse::<f32>().ok().map(|n| n.to_string());
+        }
+        key.parse::<u32>()
+            .ok()
+            .filter(|n| *n <= 360)
+            .map(|n| n.to_string())
+    };
+    for class in classes {
+        let (neg, body) = match class.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, *class),
+        };
+        let mut take = |slot: &mut Option<String>, value: Option<String>| {
+            if let Some(v) = value {
+                *slot = Some(v);
+                used.push(class.to_string());
+            }
+        };
+        if let Some(k) = body.strip_prefix("translate-x-") {
+            take(&mut translate.0, offset_value(k).map(|v| signed(neg, v)));
+        } else if let Some(k) = body.strip_prefix("translate-y-") {
+            take(&mut translate.1, offset_value(k).map(|v| signed(neg, v)));
+        } else if let Some(k) = body.strip_prefix("rotate-") {
+            take(
+                &mut rotate,
+                degrees(k).map(|d| format!("{}{d}deg", if neg { "-" } else { "" })),
+            );
+        } else if let Some(k) = body.strip_prefix("skew-x-") {
+            take(
+                &mut skew.0,
+                degrees(k).map(|d| format!("{}{d}deg", if neg { "-" } else { "" })),
+            );
+        } else if let Some(k) = body.strip_prefix("skew-y-") {
+            take(
+                &mut skew.1,
+                degrees(k).map(|d| format!("{}{d}deg", if neg { "-" } else { "" })),
+            );
+        } else if !neg {
+            let pct = |k: &str| {
+                k.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n <= 400)
+                    .map(|n| (f64::from(n) / 100.0).to_string())
+            };
+            if let Some(k) = body.strip_prefix("scale-x-") {
+                take(&mut scale.0, pct(k));
+            } else if let Some(k) = body.strip_prefix("scale-y-") {
+                take(&mut scale.1, pct(k));
+            } else if let Some(k) = body.strip_prefix("scale-") {
+                let v = pct(k);
+                if v.is_some() {
+                    scale = (v.clone(), v);
+                    used.push(class.to_string());
+                }
+            } else if let Some(k) = body.strip_prefix("origin-") {
+                origin = match k {
+                    "center" => Some("50% 50%"),
+                    "top" => Some("50% 0%"),
+                    "top-right" => Some("100% 0%"),
+                    "right" => Some("100% 50%"),
+                    "bottom-right" => Some("100% 100%"),
+                    "bottom" => Some("50% 100%"),
+                    "bottom-left" => Some("0% 100%"),
+                    "left" => Some("0% 50%"),
+                    "top-left" => Some("0% 0%"),
+                    _ => None,
+                };
+                if origin.is_some() {
+                    used.push(class.to_string());
+                }
+            }
+        }
+    }
+    let mut fns: Vec<String> = Vec::new();
+    if translate.0.is_some() || translate.1.is_some() {
+        fns.push(format!(
+            "translate({}, {})",
+            translate.0.as_deref().unwrap_or("0"),
+            translate.1.as_deref().unwrap_or("0")
+        ));
+    }
+    if let Some(r) = &rotate {
+        fns.push(format!("rotate({r})"));
+    }
+    if skew.0.is_some() || skew.1.is_some() {
+        fns.push(format!(
+            "skew({}, {})",
+            skew.0.as_deref().unwrap_or("0deg"),
+            skew.1.as_deref().unwrap_or("0deg")
+        ));
+    }
+    if scale.0.is_some() || scale.1.is_some() {
+        fns.push(format!(
+            "scale({}, {})",
+            scale.0.as_deref().unwrap_or("1"),
+            scale.1.as_deref().unwrap_or("1")
+        ));
+    }
+    if fns.is_empty() {
+        return;
+    }
+    out.consumed.extend(used);
+    out.style.push(format!("transform:{}", fns.join(" ")));
+    if let Some(o) = origin {
+        out.style.push(format!("transform-origin:{o}"));
+    }
+}
+
 fn compose(classes: &[&str], theme: &Theme) -> Composed {
     let mut out = Composed::default();
+    compose_transform(classes, &mut out);
     compose_gradient(classes, theme, &mut out);
     let mut edge = Composed::default();
     compose_edge(classes, theme, "ring", 3, "rgba(59,130,246,0.5)", &mut edge);
@@ -343,7 +471,17 @@ fn rewrite_scope(s: &str, theme: &Theme, plan: &DividePlan, out: &mut String) {
 /// Composes gradients, rings/outlines and `divide-*` into inline styles.
 /// Markup using none of them passes through unchanged.
 pub fn rewrite_composites(html: &str, theme: &Theme) -> String {
-    const MARKERS: &[&str] = &["divide-", "bg-gradient-to-", "ring", "outline"];
+    const MARKERS: &[&str] = &[
+        "divide-",
+        "bg-gradient-to-",
+        "ring",
+        "outline",
+        "rotate-",
+        "scale-",
+        "translate-",
+        "skew-",
+        "origin-",
+    ];
     if !MARKERS.iter().any(|m| html.contains(m)) {
         return html.to_string();
     }
@@ -452,5 +590,41 @@ mod tests {
     fn markup_without_composites_is_unchanged() {
         let html = r#"<div class="p-4"><p>hi</p></div>"#;
         assert_eq!(run(html), html);
+    }
+
+    #[test]
+    fn transform_utilities_compose_into_one_transform() {
+        let out =
+            run(r#"<div class="rotate-45 scale-110 translate-x-4 -translate-y-2 p-2">x</div>"#);
+        assert!(out.contains(r#"class="p-2""#), "{out}");
+        assert!(
+            out.contains("transform:translate(1rem, -0.5rem) rotate(45deg) scale(1.1, 1.1)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn negative_rotation_skew_and_origin() {
+        let out = run(r#"<div class="-rotate-12 skew-x-6 origin-top-left">x</div>"#);
+        assert!(
+            out.contains("transform:rotate(-12deg) skew(6deg, 0deg)"),
+            "{out}"
+        );
+        assert!(out.contains("transform-origin:0% 0%"), "{out}");
+    }
+
+    #[test]
+    fn an_origin_alone_or_an_unknown_value_composes_nothing() {
+        let html = r#"<div class="origin-center rotate-999 scale-9999">x</div>"#;
+        assert_eq!(run(html), html);
+    }
+
+    #[test]
+    fn non_uniform_scale_and_fractional_translate() {
+        let out = run(r#"<div class="scale-x-50 translate-x-1/2">x</div>"#);
+        assert!(
+            out.contains("transform:translate(50%, 0) scale(0.5, 1)"),
+            "{out}"
+        );
     }
 }

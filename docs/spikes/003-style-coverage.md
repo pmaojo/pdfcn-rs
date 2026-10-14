@@ -171,3 +171,24 @@ Narrowed with a throwaway probe against the patched engine:
   reads glyph positions from the `DenseText`, then add a per-run `dy` to
   `DenseRun` (set in `from_unified`, applied in `to_unified_items` and
   `get_glyph_runs_pdf_dense`). Larger than the other fixes, so left open.
+
+## Round 6: `vertical-align`, `transform`, `text-shadow` fixed
+
+| Utility | Root cause | Fix (fork, branch) |
+|---|---|---|
+| `vertical-align` (`align-sub/super`, lengths, %) | text3 applies it per run, but the paged export reads the text through `DenseText`, whose expansion rebuilt every item's y from the line baseline and the run ascents, putting the shifted run back on the baseline. `DenseRun` already carried the run's own solved y. | azul `fix/dense-run-y`: when the reconstruction and the run's y disagree the run's y wins (test fails without it) |
+| `transform` | (1) reference frames came only from the `GpuValueCache`, which paged export does not pass, so CSS `transform` never reached the display list; (2) the paginator dropped `PushReferenceFrame`; (3) the printpdf bridge ignored it. | azul `fix/pdf-transform` (resolve the transform from the style when there is no cache; frame markers balanced per page with an exact origin shift); printpdf `fix/transform` (cm matrix = F ∘ A ∘ F⁻¹ about the layout -> PDF mapping, unit-tested point by point) |
+| `text-shadow` | azul emits `PushTextShadow`/`PopTextShadow`; the bridge ignored them. | printpdf `fix/text-shadow` (shadow copy of the text, offset; blur as translucent taps) |
+
+pdfcn-styles: `rotate-*`, `scale-*`, `translate-*`, `skew-*` and `origin-*`
+compose into one inline `transform` (`composite.rs`, they share a property);
+`text-shadow[-sm|-md|-lg|-none]` and `align-sub/super/text-top/text-bottom` are
+plain utilities.
+
+Approximations to know about: a text-shadow blur is five translucent copies,
+not a Gaussian; a `transform` does not affect layout (as in CSS) and, as with
+other frames, a frame split across a page break is re-opened on each page with
+its transform origin shifted into page space.
+
+Still unsupported: `grid-column-start/end`, 3D transforms and `perspective`
+(the 2D part of the matrix is used), `inset` shadows, `outline-offset`.

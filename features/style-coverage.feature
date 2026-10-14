@@ -120,3 +120,24 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
       | width:100%;height:150px;object-fit:cover           |
       | width:100%;height:150px;object-fit:contain         |
       | width:100%;height:150px;object-fit:cover;object-position:left |
+
+  @covers(pdfcn-styles/src/composite.rs)
+  Scenario Outline: Transform utilities compose into one transform and are painted
+    Given a box with the classes "<classes>"
+    When the document is rendered
+    Then the box is wrapped in a non-identity transformation matrix
+
+    Examples:
+      | classes              |
+      | rotate-12            |
+      | scale-75             |
+      | skew-x-6             |
+      | -translate-y-2       |
+      | scale-110 rotate-6   |
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario: text-shadow and vertical-align reach the output
+    Given a paragraph with "text-shadow" and a span with "align-super" or "align-sub"
+    When the document is rendered
+    Then the text is drawn again offset in the shadow color
+    And the span sits above or below the baseline

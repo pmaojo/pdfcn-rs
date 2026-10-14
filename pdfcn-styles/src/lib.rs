@@ -152,7 +152,11 @@ pub fn is_marker_class(class: &str) -> bool {
 /// ones were dropped. Component marker classes ([`is_marker_class`]) are
 /// excluded.
 pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
-    extract_classes(html)
+    // Composite utilities (`divide-*`, gradients, rings, transforms) are folded
+    // into inline styles before the stylesheet is built; judge what is left.
+    // (Idempotent: HTML that already went through the pass has nothing to fold.)
+    let html = rewrite_composites(html, theme);
+    extract_classes(&html)
         .into_iter()
         .filter(|class| {
             !is_marker_class(class)

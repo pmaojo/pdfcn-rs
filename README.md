@@ -213,7 +213,7 @@ The live demo (`index.html`) loads the same ones in its editor.
 |---|---|
 | `dashboard` | gradient hero, KPI cards with shadows, bar chart, progress, `divide-y` list, ring callout |
 | `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
-| `certificate` | serif type, double border, gradient background, circular seal |
+| `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
 | `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
 | `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
 
@@ -228,8 +228,6 @@ The live demo (`index.html`) loads the same ones in its editor.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next
   page. See the row-grouping note above for the workaround.
-- **`align-*` (`vertical-align`) has no effect**, even on inline elements
-  (verified in `docs/spikes/003-style-coverage.md`).
 - **`box-shadow` is approximated.** The layout engine emits it but upstream
   printpdf dropped it; the `pmaojo/printpdf` fork (see `docs/spikes/003-style-coverage.md`)
   paints outset shadows as stacked translucent rects (blur is a stepped

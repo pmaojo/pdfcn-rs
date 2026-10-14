@@ -298,6 +298,15 @@ fn resolve_color_alpha(key: &str, theme: &Theme) -> Option<String> {
     Some(base)
 }
 
+/// A size-like value for transform utilities: Tailwind's spacing scale, a
+/// fraction of the box (`1/2` -> `50%`) or an arbitrary `[...]` length.
+pub(crate) fn offset_value(key: &str) -> Option<String> {
+    if key == "full" {
+        return Some("100%".to_string());
+    }
+    fraction_percent(key).or_else(|| scale_or_arbitrary(key))
+}
+
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
     let value = scale_or_arbitrary(scale)?;
     Some(
@@ -631,6 +640,17 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         };
         return Some(literal.to_string());
     }
+    // `text-shadow` is not a Tailwind v3 utility; v4 spells it like this.
+    if let Some(rest) = class.strip_prefix("text-shadow") {
+        let value = match rest {
+            "" | "-sm" => "0 1px 2px rgba(0,0,0,0.20)",
+            "-md" => "0 2px 4px rgba(0,0,0,0.22)",
+            "-lg" => "0 3px 6px rgba(0,0,0,0.25)",
+            "-none" => "none",
+            _ => return None,
+        };
+        return Some(format!("text-shadow:{value}"));
+    }
     if let Some(rest) = class.strip_prefix("text-") {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
@@ -784,6 +804,10 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         "align-middle" => Some("vertical-align:middle"),
         "align-bottom" => Some("vertical-align:bottom"),
         "align-baseline" => Some("vertical-align:baseline"),
+        "align-sub" => Some("vertical-align:sub"),
+        "align-super" => Some("vertical-align:super"),
+        "align-text-top" => Some("vertical-align:text-top"),
+        "align-text-bottom" => Some("vertical-align:text-bottom"),
         "inline" => Some("display:inline"),
         "table" => Some("display:table"),
         "table-row" => Some("display:table-row"),
@@ -1300,5 +1324,25 @@ mod tests {
             resolve("border-b-2").as_deref(),
             Some("border-bottom-width:2px;border-style:solid")
         );
+    }
+
+    #[test]
+    fn resolves_text_shadow_and_vertical_align_sub_super() {
+        assert_eq!(
+            resolve("text-shadow").as_deref(),
+            Some("text-shadow:0 1px 2px rgba(0,0,0,0.20)")
+        );
+        assert_eq!(
+            resolve("text-shadow-none").as_deref(),
+            Some("text-shadow:none")
+        );
+        assert_eq!(resolve("text-shadow-xl"), None);
+        assert_eq!(
+            resolve("align-super").as_deref(),
+            Some("vertical-align:super")
+        );
+        assert_eq!(resolve("align-sub").as_deref(), Some("vertical-align:sub"));
+        // The text size/color branch is unaffected.
+        assert_eq!(resolve("text-lg").as_deref(), Some("font-size:1.125rem"));
     }
 }
