@@ -12,6 +12,7 @@ mod barcode;
 mod chart;
 #[cfg(feature = "vector")]
 mod chart_vector;
+mod fiscal_qr;
 mod form_field;
 mod nav;
 mod progress;
@@ -23,6 +24,8 @@ use std::fmt;
 use maud::{html, Markup};
 use pdfcn_template::ResolvedAttr;
 use serde_json::Value as JsonValue;
+
+pub use fiscal_qr::{fiscal_profile_ids, register_fiscal_profile};
 
 pub(crate) fn attr<'a>(attrs: &'a [ResolvedAttr], name: &str) -> Option<&'a str> {
     attrs
@@ -150,6 +153,8 @@ pub fn render(
         "Breadcrumb" => Some(nav::breadcrumb(attrs)),
         "Pagination" => Some(nav::pagination(attrs)),
         "QRCode" => Some(qrcode::qrcode(attrs)),
+        "FiscalQR" => Some(fiscal_qr::fiscal_qr(attrs)),
+        "VerifactuQR" => Some(fiscal_qr::verifactu_qr(attrs)),
         "BarChart" => Some(chart::bar_chart(attrs)),
         // Wave 1 vector substrate: %Vector is always registered (it's just a
         // placeholder; it degrades like any unresolved image without the

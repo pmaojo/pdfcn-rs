@@ -1,0 +1,20 @@
+{
+  "issuer": { "name": "Acme Consulting S.L.", "nif": "B43752210" },
+  "customer": { "name": "Ada Lovelace", "nif": "12345678Z" },
+  "invoice": {
+    "series": "2026/A-0042",
+    "date": "2026-10-14",
+    "base": "180.00",
+    "vat": "37.80",
+    "total": "217.80",
+    "columns": [
+      { "key": "description", "label": "Description" },
+      { "key": "qty", "label": "Qty" },
+      { "key": "price", "label": "Price" }
+    ],
+    "items": [
+      { "description": "Consulting", "qty": "4h", "price": "120.00" },
+      { "description": "Hosting", "qty": "1", "price": "60.00" }
+    ]
+  }
+}

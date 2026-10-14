@@ -1,0 +1,16 @@
+{
+  "issuer": { "tax_id": "12345678" },
+  "invoice": {
+    "number": "2026/INV-17",
+    "date": "2026-10-14",
+    "total": "217,8",
+    "columns": [
+      { "key": "description", "label": "Description" },
+      { "key": "price", "label": "Price" }
+    ],
+    "items": [
+      { "description": "Consulting", "price": "180.00" },
+      { "description": "Tax", "price": "37.80" }
+    ]
+  }
+}

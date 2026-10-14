@@ -1,0 +1,8 @@
+version: 2
+
+# The signing tests need real-looking keys and certificates. These are
+# throwaway ones generated for the tests (see the README in the folder): they
+# sign nothing real and are trusted by nothing.
+secret:
+  ignored-paths:
+    - "pdfcn-core/tests/fixtures/sign/**"

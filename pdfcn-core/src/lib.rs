@@ -26,7 +26,13 @@ mod factur_x;
 #[cfg(feature = "sign")]
 mod sign;
 #[cfg(feature = "sign")]
-pub use sign::{sign_pdf, SignError, SignOptions, SigningIdentity};
+pub use sign::{
+    sign_pdf, sign_pdf_timestamped, SignError, SignOptions, SigningIdentity, TimestampAuthority,
+};
+
+// Fiscal QR profiles (`%FiscalQR`): a JSON description of a country's invoice
+// QR, registered at start-up. See pdfcn-components' `fiscal_qr` module.
+pub use pdfcn_components::{fiscal_profile_ids, register_fiscal_profile};
 
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;

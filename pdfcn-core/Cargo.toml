@@ -35,7 +35,7 @@ factur-x = ["dep:lopdf"]
 sign = [
     "dep:lopdf", "dep:cms", "dep:x509-cert", "dep:der", "dep:const-oid", "dep:spki",
     "dep:pkcs8", "dep:rsa", "dep:p256", "dep:ecdsa", "dep:sha2", "dep:signature",
-    "dep:p12-keystore",
+    "dep:p12-keystore", "dep:x509-tsp", "dep:cmpv2",
 ]
 
 [dependencies]
@@ -64,6 +64,8 @@ ecdsa = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 signature = { workspace = true, optional = true }
 p12-keystore = { workspace = true, optional = true }
+x509-tsp = { workspace = true, optional = true }
+cmpv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

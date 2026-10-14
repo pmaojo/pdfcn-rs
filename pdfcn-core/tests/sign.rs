@@ -253,3 +253,181 @@ fn a_second_signature_is_added_as_a_new_revision() {
     };
     assert_eq!(fields, 2);
 }
+
+// ---------------------------------------------------------------------------
+// Timestamps (PAdES-B-T). The authority is simulated: a real TSA is a network
+// service, and pdfcn-core takes it as a function precisely so it can be.
+// ---------------------------------------------------------------------------
+
+mod timestamp {
+    use super::*;
+    use cms::builder::{SignedDataBuilder, SignerInfoBuilder};
+    use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
+    use cms::signed_data::{EncapsulatedContentInfo, SignerIdentifier};
+    use der::asn1::{GeneralizedTime, Int, OctetString};
+    use der::Any;
+    use pdfcn_core::sign_pdf_timestamped;
+    use spki::AlgorithmIdentifierOwned;
+    use x509_tsp::{TimeStampReq, TimeStampResp, TspVersion, TstInfo};
+
+    const OID_TST_INFO: der::oid::ObjectIdentifier =
+        der::oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+
+    /// What a well-behaved TSA does with a request. `tamper` lets a test make
+    /// it misbehave.
+    fn respond(request: &[u8], tamper: &dyn Fn(&mut TstInfo)) -> Result<Vec<u8>, String> {
+        let request = TimeStampReq::from_der(request).map_err(|e| e.to_string())?;
+        assert!(
+            request.cert_req,
+            "the signer should ask for the TSA certificate"
+        );
+
+        let key = p256::ecdsa::SigningKey::from_pkcs8_pem(&text("tsa.key.pem"))
+            .map_err(|e| e.to_string())?;
+        let cert = x509_cert::Certificate::load_pem_chain(text("tsa.cert.pem").as_bytes())
+            .map_err(|e| e.to_string())?
+            .remove(0);
+
+        let mut tst = TstInfo {
+            version: TspVersion::V1,
+            policy: der::oid::ObjectIdentifier::new_unwrap("1.2.3.4.1"),
+            message_imprint: request.message_imprint.clone(),
+            serial_number: Int::new(&[1]).unwrap(),
+            gen_time: GeneralizedTime::from_unix_duration(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap(),
+            )
+            .unwrap(),
+            accuracy: None,
+            ordering: false,
+            nonce: request.nonce.clone(),
+            tsa: None,
+            extensions: None,
+        };
+        tamper(&mut tst);
+
+        let content = EncapsulatedContentInfo {
+            econtent_type: OID_TST_INFO,
+            econtent: Some(
+                Any::encode_from(&OctetString::new(tst.to_der().unwrap()).unwrap()).unwrap(),
+            ),
+        };
+        let sha256 = AlgorithmIdentifierOwned {
+            oid: const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
+            parameters: None,
+        };
+        let sid = SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: cert.tbs_certificate.issuer.clone(),
+            serial_number: cert.tbs_certificate.serial_number.clone(),
+        });
+        let signer = SignerInfoBuilder::new(&key, sid, sha256.clone(), &content, None)
+            .map_err(|e| e.to_string())?;
+        let mut builder = SignedDataBuilder::new(&content);
+        builder
+            .add_digest_algorithm(sha256)
+            .map_err(|e| e.to_string())?;
+        builder
+            .add_certificate(CertificateChoices::Certificate(cert))
+            .map_err(|e| e.to_string())?;
+        builder
+            .add_signer_info::<_, p256::ecdsa::DerSignature>(signer)
+            .map_err(|e| e.to_string())?;
+        let token = builder.build().map_err(|e| e.to_string())?;
+
+        let response = TimeStampResp {
+            status: cmpv2::status::PkiStatusInfo {
+                status: cmpv2::status::PkiStatus::Accepted,
+                status_string: None,
+                fail_info: None,
+            },
+            time_stamp_token: Some(token),
+        };
+        response.to_der().map_err(|e| e.to_string())
+    }
+
+    fn identity() -> SigningIdentity {
+        SigningIdentity::from_pem(&text("rsa.cert.pem"), &text("rsa.key.pem"), None).unwrap()
+    }
+
+    use p256::pkcs8::DecodePrivateKey;
+
+    #[test]
+    fn a_timestamp_token_is_attached_as_an_unsigned_attribute() {
+        let original = document();
+        let signed =
+            sign_pdf_timestamped(&original, &identity(), &SignOptions::default(), &|req| {
+                respond(req, &|_| {})
+            })
+            .expect("sign with timestamp");
+        // The signature itself is still valid: the token sits outside what it covers.
+        assert_valid_signature(&original, &signed, &text("rsa.cert.pem"));
+
+        // And the token is there, for this very signature.
+        // `/Contents` also names the page's content stream: start at the signature.
+        let range = original.len() + find(&signed[original.len()..], b"/ByteRange").unwrap();
+        let at = range + find(&signed[range..], b"/Contents").unwrap();
+        let open = at + find(&signed[at..], b"<").unwrap();
+        let close = open + find(&signed[open..], b">").unwrap();
+        let hex = std::str::from_utf8(&signed[open + 1..close]).unwrap();
+        let raw: Vec<u8> = (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect();
+        let mut reader = der::SliceReader::new(&raw).unwrap();
+        let info = ContentInfo::decode(&mut reader).unwrap();
+        let data: SignedData = info.content.decode_as().unwrap();
+        let signer = data.signer_infos.0.iter().next().unwrap();
+        let unsigned = signer.unsigned_attrs.as_ref().expect("unsigned attributes");
+        let attribute = unsigned.iter().next().unwrap();
+        assert_eq!(attribute.oid.to_string(), "1.2.840.113549.1.9.16.2.14");
+
+        let token: ContentInfo = attribute.values.iter().next().unwrap().decode_as().unwrap();
+        let token_data: SignedData = token.content.decode_as().unwrap();
+        let octets: OctetString = token_data
+            .encap_content_info
+            .econtent
+            .unwrap()
+            .decode_as()
+            .unwrap();
+        let tst = TstInfo::from_der(octets.as_bytes()).unwrap();
+        assert_eq!(
+            tst.message_imprint.hashed_message.as_bytes(),
+            Sha256::digest(signer.signature.as_bytes()).as_slice(),
+            "the timestamp must be over the signature value"
+        );
+    }
+
+    #[test]
+    fn a_response_for_another_signature_is_rejected() {
+        let result =
+            sign_pdf_timestamped(&document(), &identity(), &SignOptions::default(), &|req| {
+                respond(req, &|tst| {
+                    let mut bytes = tst.message_imprint.hashed_message.as_bytes().to_vec();
+                    bytes[0] ^= 0xFF;
+                    tst.message_imprint.hashed_message = OctetString::new(bytes).unwrap();
+                })
+            });
+        assert!(result.unwrap_err().to_string().contains("imprint"));
+    }
+
+    #[test]
+    fn a_response_with_the_wrong_nonce_is_rejected() {
+        let result =
+            sign_pdf_timestamped(&document(), &identity(), &SignOptions::default(), &|req| {
+                respond(req, &|tst| tst.nonce = Some(Int::new(&[42]).unwrap()))
+            });
+        assert!(result.unwrap_err().to_string().contains("nonce"));
+    }
+
+    #[test]
+    fn an_unreachable_authority_is_an_error_not_an_unstamped_signature() {
+        let result =
+            sign_pdf_timestamped(&document(), &identity(), &SignOptions::default(), &|_| {
+                Err("connection refused".into())
+            });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("connection refused"));
+    }
+}

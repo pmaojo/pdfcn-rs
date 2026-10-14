@@ -238,11 +238,83 @@ update: every byte of the rendered PDF is left as it was and is covered by the
 signature. Signing the output again adds a second signature. From Rust:
 `SigningIdentity::from_pkcs12` / `from_pem`, then `sign_pdf`.
 
-Verified with poppler's `pdfsig` and pyHanko (valid, whole file covered).
-What it does **not** do: embed a trusted timestamp or revocation data
-(PAdES-B-T / B-LT, which a long-term archive needs), or sign with a key that
-lives in a smart card or HSM. A signature is only as trustworthy as the
-certificate behind it; for legal weight use a qualified certificate.
+### Trusted timestamp (PAdES-T)
+
+`--timestamp-url https://tsa.example/tsr` asks an RFC 3161 time-stamping
+authority to stamp the signature, which keeps it checkable after the
+certificate expires (the stamp proves it was made while the certificate was
+valid). Signing fails if the authority is unreachable, refuses, or answers
+for a different signature or nonce: a missing timestamp is never skipped
+silently. Many authorities are free; qualified ones (the ones with legal weight
+in the EU) are usually paid and may need credentials, which this does not send.
+From Rust: `sign_pdf_timestamped(pdf, &identity, &options, &|request| ...)`;
+pdfcn-core does no network I/O, so the transport is yours.
+
+Verified with poppler's `pdfsig` and pyHanko (signature and timestamp valid,
+whole file covered), against an OpenSSL time-stamping server.
+What it does **not** do: embed revocation data (PAdES-B-LT, for archives that
+must outlive the certificate chain), or sign with a key that lives in a smart
+card or HSM. A signature is only as trustworthy as the certificate behind it;
+for legal weight use a qualified certificate.
+
+## Invoice QR codes for any country: `%FiscalQR`
+
+Tax authorities each ask for a different QR on invoices. Instead of hard-coding
+them, `%FiscalQR` is driven by a **profile**: a JSON file that declares the
+fields, how to validate them, and the text the QR encodes. A developer follows
+their country's specification by writing one file and passing
+`--fiscal-profile` (or `register_fiscal_profile` from Rust); no pdfcn change.
+See [docs/fiscal-profiles.md](docs/fiscal-profiles.md) and
+`examples/fiscal-profiles/xx-demo.json`. Spain's VERI*FACTU is the one profile
+that ships built in, as data.
+
+## Spanish invoices: VERI*FACTU QR
+
+`%VerifactuQR` is `%FiscalQR(profile="es-verifactu" ...)` under its own name. It
+prints the QR the tax agency requires on invoices under Real Decreto 1007/2023. It encodes the AEAT verification URL built from the invoice's
+issuer NIF, series and number, date and total, so it cannot disagree with what
+the page says:
+
+```haml
+%VerifactuQR(nif="{{ issuer.nif }}" numserie="{{ invoice.series }}" fecha="{{ invoice.date }}" importe="{{ invoice.total }}")
+```
+
+`fecha` takes `dd-mm-yyyy` or `yyyy-mm-dd`; `importe` is a plain number (no
+currency symbol or thousands separator). Bad values render a visible error
+chip, never a QR that would send the customer to a "no such invoice" page.
+`env="test"` points at the AEAT pre-production service,
+`mode="no-verifactu"` at the non-VERI*FACTU endpoint (and drops the label).
+The symbol is 150 px (about 40 mm) with error correction M and the
+`VERI*FACTU` label above it; `size` overrides it. See `examples/verifactu`.
+
+**`importe` is the invoice's "Importe total" (taxable base plus VAT and any
+equivalence surcharge), not the amount to pay.** Withholdings (IRPF), suplidos
+and similar adjustments change what the customer pays but are not part of the
+invoice record, and the AEAT's cotejo service compares the QR against that
+record. The AEAT's developer FAQ (section 20) suggests printing both figures
+labelled, e.g. "Total factura" and "Total a pagar"; pass the first one here.
+
+### What this is and is not, legally
+
+The AEAT's developer FAQ (4 December 2025, section 5) treats any component that
+takes part in *printing invoices* or *generating the QR* as a billing component
+("componente de facturación") of the invoicing system (SIF). Used for
+VERI*FACTU invoices, pdfcn is such a component, which means:
+
+- the main billing system that calls it must be certified with a *declaración
+  responsable* that names pdfcn and the exact version it invokes, and
+- it must call pdfcn on every invoice, as part of issuing it, so that no invoice
+  is printed without its record and no record exists without its invoice.
+
+pdfcn does **not** create the invoice record, chain its hash, keep the records or
+send them to the AEAT, and it is not meant to: those need persistent state, an
+event log and a qualified certificate, which belong to the billing system. This
+README is not legal advice; check the requirements for your case with your
+adviser or the AEAT.
+
+The URL format follows the specification as described by several independent
+implementations and the AEAT's developer FAQ; the AEAT's own QR specification
+document has not been checked against it, so compare before relying on it.
 
 ## Examples
 
@@ -255,6 +327,7 @@ The live demo (`index.html`) loads the same ones in its editor.
 | `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
 | `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
 | `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `verifactu` | Spanish invoice with the AEAT VERI*FACTU QR |
 | `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
 
 ## Known limitations

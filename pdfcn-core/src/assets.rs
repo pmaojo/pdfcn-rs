@@ -143,15 +143,30 @@ fn hex_decode(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Splits what follows `pdfcn-qrcode:` into the error-correction level and
+/// the hex payload. A bare payload is level M (what `%QRCode` always meant);
+/// `L.`, `Q.` or `H.` in front selects another level, for the tax authorities
+/// whose QR specification asks for one. Uppercase can never be mistaken for the
+/// lowercase hex digits that follow.
+fn split_qrcode_src(rest: &str) -> (qrcodegen::QrCodeEcc, &str) {
+    use qrcodegen::QrCodeEcc;
+    match rest.split_once('.') {
+        Some(("L", hex)) => (QrCodeEcc::Low, hex),
+        Some(("Q", hex)) => (QrCodeEcc::Quartile, hex),
+        Some(("H", hex)) => (QrCodeEcc::High, hex),
+        _ => (QrCodeEcc::Medium, rest),
+    }
+}
+
 /// Generates PNG bytes for one QR payload: a black-on-white symbol with a
 /// quiet zone, at [`QR_MODULE_SCALE`] px per module.
-fn qrcode_png(payload: &[u8]) -> Option<Vec<u8>> {
-    use qrcodegen::{QrCode, QrCodeEcc};
+fn qrcode_png(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<Vec<u8>> {
+    use qrcodegen::QrCode;
 
     if payload.is_empty() || payload.len() > MAX_QRCODE_PAYLOAD_BYTES {
         return None;
     }
-    let qr = QrCode::encode_binary(payload, QrCodeEcc::Medium).ok()?;
+    let qr = QrCode::encode_binary(payload, ecc).ok()?;
     let size = qr.size();
     let dim = (size + 2 * QR_QUIET_ZONE) as u32 * QR_MODULE_SCALE as u32;
     let mut img = image::RgbImage::from_pixel(dim, dim, image::Rgb([255, 255, 255]));
@@ -190,10 +205,11 @@ fn generate_qrcodes(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
         if images.contains_key(&src) {
             continue;
         }
-        let Some(payload) = hex_decode(&src[QRCODE_SCHEME.len()..]) else {
+        let (ecc, hex) = split_qrcode_src(&src[QRCODE_SCHEME.len()..]);
+        let Some(payload) = hex_decode(hex) else {
             continue;
         };
-        if let Some(png) = qrcode_png(&payload) {
+        if let Some(png) = qrcode_png(&payload, ecc) {
             images.insert(src, png);
         }
     }
@@ -627,8 +643,23 @@ mod tests {
     #[test]
     fn qrcode_payloads_over_the_cap_are_skipped() {
         let payload = vec![b'x'; MAX_QRCODE_PAYLOAD_BYTES + 1];
-        assert!(qrcode_png(&payload).is_none());
-        assert!(qrcode_png(b"ok").is_some());
+        assert!(qrcode_png(&payload, qrcodegen::QrCodeEcc::Medium).is_none());
+        assert!(qrcode_png(b"ok", qrcodegen::QrCodeEcc::Medium).is_some());
+    }
+
+    #[test]
+    fn the_error_correction_level_is_chosen_by_a_prefix() {
+        use qrcodegen::QrCodeEcc::{High, Low, Medium, Quartile};
+        let level = |rest: &str| split_qrcode_src(rest).0 as usize;
+        assert_eq!(level("6162"), Medium as usize, "bare payload is level M");
+        assert_eq!(level("L.6162"), Low as usize);
+        assert_eq!(level("Q.6162"), Quartile as usize);
+        assert_eq!(level("H.6162"), High as usize);
+        assert_eq!(split_qrcode_src("H.6162").1, "6162");
+        // Higher levels need a bigger symbol for the same payload.
+        let low = qrcode_png(b"https://example.com/a/fairly/long/path?x=1", Low).unwrap();
+        let high = qrcode_png(b"https://example.com/a/fairly/long/path?x=1", High).unwrap();
+        assert_ne!(low, high);
     }
 
     #[test]

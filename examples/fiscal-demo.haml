@@ -1,0 +1,10 @@
+%DocumentLayout(size="a4")
+  %Header(title="Invoice {{ invoice.number }}" subtitle="{{ invoice.date }}")
+
+  %InvoiceTable(rows={{ invoice.items }} columns={{ invoice.columns }})
+
+  .text-right.mt-4
+    %p.text-lg.font-semibold Total: {{ invoice.total }}
+
+  .mt-8
+    %FiscalQR(profile="xx-demo" tax_id="{{ issuer.tax_id }}" doc_type="INV" number="{{ invoice.number }}" date="{{ invoice.date }}" total="{{ invoice.total }}" env="test")

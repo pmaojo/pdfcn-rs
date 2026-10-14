@@ -58,6 +58,13 @@ pub struct BuildArgs {
     /// Moot while the above render nothing.
     #[arg(long, default_value_t = false)]
     skip_first_page: bool,
+    /// JSON file describing an invoice QR for `%FiscalQR(profile="<id>" ...)`:
+    /// its fields and how to validate them, and the text the QR encodes. Lets a
+    /// project follow any country's specification without changing pdfcn;
+    /// repeat the flag for several. A profile with the id of a built-in one
+    /// (e.g. `es-verifactu`) replaces it.
+    #[arg(long = "fiscal-profile", value_name = "PATH")]
+    fiscal_profiles: Vec<PathBuf>,
     /// JPEG-family compression quality, 0.0-1.0 (printpdf's own default:
     /// 0.85). Compression is already on; this only tunes it.
     #[arg(long)]
@@ -146,6 +153,37 @@ pub struct BuildArgs {
     #[cfg(feature = "sign")]
     #[arg(long)]
     sign_name: Option<String>,
+    /// RFC 3161 time-stamping authority to ask for a trusted timestamp over
+    /// the signature (PAdES baseline-T), e.g. `https://freetsa.org/tsr`. It
+    /// keeps the signature checkable after the certificate expires. Signing
+    /// fails if the authority cannot be reached: a missing timestamp is never
+    /// silently skipped.
+    #[cfg(feature = "sign")]
+    #[arg(long, value_name = "URL")]
+    timestamp_url: Option<String>,
+}
+
+/// POSTs an RFC 3161 request to `url` and returns the raw response.
+#[cfg(feature = "sign")]
+fn ask_timestamp_authority(url: &str, request: &[u8]) -> Result<Vec<u8>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(url)
+        .header("Content-Type", "application/timestamp-query")
+        .header("Accept", "application/timestamp-reply")
+        .body(request.to_vec())
+        .send()
+        .map_err(|e| format!("{url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("{url} answered HTTP {}", response.status()));
+    }
+    response
+        .bytes()
+        .map(|b| b.to_vec())
+        .map_err(|e| e.to_string())
 }
 
 /// Loads the signing identity the `--sign-*` flags describe, or `None` when
@@ -176,6 +214,11 @@ fn signing_identity(args: &BuildArgs) -> anyhow::Result<Option<pdfcn_core::Signi
         let identity = pdfcn_core::SigningIdentity::from_pem(&cert, &key, password.as_deref())
             .map_err(|e| anyhow::anyhow!("--sign-key: {e}; {}", hint()))?;
         return Ok(Some(identity));
+    }
+    if args.timestamp_url.is_some() {
+        anyhow::bail!(
+            "--timestamp-url needs a signature to stamp: add --sign-p12 or --sign-cert/--sign-key"
+        );
     }
     Ok(None)
 }
@@ -264,6 +307,12 @@ fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {
+    for path in &args.fiscal_profiles {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("--fiscal-profile: cannot read {path:?}: {e}"))?;
+        pdfcn_core::register_fiscal_profile(&json)
+            .map_err(|e| anyhow::anyhow!("--fiscal-profile {path:?}: {e}"))?;
+    }
     // Fail on a bad certificate or password before spending time rendering.
     #[cfg(feature = "sign")]
     let signer = signing_identity(&args)?;
@@ -357,18 +406,30 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
     #[cfg(feature = "sign")]
     let bytes = match signer {
         Some(identity) => {
-            let signed = pdfcn_core::sign_pdf(
-                &bytes,
-                &identity,
-                &pdfcn_core::SignOptions {
-                    reason: args.sign_reason.clone(),
-                    location: args.sign_location.clone(),
-                    contact_info: args.sign_contact.clone(),
-                    name: args.sign_name.clone(),
-                },
-            )
+            let options = pdfcn_core::SignOptions {
+                reason: args.sign_reason.clone(),
+                location: args.sign_location.clone(),
+                contact_info: args.sign_contact.clone(),
+                name: args.sign_name.clone(),
+            };
+            let signed = match &args.timestamp_url {
+                Some(url) => {
+                    pdfcn_core::sign_pdf_timestamped(&bytes, &identity, &options, &|req| {
+                        ask_timestamp_authority(url, req)
+                    })
+                }
+                None => pdfcn_core::sign_pdf(&bytes, &identity, &options),
+            }
             .map_err(|e| anyhow::anyhow!("signing failed: {e}"))?;
-            println!("Signed as {}", identity.subject());
+            println!(
+                "Signed as {}{}",
+                identity.subject(),
+                if args.timestamp_url.is_some() {
+                    " (timestamped)"
+                } else {
+                    ""
+                }
+            );
             signed
         }
         None => bytes,
