@@ -34,7 +34,8 @@ result looks right, only that the engine reacted to the property.
 | `justify-around`, `justify-evenly`, `flex-row-reverse`, `items-*` | yes | yes |
 | `self-*`, `grow`, `flex-none` | yes | yes |
 | `first:`, `last:`, `odd:`, `even:` (structural pseudo-classes) | yes | yes |
-| `underline`, `line-through` (`text-decoration`) | yes | **no** |
+| `underline`, `line-through` on an **inline** element (`<span>`, `<u>`, `<a>`) | yes | yes |
+| `underline`, `line-through` on a **block** (`<p class="underline">`) | yes | **no** -- engine draws it only for inline elements; fixed by `pdfcn_styles::rewrite_text_decorations` |
 | `border-collapse` utility | yes | **no** (the document-level `table{border-collapse}` rule is what takes effect) |
 | `align-middle` etc. (`vertical-align`) | yes | **no** |
 
@@ -43,10 +44,19 @@ and one fixed page size.
 
 ## Consequences
 
-- `underline`, `line-through`, `border-collapse` and `align-*` still resolve
-  to their standard CSS, so templates stay portable, but have no visible
-  effect today (see README → Known limitations). If a visible underline is
-  needed, use `border-b` on a block/inline-block element.
+- `underline`/`line-through`: the first probe wrongly reported "no effect"
+  because it put the class on a `<p>`. Re-probed with `<u>`, `<a>` and
+  `<span>`: the engine does draw them (it emits `Underline`/`Strikethrough`
+  display-list items); it just doesn't propagate the decoration from a
+  block. A HTML rewrite pass (like `gap.rs`) now wraps the text in a
+  decorated `<span>`.
+- `box-shadow`: layout emits `DisplayListItem::BoxShadow`, but printpdf's
+  `html/bridge.rs` drops it (not in its match arms). Fixing that means
+  patching printpdf's bridge, not azul-layout.
+- `border-collapse` is already forced by the document stylesheet
+  (`table{border-collapse:collapse}`), so the utility only matters to
+  switch it off.
+- `align-*` (`vertical-align`) has no effect even on inline elements.
 - `print:` is unconditional (output is always print); `screen:` never applies.
 - Not yet probed and therefore not implemented: `divide-*` (needs a child
   combinator selector), `ring-*`/`outline-*`, `grid-rows-*`/`row-span-*`,
