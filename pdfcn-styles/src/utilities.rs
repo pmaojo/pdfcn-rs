@@ -52,6 +52,11 @@ const FONT_SIZE: &[(&str, &str)] = &[
     ("2xl", "1.5rem"),
     ("3xl", "1.875rem"),
     ("4xl", "2.25rem"),
+    ("5xl", "3rem"),
+    ("6xl", "3.75rem"),
+    ("7xl", "4.5rem"),
+    ("8xl", "6rem"),
+    ("9xl", "8rem"),
 ];
 
 /// Tailwind's own max-width container scale (not the spacing scale --
@@ -184,6 +189,108 @@ fn resolve_color(key: &str, theme: &Theme) -> Option<String> {
         .or_else(|| arbitrary_value(key).filter(|v| v.starts_with('#')))
 }
 
+/// Margin utilities, including `auto` (`mx-auto` centering) and the leading
+/// `-` negative form (`-mt-2`, `-mx-4`).
+fn margin_utility(class: &str) -> Option<String> {
+    let (negative, body) = match class.strip_prefix('-') {
+        Some(rest) if rest.starts_with('m') => (true, rest),
+        _ => (false, class),
+    };
+    let (props, rest): (&[&str], &str) = if let Some(r) = body.strip_prefix("mx-") {
+        (&["margin-left", "margin-right"], r)
+    } else if let Some(r) = body.strip_prefix("my-") {
+        (&["margin-top", "margin-bottom"], r)
+    } else if let Some(r) = body.strip_prefix("mt-") {
+        (&["margin-top"], r)
+    } else if let Some(r) = body.strip_prefix("mr-") {
+        (&["margin-right"], r)
+    } else if let Some(r) = body.strip_prefix("mb-") {
+        (&["margin-bottom"], r)
+    } else if let Some(r) = body.strip_prefix("ml-") {
+        (&["margin-left"], r)
+    } else {
+        (&["margin"], body.strip_prefix("m-")?)
+    };
+    let value = if rest == "auto" {
+        if negative {
+            return None;
+        }
+        "auto".to_string()
+    } else {
+        let v = scale_or_arbitrary(rest)?;
+        if negative && v != "0" && !v.starts_with('-') {
+            format!("-{v}")
+        } else {
+            v
+        }
+    };
+    Some(
+        props
+            .iter()
+            .map(|p| format!("{p}:{value}"))
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
+}
+
+/// A Tailwind fraction (`1/2`, `2/3`, `5/12`) as a CSS percentage.
+fn fraction_percent(key: &str) -> Option<String> {
+    let (a, b) = key.split_once('/')?;
+    let (a, b): (u32, u32) = (a.parse().ok()?, b.parse().ok()?);
+    if !(2..=12).contains(&b) || a == 0 || a >= b {
+        return None;
+    }
+    let pct = f64::from(a) / f64::from(b) * 100.0;
+    let text = format!("{pct:.6}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    Some(format!("{text}%"))
+}
+
+/// Shared sizing suffixes for `w-`/`h-`/`min-w-`/...: keywords and
+/// fractions on top of the spacing scale. `axis_viewport` is the viewport
+/// unit for `screen` (`vw`/`vh`).
+fn size_value(key: &str, axis_viewport: &str) -> Option<String> {
+    match key {
+        "full" => Some("100%".into()),
+        "screen" => Some(format!("100{axis_viewport}")),
+        "auto" => Some("auto".into()),
+        "fit" => Some("fit-content".into()),
+        "min" => Some("min-content".into()),
+        "max" => Some("max-content".into()),
+        _ => fraction_percent(key).or_else(|| scale_or_arbitrary(key)),
+    }
+}
+
+/// Resolves a color suffix with an optional `/NN` opacity (`black/50`).
+/// Hex and `hsl(...)` colors gain an alpha channel; anything else (named
+/// `transparent`) is returned unchanged.
+fn resolve_color_alpha(key: &str, theme: &Theme) -> Option<String> {
+    let Some((name, alpha)) = key.rsplit_once('/') else {
+        return resolve_color(key, theme);
+    };
+    let alpha: u8 = alpha.parse().ok().filter(|a| *a <= 100)?;
+    let base = resolve_color(name, theme)?;
+    let a = f64::from(alpha) / 100.0;
+    if let Some(hex) = base.strip_prefix('#') {
+        let full: String = match hex.len() {
+            3 => hex.chars().flat_map(|c| [c, c]).collect(),
+            6 => hex.to_string(),
+            _ => return None,
+        };
+        let channel = |i: usize| u8::from_str_radix(&full[i..i + 2], 16).ok();
+        return Some(format!(
+            "rgba({},{},{},{a})",
+            channel(0)?,
+            channel(2)?,
+            channel(4)?
+        ));
+    }
+    if let Some(inner) = base.strip_prefix("hsl(").and_then(|r| r.strip_suffix(')')) {
+        return Some(format!("hsla({inner}, {a})"));
+    }
+    Some(base)
+}
+
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
     let value = scale_or_arbitrary(scale)?;
     Some(
@@ -266,26 +373,8 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
     if let Some(rest) = class.strip_prefix("pl-") {
         return spacing_decls(&["padding-left"], rest);
     }
-    if let Some(rest) = class.strip_prefix("m-") {
-        return spacing_decls(&["margin"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("mx-") {
-        return spacing_decls(&["margin-left", "margin-right"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("my-") {
-        return spacing_decls(&["margin-top", "margin-bottom"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("mt-") {
-        return spacing_decls(&["margin-top"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("mr-") {
-        return spacing_decls(&["margin-right"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("mb-") {
-        return spacing_decls(&["margin-bottom"], rest);
-    }
-    if let Some(rest) = class.strip_prefix("ml-") {
-        return spacing_decls(&["margin-left"], rest);
+    if let Some(decls) = margin_utility(class) {
+        return Some(decls);
     }
     // Axis-specific gaps must be checked before the bare `gap-` prefix,
     // which would otherwise swallow them (`gap-x-4` -> scale "x-4") and
@@ -300,21 +389,19 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         return spacing_decls(&["gap"], rest);
     }
     if let Some(rest) = class.strip_prefix("min-h-") {
-        return spacing_decls(&["min-height"], rest);
+        return size_value(rest, "vh").map(|v| format!("min-height:{v}"));
+    }
+    if let Some(rest) = class.strip_prefix("min-w-") {
+        return size_value(rest, "vw").map(|v| format!("min-width:{v}"));
+    }
+    if let Some(rest) = class.strip_prefix("size-") {
+        return size_value(rest, "vw").map(|v| format!("width:{v};height:{v}"));
     }
     if let Some(rest) = class.strip_prefix("h-") {
-        return match rest {
-            "full" => Some("height:100%".to_string()),
-            "screen" => Some("height:100vh".to_string()),
-            _ => spacing_decls(&["height"], rest),
-        };
+        return size_value(rest, "vh").map(|v| format!("height:{v}"));
     }
     if let Some(rest) = class.strip_prefix("w-") {
-        return match rest {
-            "full" => Some("width:100%".to_string()),
-            "screen" => Some("width:100vw".to_string()),
-            _ => spacing_decls(&["width"], rest),
-        };
+        return size_value(rest, "vw").map(|v| format!("width:{v}"));
     }
     // --- Ola 1.4 fidelity additions: purely static, high-use utilities.
     // Named leading steps first, then the numeric scale (`leading-6` is
@@ -395,6 +482,74 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             _ => return None,
         };
         return Some(format!("aspect-ratio:{ratio}"));
+    }
+    match class {
+        "border-collapse" => return Some("border-collapse:collapse".into()),
+        "border-separate" => return Some("border-collapse:separate".into()),
+        "text-left" => return Some("text-align:left".into()),
+        "text-center" => return Some("text-align:center".into()),
+        "text-right" => return Some("text-align:right".into()),
+        "text-justify" => return Some("text-align:justify".into()),
+        "text-ellipsis" => return Some("text-overflow:ellipsis".into()),
+        "border-solid" => return Some("border-style:solid".into()),
+        "border-dashed" => return Some("border-style:dashed".into()),
+        "border-dotted" => return Some("border-style:dotted".into()),
+        "border-double" => return Some("border-style:double".into()),
+        "border-none" => return Some("border-style:none".into()),
+        "border-x" => {
+            return Some("border-left-width:1px;border-right-width:1px;border-style:solid".into())
+        }
+        "border-y" => {
+            return Some("border-top-width:1px;border-bottom-width:1px;border-style:solid".into())
+        }
+        _ => {}
+    }
+    for (prefix, props) in [
+        (
+            "rounded-t",
+            &["border-top-left-radius", "border-top-right-radius"][..],
+        ),
+        (
+            "rounded-b",
+            &["border-bottom-left-radius", "border-bottom-right-radius"][..],
+        ),
+        (
+            "rounded-l",
+            &["border-top-left-radius", "border-bottom-left-radius"][..],
+        ),
+        (
+            "rounded-r",
+            &["border-top-right-radius", "border-bottom-right-radius"][..],
+        ),
+        ("rounded-tl", &["border-top-left-radius"][..]),
+        ("rounded-tr", &["border-top-right-radius"][..]),
+        ("rounded-bl", &["border-bottom-left-radius"][..]),
+        ("rounded-br", &["border-bottom-right-radius"][..]),
+    ] {
+        // Bare `rounded-t` is Tailwind's `0.25rem`, same as bare `rounded`.
+        let value = if class == prefix {
+            Some("4px".to_string())
+        } else {
+            class
+                .strip_prefix(prefix)
+                .and_then(|r| r.strip_prefix('-'))
+                .and_then(|size| {
+                    tokens::radius(size)
+                        .map(str::to_string)
+                        .or_else(|| arbitrary_value(size))
+                        .map(|v| rem_to_px(&v))
+                })
+        };
+        if class == prefix || class.starts_with(&format!("{prefix}-")) {
+            let value = value?;
+            return Some(
+                props
+                    .iter()
+                    .map(|p| format!("{p}:{value}"))
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            );
+        }
     }
     // Directional border widths and colors (`border-t`, `border-b-2`,
     // `border-l-border`). Must sit before the generic `border-` branch,
@@ -482,13 +637,13 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
                 Some(format!("font-size:{value}"))
             };
         }
-        if let Some(color) = resolve_color(rest, theme) {
+        if let Some(color) = resolve_color_alpha(rest, theme) {
             return Some(format!("color:{color}"));
         }
         return None;
     }
     if let Some(rest) = class.strip_prefix("bg-") {
-        let color = resolve_color(rest, theme)?;
+        let color = resolve_color_alpha(rest, theme)?;
         return Some(format!("background-color:{color}"));
     }
     if let Some(rest) = class.strip_prefix("border-") {
@@ -503,7 +658,7 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         } {
             return Some(format!("{prop}-width:1px;border-style:solid"));
         }
-        if let Some(color) = resolve_color(rest, theme) {
+        if let Some(color) = resolve_color_alpha(rest, theme) {
             return Some(format!("border-color:{color}"));
         }
         // `border-[2px]`: an arbitrary length is a border width.
@@ -532,12 +687,17 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
     if let Some(rest) = class.strip_prefix("font-") {
         let weight = match rest {
             "thin" => "100",
+            "extralight" => "200",
             "light" => "300",
             "normal" => "400",
             "medium" => "500",
             "semibold" => "600",
             "bold" => "700",
             "extrabold" => "800",
+            "black" => "900",
+            "sans" => return Some("font-family:sans-serif".to_string()),
+            "serif" => return Some("font-family:serif".to_string()),
+            "mono" => return Some("font-family:monospace".to_string()),
             _ => return None,
         };
         return Some(format!("font-weight:{weight}"));
@@ -567,11 +727,58 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         "overflow-hidden" => Some("overflow:hidden"),
         "overflow-auto" => Some("overflow:auto"),
         "caption-bottom" => Some("caption-side:bottom"),
-        "text-left" => Some("text-align:left"),
-        "text-center" => Some("text-align:center"),
-        "text-right" => Some("text-align:right"),
         "italic" => Some("font-style:italic"),
         "uppercase" => Some("text-transform:uppercase"),
+        "lowercase" => Some("text-transform:lowercase"),
+        "capitalize" => Some("text-transform:capitalize"),
+        "normal-case" => Some("text-transform:none"),
+        "not-italic" => Some("font-style:normal"),
+        "underline" => Some("text-decoration:underline"),
+        "line-through" => Some("text-decoration:line-through"),
+        "no-underline" => Some("text-decoration:none"),
+        "truncate" => Some("overflow:hidden;text-overflow:ellipsis;white-space:nowrap"),
+        "whitespace-normal" => Some("white-space:normal"),
+        "whitespace-nowrap" => Some("white-space:nowrap"),
+        "whitespace-pre" => Some("white-space:pre"),
+        "whitespace-pre-line" => Some("white-space:pre-line"),
+        "whitespace-pre-wrap" => Some("white-space:pre-wrap"),
+        "break-words" => Some("overflow-wrap:break-word"),
+        "break-all" => Some("word-break:break-all"),
+        "align-top" => Some("vertical-align:top"),
+        "align-middle" => Some("vertical-align:middle"),
+        "align-bottom" => Some("vertical-align:bottom"),
+        "align-baseline" => Some("vertical-align:baseline"),
+        "inline" => Some("display:inline"),
+        "table" => Some("display:table"),
+        "table-row" => Some("display:table-row"),
+        "table-cell" => Some("display:table-cell"),
+        "invisible" => Some("visibility:hidden"),
+        "visible" => Some("visibility:visible"),
+        "overflow-visible" => Some("overflow:visible"),
+        "overflow-x-hidden" => Some("overflow-x:hidden"),
+        "overflow-y-hidden" => Some("overflow-y:hidden"),
+        "overflow-x-auto" => Some("overflow-x:auto"),
+        "overflow-y-auto" => Some("overflow-y:auto"),
+        "flex-row-reverse" => Some("flex-direction:row-reverse"),
+        "flex-col-reverse" => Some("flex-direction:column-reverse"),
+        "flex-nowrap" => Some("flex-wrap:nowrap"),
+        "flex-wrap-reverse" => Some("flex-wrap:wrap-reverse"),
+        "flex-auto" => Some("flex:1 1 auto"),
+        "flex-initial" => Some("flex:0 1 auto"),
+        "flex-none" => Some("flex:none"),
+        "grow" => Some("flex-grow:1"),
+        "grow-0" => Some("flex-grow:0"),
+        "shrink" => Some("flex-shrink:1"),
+        "shrink-0" => Some("flex-shrink:0"),
+        "justify-around" => Some("justify-content:space-around"),
+        "justify-evenly" => Some("justify-content:space-evenly"),
+        "items-stretch" => Some("align-items:stretch"),
+        "items-baseline" => Some("align-items:baseline"),
+        "self-auto" => Some("align-self:auto"),
+        "self-start" => Some("align-self:flex-start"),
+        "self-center" => Some("align-self:center"),
+        "self-end" => Some("align-self:flex-end"),
+        "self-stretch" => Some("align-self:stretch"),
         "border" => Some("border-width:1px;border-style:solid"),
         // px, not the equivalent 0.25rem: see the comment on `tokens::RADIUS`.
         "rounded" => Some("border-radius:4px"),
@@ -579,7 +786,6 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         "break-inside-avoid" => Some("break-inside:avoid;page-break-inside:avoid"),
         "break-before-page" => Some("break-before:page"),
         "break-after-page" => Some("break-after:page"),
-        "shrink-0" => Some("flex-shrink:0"),
         "flex-1" => Some("flex:1 1 0%"),
         "table-bordered" => Some("border-width:2px;border-style:solid"),
         "table-compact" => Some("font-size:0.75rem"),
@@ -901,5 +1107,143 @@ mod tests {
             resolve("bg-primary").as_deref(),
             Some("background-color:hsl(222.2, 47.4%, 11.2%)")
         );
+    }
+
+    /// Regression: the generic `text-` branch (size / color) returns `None`
+    /// for an unknown suffix, so the `text-align` literals further down the
+    /// function were unreachable and `text-left`/`text-center`/`text-right`
+    /// silently produced no CSS.
+    #[test]
+    fn resolves_text_alignment() {
+        assert_eq!(resolve("text-left").as_deref(), Some("text-align:left"));
+        assert_eq!(resolve("text-center").as_deref(), Some("text-align:center"));
+        assert_eq!(resolve("text-right").as_deref(), Some("text-align:right"));
+    }
+
+    #[test]
+    fn resolves_auto_and_negative_margins() {
+        assert_eq!(
+            resolve("mx-auto").as_deref(),
+            Some("margin-left:auto;margin-right:auto")
+        );
+        assert_eq!(resolve("-mt-2").as_deref(), Some("margin-top:-0.5rem"));
+        assert_eq!(resolve("-m-4").as_deref(), Some("margin:-1rem"));
+        assert_eq!(resolve("-mt-0").as_deref(), Some("margin-top:0"));
+        assert_eq!(resolve("-mx-auto"), None);
+        assert_eq!(resolve("mt-4").as_deref(), Some("margin-top:1rem"));
+    }
+
+    #[test]
+    fn resolves_fractional_and_keyword_sizes() {
+        assert_eq!(resolve("w-1/2").as_deref(), Some("width:50%"));
+        assert_eq!(resolve("w-1/3").as_deref(), Some("width:33.333333%"));
+        assert_eq!(resolve("w-5/12").as_deref(), Some("width:41.666667%"));
+        assert_eq!(resolve("w-auto").as_deref(), Some("width:auto"));
+        assert_eq!(resolve("h-fit").as_deref(), Some("height:fit-content"));
+        assert_eq!(resolve("min-w-0").as_deref(), Some("min-width:0"));
+        assert_eq!(resolve("min-w-full").as_deref(), Some("min-width:100%"));
+        assert_eq!(resolve("size-8").as_deref(), Some("width:2rem;height:2rem"));
+        assert_eq!(resolve("w-3/2"), None);
+        assert_eq!(resolve("w-screen").as_deref(), Some("width:100vw"));
+        assert_eq!(resolve("h-screen").as_deref(), Some("height:100vh"));
+    }
+
+    #[test]
+    fn resolves_color_alpha() {
+        assert_eq!(
+            resolve("bg-black/50").as_deref(),
+            Some("background-color:rgba(0,0,0,0.5)")
+        );
+        assert_eq!(
+            resolve("text-white/80").as_deref(),
+            Some("color:rgba(255,255,255,0.8)")
+        );
+        assert_eq!(
+            resolve("bg-primary/10").as_deref(),
+            Some("background-color:hsla(222.2, 47.4%, 11.2%, 0.1)")
+        );
+        assert_eq!(resolve("bg-black/101"), None);
+        assert_eq!(resolve("bg-nonsense/50"), None);
+    }
+
+    #[test]
+    fn resolves_text_decoration_transform_and_wrapping() {
+        assert_eq!(
+            resolve("underline").as_deref(),
+            Some("text-decoration:underline")
+        );
+        assert_eq!(
+            resolve("line-through").as_deref(),
+            Some("text-decoration:line-through")
+        );
+        assert_eq!(
+            resolve("capitalize").as_deref(),
+            Some("text-transform:capitalize")
+        );
+        assert_eq!(
+            resolve("truncate").as_deref(),
+            Some("overflow:hidden;text-overflow:ellipsis;white-space:nowrap")
+        );
+        assert_eq!(
+            resolve("whitespace-pre-wrap").as_deref(),
+            Some("white-space:pre-wrap")
+        );
+        assert_eq!(
+            resolve("text-justify").as_deref(),
+            Some("text-align:justify")
+        );
+        assert_eq!(resolve("text-6xl").as_deref(), Some("font-size:3.75rem"));
+        assert_eq!(resolve("font-black").as_deref(), Some("font-weight:900"));
+        assert_eq!(
+            resolve("font-mono").as_deref(),
+            Some("font-family:monospace")
+        );
+    }
+
+    #[test]
+    fn resolves_flex_alignment_literals() {
+        assert_eq!(
+            resolve("justify-around").as_deref(),
+            Some("justify-content:space-around")
+        );
+        assert_eq!(resolve("self-center").as_deref(), Some("align-self:center"));
+        assert_eq!(resolve("grow").as_deref(), Some("flex-grow:1"));
+        assert_eq!(resolve("flex-none").as_deref(), Some("flex:none"));
+        assert_eq!(resolve("shrink-0").as_deref(), Some("flex-shrink:0"));
+        assert_eq!(
+            resolve("flex-row-reverse").as_deref(),
+            Some("flex-direction:row-reverse")
+        );
+    }
+
+    #[test]
+    fn resolves_border_styles_axes_and_corner_radii() {
+        assert_eq!(
+            resolve("border-dashed").as_deref(),
+            Some("border-style:dashed")
+        );
+        assert_eq!(
+            resolve("border-collapse").as_deref(),
+            Some("border-collapse:collapse")
+        );
+        assert_eq!(
+            resolve("border-y").as_deref(),
+            Some("border-top-width:1px;border-bottom-width:1px;border-style:solid")
+        );
+        assert_eq!(
+            resolve("rounded-t-lg").as_deref(),
+            Some("border-top-left-radius:8px;border-top-right-radius:8px")
+        );
+        assert_eq!(
+            resolve("rounded-bl").as_deref(),
+            Some("border-bottom-left-radius:4px")
+        );
+        assert_eq!(
+            resolve("rounded-tr-xl").as_deref(),
+            Some("border-top-right-radius:12px")
+        );
+        // The all-corners utility and the unrelated colors still resolve.
+        assert_eq!(resolve("rounded-lg").as_deref(), Some("border-radius:8px"));
+        assert_eq!(resolve("rounded-t-nonsense"), None);
     }
 }
