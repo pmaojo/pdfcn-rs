@@ -71,7 +71,7 @@ fn placeholder(kind: &str, spec: JsonValue, attrs: &[ResolvedAttr], default_h: &
         );
     }
     html! {
-        img class="pdfcn-chart inline-block max-w-full" src=(format!("pdfcn-chart:{}", hex_encode(spec.to_string().as_bytes()))) style={ "width:" (w) ";height:" (h) ";" } alt=(attr_or(attrs, "alt", kind));
+        img class="pdfcn-chart inline-block" src=(format!("pdfcn-chart:{}", hex_encode(spec.to_string().as_bytes()))) style={ "width:" (w) ";height:" (h) ";flex-shrink:0;" } alt=(attr_or(attrs, "alt", kind));
     }
 }
 

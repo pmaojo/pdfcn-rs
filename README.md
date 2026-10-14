@@ -127,6 +127,9 @@ Both are demonstrated in `examples/catalog.haml`.
 
 ## Charts, barcodes and raw SVG (`vector` Cargo feature, on by default)
 
+`%Barcode(scheme="…")` supports `code128`, `ean13`, `ean8`, `upca`, `code39` and
+`itf` (EAN/UPC check digits are validated or computed); `%QRCode` covers QR.
+
 `%LineChart`, `%StackedBarChart`, `%PieChart`, `%Sparkline`, `%Barcode` and a
 generic `%Vector` escape hatch all render through one shared substrate: the
 component expands to an `<img src="pdfcn-chart:...">` / `pdfcn-barcode:...` /

@@ -1,7 +1,8 @@
 //! Barcode generators for `%Barcode` (Ola 1.3), behind pdfcn-core's opt-in
 //! `vector` cargo feature. Two fully native symbologies -- Code 128 (with
-//! automatic Code B/C switching: the general-purpose retail/logistics code)
-//! and EAN-13 (retail product codes, checksum enforced) -- emitted as SVG
+//! automatic Code B/C switching: the general-purpose retail/logistics code),
+//! EAN-13 / EAN-8 / UPC-A (retail product codes, checksum enforced), Code 39
+//! and Interleaved 2 of 5 -- emitted as SVG
 //! and rasterized onto the Ola 1.2 substrate like every other generator.
 //!
 //! DataMatrix and PDF417 from the roadmap need their own ECC families
@@ -244,11 +245,150 @@ fn ean13_svg(value: &str, w: f64, h: f64) -> Option<String> {
     Some(svg_of(&bars, total, w, h))
 }
 
+/// Retail check digit (weights 3,1,3,1... counted from the digit next to
+/// the check position) over `digits`; returns the digit that completes it.
+fn retail_check(digits: &[u8]) -> u8 {
+    let total: usize = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, d)| usize::from(*d) * if i % 2 == 0 { 3 } else { 1 })
+        .sum();
+    ((10 - total % 10) % 10) as u8
+}
+
+/// Parses an all-digit payload of `len - 1` (check computed) or `len`
+/// (check validated) digits into the full `len`-digit sequence.
+fn retail_digits(value: &str, len: usize) -> Option<Vec<u8>> {
+    let bytes = value.as_bytes();
+    if !bytes.iter().all(u8::is_ascii_digit) || (bytes.len() != len && bytes.len() != len - 1) {
+        return None;
+    }
+    let mut digits: Vec<u8> = bytes.iter().map(|b| b - b'0').collect();
+    let check = retail_check(&digits[..len - 1]);
+    if digits.len() == len - 1 {
+        digits.push(check);
+    } else if digits[len - 1] != check {
+        return None;
+    }
+    Some(digits)
+}
+
+fn ean8_svg(value: &str, w: f64, h: f64) -> Option<String> {
+    let digits = retail_digits(value, 8)?;
+    let mut bits = String::from("101");
+    for d in &digits[..4] {
+        bits.push_str(EAN_A[usize::from(*d)]);
+    }
+    bits.push_str("01010");
+    for d in &digits[4..] {
+        bits.push_str(EAN_R[usize::from(*d)]);
+    }
+    bits.push_str("101");
+    const GUARD_RUNS: [std::ops::Range<u32>; 3] = [0..3, 31..36, 64..67];
+    let total = bits.len() as u32 + 2 * EAN_QUIET_MODULES;
+    let mut bars = bars_from_bits(&bits);
+    for bar in &mut bars {
+        let (start, end) = (bar.x, bar.x + bar.w - 1);
+        bar.tall = GUARD_RUNS.iter().any(|r| r.contains(&start) && r.contains(&end));
+        bar.x += EAN_QUIET_MODULES;
+    }
+    Some(svg_of(&bars, total, w, h))
+}
+
+/// UPC-A is EAN-13 with an implied leading zero.
+fn upca_svg(value: &str, w: f64, h: f64) -> Option<String> {
+    if value.len() != 11 && value.len() != 12 {
+        return None;
+    }
+    ean13_svg(&format!("0{value}"), w, h)
+}
+
+/// Expands a narrow/wide pattern (`n`/`w`, bar first, alternating) into a
+/// bit string with wide = 3 modules.
+fn nw_bits(pattern: &str) -> String {
+    let mut bits = String::new();
+    for (i, c) in pattern.chars().enumerate() {
+        let run = if c == 'w' { 3 } else { 1 };
+        bits.push_str(&(if i % 2 == 0 { "1" } else { "0" }).repeat(run));
+    }
+    bits
+}
+
+const CODE39_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%*";
+const CODE39_PATTERNS: [&str; 44] = [
+    "nnnwwnwnn", "wnnwnnnnw", "nnwwnnnnw", "wnwwnnnnn", "nnnwwnnnw", "wnnwwnnnn", "nnwwwnnnn",
+    "nnnwnnwnw", "wnnwnnwnn", "nnwwnnwnn", "wnnnnwnnw", "nnwnnwnnw", "wnwnnwnnn", "nnnnwwnnw",
+    "wnnnwwnnn", "nnwnwwnnn", "nnnnnwwnw", "wnnnnwwnn", "nnwnnwwnn", "nnnnwwwnn", "wnnnnnnww",
+    "nnwnnnnww", "wnwnnnnwn", "nnnnwnnww", "wnnnwnnwn", "nnwnwnnwn", "nnnnnnwww", "wnnnnnwwn",
+    "nnwnnnwwn", "nnnnwnwwn", "wwnnnnnnw", "nwwnnnnnw", "wwwnnnnnn", "nwnnwnnnw", "wwnnwnnnn",
+    "nwwnwnnnn", "nwnnnnwnw", "wwnnnnwnn", "nwwnnnwnn", "nwnnwnwnn", "nwnwnwnnn", "nwnwnnnwn",
+    "nwnnnwnwn", "nnnwnwnwn",
+];
+const CODE39_QUIET_MODULES: u32 = 10;
+
+/// Code 39: uppercase letters, digits and `-. $/+%`, framed by `*`.
+fn code39_svg(value: &str, w: f64, h: f64) -> Option<String> {
+    let value = value.to_ascii_uppercase();
+    if value.is_empty() || value.contains('*') {
+        return None;
+    }
+    let mut bits = String::new();
+    for c in std::iter::once('*').chain(value.chars()).chain(std::iter::once('*')) {
+        let idx = CODE39_CHARS.find(c)?;
+        if !bits.is_empty() {
+            bits.push('0'); // inter-character gap
+        }
+        bits.push_str(&nw_bits(CODE39_PATTERNS[idx]));
+    }
+    let total = bits.len() as u32 + 2 * CODE39_QUIET_MODULES;
+    let mut bars = bars_from_bits(&bits);
+    for bar in &mut bars {
+        bar.x += CODE39_QUIET_MODULES;
+    }
+    Some(svg_of(&bars, total, w, h))
+}
+
+const ITF_PATTERNS: [&str; 10] = [
+    "nnwwn", "wnnnw", "nwnnw", "wwnnn", "nnwnw", "wnwnn", "nwwnn", "nnnww", "wnnwn", "nwnwn",
+];
+
+/// Interleaved 2 of 5: digits only; an odd count gets a leading zero.
+fn itf_svg(value: &str, w: f64, h: f64) -> Option<String> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits: Vec<usize> = if value.len() % 2 == 1 {
+        std::iter::once(0usize).chain(value.bytes().map(|b| usize::from(b - b'0'))).collect()
+    } else {
+        value.bytes().map(|b| usize::from(b - b'0')).collect()
+    };
+    let mut bits = String::from("1010"); // start: narrow bar/space/bar/space
+    for pair in digits.chunks(2) {
+        let (bar, space) = (ITF_PATTERNS[pair[0]].as_bytes(), ITF_PATTERNS[pair[1]].as_bytes());
+        for i in 0..5 {
+            bits.push_str(&"1".repeat(if bar[i] == b'w' { 3 } else { 1 }));
+            bits.push_str(&"0".repeat(if space[i] == b'w' { 3 } else { 1 }));
+        }
+    }
+    bits.push_str("11101"); // stop: wide bar, narrow space, narrow bar
+    let total = bits.len() as u32 + 2 * CODE39_QUIET_MODULES;
+    let mut bars = bars_from_bits(&bits);
+    for bar in &mut bars {
+        bar.x += CODE39_QUIET_MODULES;
+    }
+    Some(svg_of(&bars, total, w, h))
+}
+
 /// Entry point used by the asset pass: scheme name + payload -> SVG text.
 pub(crate) fn barcode_svg(scheme: &str, payload: &str, w: f64, h: f64) -> Option<String> {
     match scheme {
         "code128" => code128_svg(payload, w, h),
         "ean13" => ean13_svg(payload, w, h),
+        "ean8" => ean8_svg(payload, w, h),
+        "upca" => upca_svg(payload, w, h),
+        "code39" => code39_svg(payload, w, h),
+        "itf" => itf_svg(payload, w, h),
         _ => None,
     }
 }
@@ -329,6 +469,40 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 229 80\""), "{svg}");
         assert!(svg.contains("<rect"), "{svg}");
         assert!(!svg.to_lowercase().contains("nan"), "{svg}");
+    }
+
+    #[test]
+    fn ean8_and_upca_validate_and_complete_check_digits() {
+        // 7 digits -> check 0 ("55123457"); wrong check rejected.
+        assert!(ean8_svg("5512345", 200.0, 50.0).is_some());
+        assert!(ean8_svg("55123457", 200.0, 50.0).is_some());
+        assert!(ean8_svg("55123458", 200.0, 50.0).is_none());
+        // UPC-A 036000291452 is the canonical valid example.
+        assert!(upca_svg("03600029145", 200.0, 50.0).is_some());
+        assert!(upca_svg("036000291452", 200.0, 50.0).is_some());
+        assert!(upca_svg("036000291453", 200.0, 50.0).is_none());
+    }
+
+    #[test]
+    fn code39_patterns_have_three_wide_elements_and_reject_bad_input() {
+        assert_eq!(CODE39_CHARS.len(), CODE39_PATTERNS.len());
+        for p in CODE39_PATTERNS {
+            assert_eq!(p.len(), 9);
+            assert_eq!(p.matches('w').count(), 3, "{p}");
+        }
+        assert!(code39_svg("ABC-123", 300.0, 60.0).is_some());
+        assert!(code39_svg("abc", 300.0, 60.0).is_some());
+        assert_eq!(code39_svg("a*b", 300.0, 60.0), None);
+        assert_eq!(code39_svg("é", 300.0, 60.0), None);
+    }
+
+    #[test]
+    fn itf_patterns_have_two_wide_elements_and_pads_odd_lengths() {
+        for p in ITF_PATTERNS {
+            assert_eq!(p.matches('w').count(), 2, "{p}");
+        }
+        assert_eq!(itf_svg("123", 200.0, 50.0), itf_svg("0123", 200.0, 50.0));
+        assert_eq!(itf_svg("12a4", 200.0, 50.0), None);
     }
 
     #[test]
