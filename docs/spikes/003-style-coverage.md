@@ -153,3 +153,21 @@ already keeps balanced.
 Lesson recorded for the next probe: `cargo` treats git dependencies as
 immutable, so editing `~/.cargo/git/checkouts/...` does not rebuild;
 `cargo clean -p <crate>` first.
+
+### `vertical-align` root-cause lead (not fixed)
+
+Narrowed with a throwaway probe against the patched engine:
+
+- The property reaches the span's style: `get_vertical_align_for_node` returns
+  `Exact(Superscript)` for the `<span>`.
+- text3 applies it per run: a two-run `perform_fragment_layout` with the
+  second run `VerticalAlign::Super` moves its clusters 6.4 px up.
+- But the glyph positions printpdf draws are identical with and without it.
+  The remaining suspect is the paged path: `paged_layout.rs` /
+  `text3/dense.rs` store a line as one shared `baseline_y` plus per-run
+  ascent (`DenseText::resolved_run_ascent`), and `dense.rs` has no
+  `vertical_align`/baseline-shift field, so a per-run shift would be lost when
+  the layout is densified. Next step: confirm whether the paged display list
+  reads glyph positions from the `DenseText`, then add a per-run `dy` to
+  `DenseRun` (set in `from_unified`, applied in `to_unified_items` and
+  `get_glyph_runs_pdf_dense`). Larger than the other fixes, so left open.
