@@ -261,6 +261,13 @@ fn size_value(key: &str, axis_viewport: &str) -> Option<String> {
     }
 }
 
+/// Crate-visible color resolver (palette, theme tokens, scales, arbitrary
+/// hex, `/NN` opacity) for passes that compose several classes into one
+/// declaration (`composite.rs`).
+pub(crate) fn color_value(key: &str, theme: &Theme) -> Option<String> {
+    resolve_color_alpha(key, theme)
+}
+
 /// Resolves a color suffix with an optional `/NN` opacity (`black/50`).
 /// Hex and `hsl(...)` colors gain an alpha channel; anything else (named
 /// `transparent`) is returned unchanged.
@@ -679,6 +686,20 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
     if let Some(rest) = class.strip_prefix("shadow-") {
         let value = tokens::shadow(rest)?;
         return Some(format!("box-shadow:{value}"));
+    }
+    if let Some(rest) = class.strip_prefix("grid-rows-") {
+        let n: u32 = rest.parse().ok().filter(|n| (1..=12).contains(n))?;
+        return Some(format!("grid-template-rows:repeat({n}, minmax(0, 1fr))"));
+    }
+    if let Some(rest) = class.strip_prefix("row-span-") {
+        if rest == "full" {
+            return Some("grid-row:1/-1".to_string());
+        }
+        return rest
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=12).contains(n))
+            .map(|n| format!("grid-row:span {n}/span {n}"));
     }
     if let Some(rest) = class.strip_prefix("grid-cols-") {
         let n: u32 = rest.parse().ok()?;

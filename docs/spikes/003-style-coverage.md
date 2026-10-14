@@ -72,3 +72,32 @@ and one fixed page size.
 - Not yet probed and therefore not implemented: `divide-*` (needs a child
   combinator selector), `ring-*`/`outline-*`, `grid-rows-*`/`row-span-*`,
   gradients, `transform`. Probe them the same way before adding.
+
+## Round 3 (composites, grid, and what still needs an engine patch)
+
+Probed the same way (ops with/without):
+
+| Utility | Engine honors it? | Done how |
+|---|---|---|
+| `divide-x/y` (`> * + *`) | no combinator selector; per-child borders work | `composite.rs`: border on each non-first child |
+| linear/radial gradient | yes (`background: linear-gradient(...)`) | `composite.rs`: `bg-gradient-to-*` + `from/via/to-*` -> one inline `background` |
+| `outline` | **no** | `composite.rs`: zero-blur spread `box-shadow`, same as `ring-*` |
+| `ring-*` | via `box-shadow` | `composite.rs` (a ring/outline replaces a `shadow-*` on the same element) |
+| `grid-template-rows`, `grid-row: span N` | yes | `grid-rows-N`, `row-span-N` in `utilities.rs` |
+| `grid-column-start/end` | **no** | not implemented |
+| `transform` (rotate/scale/translate) | **no** (`PushReferenceFrame` is dropped by the bridge) | not implemented |
+| `opacity` | **no** | see below |
+| `text-shadow` | **no** (`PushTextShadow` dropped by the bridge) | not implemented |
+| `vertical-align` (also `<sub>`) | **no** | not implemented |
+| `object-fit` | **no** (no display-list item for it) | not implemented |
+| `letter-spacing`, `white-space: pre` | yes | already resolved |
+
+**`opacity` root cause:** the layout engine does emit
+`PushOpacity`/`PopOpacity`, and the printpdf bridge handles them -- but
+`azul-layout`'s page splitter (`clip_and_offset_display_item`,
+`solver3/display_list.rs`) returns `None` for them ("filter effects - skip for
+now"), so paged output never sees them. Fixing that needs a patch in
+`azul-layout` itself (keep push/pop, rebalance them per page), not in the
+printpdf bridge. `azul-layout` is 14 MB of source, so vendoring it is a
+deliberate decision rather than a drive-by; the same patch point would also be
+where `transform` and `vertical-align` get fixed.

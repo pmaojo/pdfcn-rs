@@ -70,3 +70,29 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
       | shadow-md |
       | shadow-lg |
       | shadow-2xl|
+
+  @covers(pdfcn-styles/src/composite.rs)
+  Scenario Outline: Composite utilities are painted
+    Given a template using the classes "<classes>"
+    When the document is rendered
+    Then the drawn output differs from the same markup without them
+    And the composed classes are not reported as unrecognized
+
+    Examples:
+      | classes                                      |
+      | divide-y divide-slate-300                    |
+      | flex divide-x-2 divide-red-500               |
+      | bg-gradient-to-r from-blue-500 to-red-500    |
+      | ring-2 ring-red-500                          |
+      | outline outline-blue-500                     |
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario Outline: Grid row utilities
+    Given a grid using the class "<class>"
+    When the document is rendered
+    Then the row layout differs from the same grid without it
+
+    Examples:
+      | class       |
+      | grid-rows-4 |
+      | row-span-2  |

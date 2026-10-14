@@ -337,8 +337,10 @@ pub fn render_html_with_theme(
     // before the stylesheet is built — which also means the injected
     // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
     // every other utility (see pdfcn_styles::rewrite_gaps).
-    let body_html =
-        pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body.into_string()));
+    let body_html = pdfcn_styles::rewrite_composites(
+        &pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body.into_string())),
+        theme,
+    );
     let classes = pdfcn_styles::extract_classes(&body_html);
     let stylesheet = cached_stylesheet(&classes, theme);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))

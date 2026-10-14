@@ -1,9 +1,11 @@
+mod composite;
 mod decoration;
 mod gap;
 pub mod theme;
 mod tokens;
 mod utilities;
 
+pub use composite::rewrite_composites;
 pub use decoration::rewrite_text_decorations;
 pub use gap::rewrite_gaps;
 pub use theme::{Theme, ThemeMode};
