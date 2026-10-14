@@ -96,3 +96,14 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
       | class       |
       | grid-rows-4 |
       | row-span-2  |
+
+  @covers(pdfcn-core/src/lib.rs)
+  Scenario Outline: Opacity utilities are painted, also across page breaks
+    Given a box with the class "<opacity>"
+    When the document is rendered
+    Then the drawn output differs from the same box without it
+
+    Examples:
+      | opacity    |
+      | opacity-50 |
+      | opacity-25 |

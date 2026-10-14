@@ -129,7 +129,13 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# Vendored copy of printpdf 0.12.6 with a small patch to its HTML bridge
-# (BoxShadow display items were dropped). See vendor/printpdf/PDFCN_PATCHES.md.
+# Forks carrying fixes that are proposed upstream (see docs/spikes/003-style-coverage.md):
+#  * printpdf: paint `box-shadow` + deterministic resource names (pmaojo/printpdf, branch pdfcn)
+#  * azul: keep `opacity` across page breaks + feature gating (pmaojo/azul, branch pdfcn)
+# Pinned by commit so builds are reproducible; the three azul crates must come
+# from the same revision. Drop each entry once the fix is released upstream.
 [patch.crates-io]
-printpdf = { path = "vendor/printpdf" }
+printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "7a51cbd5a9268335a7e41c13372e83349460db85" }
+azul-layout = { git = "https://github.com/pmaojo/azul", rev = "b1fc1b0785d007f799d47c49fd07f219ed31e486" }
+azul-core = { git = "https://github.com/pmaojo/azul", rev = "b1fc1b0785d007f799d47c49fd07f219ed31e486" }
+azul-css = { git = "https://github.com/pmaojo/azul", rev = "b1fc1b0785d007f799d47c49fd07f219ed31e486" }

@@ -218,7 +218,7 @@ isn't confirmed.
 - **`align-*` (`vertical-align`) has no effect**, even on inline elements
   (verified in `docs/spikes/003-style-coverage.md`).
 - **`box-shadow` is approximated.** The layout engine emits it but upstream
-  printpdf dropped it; the vendored printpdf (`vendor/printpdf/PDFCN_PATCHES.md`)
+  printpdf dropped it; the `pmaojo/printpdf` fork (see `docs/spikes/003-style-coverage.md`)
   paints outset shadows as stacked translucent rects (blur is a stepped
   approximation, inset shadows are not drawn, and the shadow also shows
   through a transparent-background box). Only a single shadow layer is

@@ -52,8 +52,9 @@ and one fixed page size.
   decorated `<span>`.
 - `box-shadow`: layout emits `DisplayListItem::BoxShadow`, but printpdf's
   `html/bridge.rs` drops it (it falls into the `_ => {}` arm). Fixed by
-  vendoring printpdf (`vendor/printpdf`, `[patch.crates-io]`) and painting the
-  item there -- patching the bridge, not azul-layout, was enough. The engine
+  patching printpdf's bridge (first as a vendored copy, now the
+  `pmaojo/printpdf` fork, branch `fix/box-shadow`) -- the bridge, not
+  azul-layout, was enough. The engine
   also only honors ONE shadow layer: Tailwind's two-layer `shadow-md/lg/xl`
   parsed to nothing, so `tokens::SHADOW` folds them into one layer.
 - **Where the leverage is:** `printpdf::html::xml_to_pdf_pages` is
@@ -101,3 +102,26 @@ now"), so paged output never sees them. Fixing that needs a patch in
 printpdf bridge. `azul-layout` is 14 MB of source, so vendoring it is a
 deliberate decision rather than a drive-by; the same patch point would also be
 where `transform` and `vertical-align` get fixed.
+
+## Round 4: forks, and `opacity` fixed
+
+printpdf and azul now come from forks (`pmaojo/printpdf`, `pmaojo/azul`,
+integration branch `pdfcn` in each), each the sum of small `fix/*` branches
+meant for upstream PRs:
+
+| Repo | Branch | Fix |
+|---|---|---|
+| printpdf | `fix/box-shadow` | paint outset `BoxShadow` in the HTML bridge |
+| printpdf | `fix/deterministic-resource-ids` | ExtGState/shading names from content, not random (two renders of one document differed byte-for-byte; surfaced once shadows made the invoice use translucent fills) |
+| azul | `fix/paged-opacity` | `PushOpacity`/`PopOpacity` are structure markers in the paginator, re-emitted and balanced per page |
+| azul | `fix/feature-gating` | azul-layout `master` did not build with `default-features = false` (`agg_rust` / `tile_mask` used without the `cpurender` gate); printpdf builds it that way |
+
+`master` of azul (0.0.16) already re-emits clips, scroll frames, stacking
+contexts, text shadows and image-mask clips across pages (a marker stack that
+0.0.14 lacked). Opacity and reference frames (`transform`) were simply not on
+that list. Opacity now is; `transform` (`PushReferenceFrame`) is still not, and
+the printpdf bridge also ignores it, so it needs both.
+
+Moving from printpdf 0.12.6/azul 0.0.14 to 0.12.8/0.0.16 changed the golden
+snapshots (one line each: engine-version noise); the pages were checked
+visually.

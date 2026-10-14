@@ -1,6 +1,6 @@
 //! `shadow-*` utilities must reach the drawn output. The layout engine emits
 //! a box-shadow display item that upstream printpdf's HTML bridge drops; the
-//! vendored copy (`vendor/printpdf/PDFCN_PATCHES.md`) paints it.
+//! `pmaojo/printpdf` fork (see `docs/spikes/003-style-coverage.md`) paints it.
 
 use pdfcn_core::{render_html, render_pdf, NoPartials, RenderOptions};
 use printpdf::{parse_pdf_from_bytes, PdfParseOptions};
@@ -47,4 +47,13 @@ fn a_larger_shadow_draws_more_than_a_smaller_one() {
     let sm = page_ops("%div(class=\"bg-white w-32 h-16 shadow-sm\") x");
     let xl = page_ops("%div(class=\"bg-white w-32 h-16 shadow-xl\") x");
     assert_ne!(sm, xl);
+}
+
+#[test]
+fn opacity_utilities_change_the_drawn_output() {
+    let opaque = page_ops("%div(class=\"bg-red-500 w-32 h-16\") x");
+    for opacity in ["opacity-50", "opacity-25"] {
+        let faded = page_ops(&format!("%div(class=\"bg-red-500 w-32 h-16 {opacity}\") x"));
+        assert!(opaque != faded, "{opacity} had no visible effect");
+    }
 }
