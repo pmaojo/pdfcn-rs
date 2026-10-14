@@ -276,12 +276,34 @@ chip, never a QR that would send the customer to a "no such invoice" page.
 The symbol is 150 px (about 40 mm) with error correction M and the
 `VERI*FACTU` label above it; `size` overrides it. See `examples/verifactu`.
 
-This prints the QR for an invoice **your billing system has registered**. It does
-not create the invoice record, its hash chain or the submission to the AEAT, and
-it has not been checked against a live AEAT service. The URL format follows
-the published specification as described by several independent
-implementations; the AEAT's own document was not reachable when this was
-written, so compare against the current version before relying on it.
+**`importe` is the invoice's "Importe total" (taxable base plus VAT and any
+equivalence surcharge), not the amount to pay.** Withholdings (IRPF), suplidos
+and similar adjustments change what the customer pays but are not part of the
+invoice record, and the AEAT's cotejo service compares the QR against that
+record. The AEAT's developer FAQ (section 20) suggests printing both figures
+labelled, e.g. "Total factura" and "Total a pagar"; pass the first one here.
+
+### What this is and is not, legally
+
+The AEAT's developer FAQ (4 December 2025, section 5) treats any component that
+takes part in *printing invoices* or *generating the QR* as a billing component
+("componente de facturación") of the invoicing system (SIF). Used for
+VERI*FACTU invoices, pdfcn is such a component, which means:
+
+- the main billing system that calls it must be certified with a *declaración
+  responsable* that names pdfcn and the exact version it invokes, and
+- it must call pdfcn on every invoice, as part of issuing it, so that no invoice
+  is printed without its record and no record exists without its invoice.
+
+pdfcn does **not** create the invoice record, chain its hash, keep the records or
+send them to the AEAT, and it is not meant to: those need persistent state, an
+event log and a qualified certificate, which belong to the billing system. This
+README is not legal advice; check the requirements for your case with your
+adviser or the AEAT.
+
+The URL format follows the specification as described by several independent
+implementations and the AEAT's developer FAQ; the AEAT's own QR specification
+document has not been checked against it, so compare before relying on it.
 
 ## Examples
 

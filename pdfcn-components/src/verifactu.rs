@@ -11,6 +11,10 @@
 //! invoice does not exist. The symbol itself (error-correction level M, quiet
 //! zone) is produced by `pdfcn-core`'s existing `pdfcn-qrcode:` pipeline.
 //!
+//! `importe` must be the invoice's "Importe total" (taxable base plus VAT and
+//! any equivalence surcharge), not the amount to pay: withholdings and suplidos
+//! are not part of the invoice record the AEAT compares the QR against.
+//!
 //! What this does *not* do: generate the invoice record, its hash chain or
 //! the submission to the AEAT. It prints the QR for an invoice that your
 //! billing system has registered.
