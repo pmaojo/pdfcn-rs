@@ -165,7 +165,11 @@ fn code128_svg(value: &str, w: f64, h: f64) -> Option<String> {
     let symbols = code128_symbols(value)?;
     let mut bits = String::new();
     for sym in &symbols {
-        bits.push_str(CODE128_PATTERNS[usize::from(*sym)]);
+        // The table holds bar/space *widths* (bar first); expand to bits.
+        for (i, width) in CODE128_PATTERNS[usize::from(*sym)].bytes().enumerate() {
+            let bit = if i % 2 == 0 { "1" } else { "0" };
+            bits.push_str(&bit.repeat(usize::from(width - b'0')));
+        }
     }
     // Code 128's whole symbol is one height; the quiet zones stay empty.
     let total = bits.len() as u32 + 2 * CODE128_QUIET_MODULES;
@@ -315,7 +319,7 @@ fn nw_bits(pattern: &str) -> String {
     bits
 }
 
-const CODE39_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%*";
+const CODE39_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. *$/+%";
 const CODE39_PATTERNS: [&str; 44] = [
     "nnnwwnwnn", "wnnwnnnnw", "nnwwnnnnw", "wnwwnnnnn", "nnnwwnnnw", "wnnwwnnnn", "nnwwwnnnn",
     "nnnwnnwnw", "wnnwnnwnn", "nnwwnnwnn", "wnnnnwnnw", "nnwnnwnnw", "wnwnnwnnn", "nnnnwwnnw",
@@ -484,12 +488,28 @@ mod tests {
     }
 
     #[test]
+    fn code128_svg_draws_bars_from_expanded_widths() {
+        // Start B (211214) begins: 2-module bar, 1 space, 1 bar, 2 space...
+        let svg = code128_svg("HI", 220.0, 50.0).unwrap();
+        let rects = svg.matches("<rect").count();
+        // 5 symbols; every 6-element symbol has 3 bars, the stop has 4.
+        assert_eq!(rects, 4 * 3 + 4, "{svg}");
+        // total modules = 4 * 11 + 13 + 20 quiet = 77; first bar is 2 modules wide.
+        let unit = 220.0 / 77.0;
+        assert!(svg.contains(&format!("x=\"{:.2}\" y=\"0\" width=\"{:.2}\"", 10.0 * unit, 2.0 * unit)), "{svg}");
+    }
+
+    #[test]
     fn code39_patterns_have_three_wide_elements_and_reject_bad_input() {
         assert_eq!(CODE39_CHARS.len(), CODE39_PATTERNS.len());
         for p in CODE39_PATTERNS {
             assert_eq!(p.len(), 9);
             assert_eq!(p.matches('w').count(), 3, "{p}");
         }
+        // The frame character must line up with its table slot.
+        let star = CODE39_CHARS.find('*').unwrap();
+        assert_eq!(CODE39_PATTERNS[star], "nwnnwnwnn");
+        assert_eq!(CODE39_PATTERNS[CODE39_CHARS.find('A').unwrap()], "wnnnnwnnw");
         assert!(code39_svg("ABC-123", 300.0, 60.0).is_some());
         assert!(code39_svg("abc", 300.0, 60.0).is_some());
         assert_eq!(code39_svg("a*b", 300.0, 60.0), None);

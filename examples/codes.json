@@ -1,0 +1,13 @@
+{
+  "qr": { "value": "https://pdfcn-rs.vercel.app", "caption": "Any text or URL." },
+  "pay": { "value": "https://pay.example/INV-1042?amount=482.00&currency=EUR", "caption": "Scan to pay invoice 1042." },
+  "wifi": { "value": "WIFI:T:WPA;S:Northwind;P:correct-horse;;", "caption": "Guests join with one scan." },
+  "barcodes": [
+    { "name": "Shipping label", "scheme": "code128", "value": "NWL-2026-0042", "note": "Full ASCII; switches to dense digit mode automatically." },
+    { "name": "Retail product", "scheme": "ean13", "value": "4006381333931", "note": "13 digits; 12 digits get the check digit appended." },
+    { "name": "Small packaging", "scheme": "ean8", "value": "5512345", "note": "7 digits in, check digit computed." },
+    { "name": "North America retail", "scheme": "upca", "value": "03600029145", "note": "11 or 12 digits, check digit validated." },
+    { "name": "Industrial tag", "scheme": "code39", "value": "NWL-0042", "note": "A-Z, 0-9 and - . space $ / + %" },
+    { "name": "Carton / pallet", "scheme": "itf", "value": "0012345678", "note": "Digits only, interleaved 2 of 5." }
+  ]
+}

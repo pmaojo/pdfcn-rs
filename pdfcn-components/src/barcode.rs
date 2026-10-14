@@ -3,8 +3,9 @@
 //! convention as `%QRCode` -- `<img src="pdfcn-barcode:<scheme>:<hex>">`,
 //! with pdfcn-core's asset pass doing the actual encoding and rasterizing.
 //!
-//! Schemes: `code128` (any printable ASCII) and `ean13` (12 or 13 digits;
-//! the check digit is computed for 12 and validated for 13). DataMatrix /
+//! Schemes: `code128` (any printable ASCII), `ean13` / `ean8` / `upca`
+//! (retail digits; the check digit is computed when omitted and validated
+//! when given), `code39` and `itf` (interleaved 2 of 5, digits only). DataMatrix /
 //! PDF417 land later as vetted crates, not hand-rolled ECC.
 
 use maud::{html, Markup};
@@ -12,7 +13,7 @@ use pdfcn_template::ResolvedAttr;
 
 use crate::{attr, attr_or, hex_encode, invalid_component};
 
-const SCHEMES: [&str; 2] = ["code128", "ean13"];
+const SCHEMES: [&str; 6] = ["code128", "ean13", "ean8", "upca", "code39", "itf"];
 
 pub fn barcode(attrs: &[ResolvedAttr]) -> Markup {
     let Some(value) = attr(attrs, "value").filter(|v| !v.is_empty()) else {
@@ -24,17 +25,23 @@ pub fn barcode(attrs: &[ResolvedAttr]) -> Markup {
     if !SCHEMES.contains(&scheme) {
         return html! {
             div class=(invalid_component()) {
-                "Barcode: unknown scheme \"" (scheme) "\" (supported: code128, ean13)"
+                "Barcode: unknown scheme \"" (scheme) "\" (supported: code128, ean13, ean8, upca, code39, itf)"
             }
         };
     }
-    if scheme == "ean13"
-        && (value.len() != 12 && value.len() != 13 || !value.bytes().all(|b| b.is_ascii_digit()))
-    {
+    // Cheap structural checks so a typo is an explicit marker at expand
+    // time; the encoder in pdfcn-core stays the authority (check digits).
+    let digits = value.bytes().all(|b| b.is_ascii_digit());
+    let problem = match scheme {
+        "ean13" if !(digits && matches!(value.len(), 12 | 13)) => Some("ean13 needs exactly 12 or 13 digits"),
+        "ean8" if !(digits && matches!(value.len(), 7 | 8)) => Some("ean8 needs exactly 7 or 8 digits"),
+        "upca" if !(digits && matches!(value.len(), 11 | 12)) => Some("upca needs exactly 11 or 12 digits"),
+        "itf" if !digits => Some("itf needs digits only"),
+        _ => None,
+    };
+    if let Some(problem) = problem {
         return html! {
-            div class=(invalid_component()) {
-                "Barcode: ean13 needs exactly 12 or 13 digits"
-            }
+            div class=(invalid_component()) { "Barcode: " (problem) }
         };
     }
     let w = attr_or(attrs, "w", "240px");

@@ -317,6 +317,8 @@
 
   .preview-frame { background: linear-gradient(180deg, #e2e8f0, #cbd5e1); padding: 14px; border: 1px solid var(--border); }
   .preview-frame iframe { background: #fff; border-radius: 4px; box-shadow: 0 16px 34px -14px rgba(15, 23, 42, 0.55); height: 100%; }
+  .pdf-pages { position: absolute; inset: 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; border-radius: 4px; }
+  .pdf-pages canvas { display: block; width: 100%; height: auto; background: #fff; border-radius: 4px; box-shadow: 0 16px 34px -14px rgba(15, 23, 42, 0.55); margin: 0 auto 14px; }
   .preview-placeholder { color: #475569; }
   textarea { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); white-space: pre; overflow: auto; }
   #haml-editor { height: 340px; }
@@ -402,6 +404,7 @@
           <option value="invoice">Invoice example</option>
           <option value="minimal">Minimal example</option>
           <option value="catalog">Catalog example (images)</option>
+          <option value="codes">QR codes &amp; barcodes</option>
           <option value="charts">Charts, barcode & vector logo</option>
           <option value="facturx">Factur-X invoice</option>
         </select>
@@ -418,6 +421,7 @@
       <button type="button" class="gcard" data-example="invoice" role="listitem"><img src="thumbs/invoice.jpg" alt="" loading="lazy"><span class="gname">Invoice</span><span class="gtag">tables &middot; signature</span></button>
       <button type="button" class="gcard" data-example="catalog" role="listitem"><img src="thumbs/catalog.jpg" alt="" loading="lazy"><span class="gname">Catalog</span><span class="gtag">images &middot; object-fit</span></button>
       <button type="button" class="gcard" data-example="charts" role="listitem"><img src="thumbs/charts.jpg" alt="" loading="lazy"><span class="gname">Charts</span><span class="gtag">vector &middot; barcode</span></button>
+      <button type="button" class="gcard" data-example="codes" role="listitem"><img src="thumbs/codes.jpg" alt="" loading="lazy"><span class="gname">Codes</span><span class="gtag">QR &middot; Code 128 &middot; EAN &middot; UPC</span></button>
     </div>
 
     <div class="grid">
@@ -459,7 +463,7 @@
       <div class="cap"><h3>Real typography</h3><p>Bold, italic, serif and mono from bundled Inter, Source Serif 4 and JetBrains Mono.</p></div>
       <div class="cap"><h3>Layout</h3><p>Flex, grid with rows and spans, <code>divide-y</code>, <code>space-x</code>, page breaks.</p></div>
       <div class="cap"><h3>Images</h3><p><code>object-fit</code> and <code>object-position</code>, with the box clipped, also for relative widths.</p></div>
-      <div class="cap"><h3>Data graphics</h3><p>Bar, line, pie and sparkline charts, QR codes and barcodes, inline SVG.</p></div>
+      <div class="cap"><h3>Data graphics</h3><p>Bar, line, pie and sparkline charts, QR codes, six barcode symbologies (<code>code128</code>, <code>ean13</code>, <code>ean8</code>, <code>upca</code>, <code>code39</code>, <code>itf</code>), inline SVG.</p></div>
       <div class="cap"><h3>Invoices</h3><p>Factur-X / EN 16931 XML embedded in a PDF/A-style container.</p></div>
       <div class="cap"><h3>Opacity &amp; alpha</h3><p><code>opacity-50</code>, <code>bg-black/50</code>, <code>text-white/80</code>.</p></div>
       <div class="cap"><h3>Transforms</h3><p><code>rotate-12</code>, <code>scale-75</code>, <code>skew-x-6</code>, <code>translate-y-2</code>, <code>origin-top-left</code>.</p></div>
@@ -554,6 +558,26 @@
       <code>PageFooter</code> <code>LineChart</code> <code>StackedBarChart</code> <code>PieChart</code>
       <code>Sparkline</code> <code>Barcode</code> <code>Vector</code>
     </p>
+
+    <h2 style="margin-top:2rem">QR codes &amp; barcodes</h2>
+    <p class="lede">Generated natively at render time &mdash; no network, no uploaded images. Try the
+    "Codes" example above, or copy a line below.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Component</th><th><code>scheme</code></th><th>Accepts</th></tr></thead>
+        <tbody>
+          <tr><td><code>%QRCode(value="https://…" size="120px")</code></td><td>QR</td><td>Any text up to ~1&nbsp;KB: URLs, payment links, <code>WIFI:…</code>, vCards.</td></tr>
+          <tr><td rowspan="6"><code>%Barcode(scheme="…" value="…" w="220px" h="56px")</code></td><td><code>code128</code> (default)</td><td>Any printable ASCII; digit runs switch to dense mode automatically.</td></tr>
+          <tr><td><code>ean13</code></td><td>12 digits (check digit added) or 13 (validated).</td></tr>
+          <tr><td><code>ean8</code></td><td>7 or 8 digits.</td></tr>
+          <tr><td><code>upca</code></td><td>11 or 12 digits.</td></tr>
+          <tr><td><code>code39</code></td><td><code>A-Z 0-9 - . space $ / + %</code> (lowercase is upper-cased).</td></tr>
+          <tr><td><code>itf</code></td><td>Digits only (interleaved 2 of 5); an odd count gets a leading zero.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:0.75rem">An invalid value (bad check digit, unsupported character) renders an explicit
+    marker in the PDF instead of a barcode that would scan wrong.</p>
 
     <h2 style="margin-top:2rem">Factur-X invoice embedding</h2>
     <p class="lede">Splices an EN 16931/CII invoice XML into the response as a Factur-X-compliant
@@ -701,6 +725,10 @@
         haml: '%h1 Invoice\n%p Total: {{ total }}',
         json: JSON.stringify({ total: '$42.00' }, null, 2)
       },
+      codes: {
+        haml: "%DocumentLayout(size=\"a4\")\n  %Header(title=\"Barcodes & QR codes\" subtitle=\"Generated natively, no network, no images to upload\")\n\n  .grid.grid-cols-3.gap-4.mb-6\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 QR code\n      %QRCode(value=\"{{ qr.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ qr.caption }}\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 Payment link\n      %QRCode(value=\"{{ pay.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ pay.caption }}\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 Wi-Fi join\n      %QRCode(value=\"{{ wifi.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ wifi.caption }}\n\n  %h2.text-xl.font-semibold.mb-2 Linear barcodes\n  .grid.grid-cols-2.gap-4\n    - for code in barcodes\n      .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n        .flex.justify-between.items-center.mb-2\n          %p.font-semibold.text-slate-900 {{ code.name }}\n          %Badge(variant=\"outline\" label=\"{{ code.scheme }}\")\n        %Barcode(scheme=\"{{ code.scheme }}\" value=\"{{ code.value }}\" w=\"220px\" h=\"56px\")\n        %p.text-xs.text-slate-500(style=\"margin-top:6px\") {{ code.note }}\n",
+        json: "{\n  \"qr\": { \"value\": \"https://pdfcn-rs.vercel.app\", \"caption\": \"Any text or URL.\" },\n  \"pay\": { \"value\": \"https://pay.example/INV-1042?amount=482.00&currency=EUR\", \"caption\": \"Scan to pay invoice 1042.\" },\n  \"wifi\": { \"value\": \"WIFI:T:WPA;S:Northwind;P:correct-horse;;\", \"caption\": \"Guests join with one scan.\" },\n  \"barcodes\": [\n    { \"name\": \"Shipping label\", \"scheme\": \"code128\", \"value\": \"NWL-2026-0042\", \"note\": \"Full ASCII; switches to dense digit mode automatically.\" },\n    { \"name\": \"Retail product\", \"scheme\": \"ean13\", \"value\": \"4006381333931\", \"note\": \"13 digits; 12 digits get the check digit appended.\" },\n    { \"name\": \"Small packaging\", \"scheme\": \"ean8\", \"value\": \"5512345\", \"note\": \"7 digits in, check digit computed.\" },\n    { \"name\": \"North America retail\", \"scheme\": \"upca\", \"value\": \"03600029145\", \"note\": \"11 or 12 digits, check digit validated.\" },\n    { \"name\": \"Industrial tag\", \"scheme\": \"code39\", \"value\": \"NWL-0042\", \"note\": \"A-Z, 0-9 and - . space $ / + %\" },\n    { \"name\": \"Carton / pallet\", \"scheme\": \"itf\", \"value\": \"0012345678\", \"note\": \"Digits only, interleaved 2 of 5.\" }\n  ]\n}"
+      },
       charts: {
         haml: [
           '%DocumentLayout(size="a4")',
@@ -845,6 +873,95 @@
     enableTabIndent(hamlEditor);
     enableTabIndent(jsonEditor);
 
+    // ---- live preview ----
+    // Desktop browsers render PDFs natively in an <iframe>. Mobile browsers
+    // (Android Chrome, iOS Safari) don't -- they show a download card or only
+    // page 1 -- so there the pages are drawn onto <canvas>es with pdf.js,
+    // loaded lazily so desktop never pays for it.
+    var nativePdf = navigator.pdfViewerEnabled !== false &&
+      !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    var PDFJS_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+    var pdfjsReady = null;
+    var renderToken = 0;
+
+    function loadPdfJs() {
+      if (pdfjsReady) return pdfjsReady;
+      pdfjsReady = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = PDFJS_BASE + 'pdf.min.js';
+        s.onload = function () {
+          // A cross-origin worker can't be constructed directly; hand it over as a blob.
+          fetch(PDFJS_BASE + 'pdf.worker.min.js')
+            .then(function (r) { return r.text(); })
+            .then(function (code) {
+              window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+              resolve(window.pdfjsLib);
+            })
+            .catch(reject);
+        };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      pdfjsReady.catch(function () { pdfjsReady = null; });
+      return pdfjsReady;
+    }
+
+    function showPreview(blob, url) {
+      var token = ++renderToken;
+      var iframe = previewFrame.querySelector('iframe');
+      var pages = previewFrame.querySelector('.pdf-pages');
+      if (nativePdf) {
+        if (pages) pages.remove();
+        if (!iframe) {
+          iframe = document.createElement('iframe');
+          previewFrame.appendChild(iframe);
+        }
+        iframe.src = url;
+        return;
+      }
+      if (iframe) iframe.remove();
+      Promise.all([loadPdfJs(), blob.arrayBuffer()]).then(function (r) {
+        return r[0].getDocument({ data: new Uint8Array(r[1]) }).promise;
+      }).then(function (pdf) {
+        var width = Math.max(previewFrame.clientWidth - 28, 200);
+        var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        var fresh = document.createElement('div');
+        fresh.className = 'pdf-pages';
+        var chain = Promise.resolve();
+        for (var n = 1; n <= pdf.numPages; n++) {
+          (function (num) {
+            chain = chain.then(function () {
+              if (token !== renderToken) return null;
+              return pdf.getPage(num).then(function (page) {
+                var base = page.getViewport({ scale: 1 });
+                var viewport = page.getViewport({ scale: (width / base.width) * dpr });
+                var canvas = document.createElement('canvas');
+                canvas.width = Math.floor(viewport.width);
+                canvas.height = Math.floor(viewport.height);
+                fresh.appendChild(canvas);
+                return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+              });
+            });
+          })(n);
+        }
+        return chain.then(function () {
+          if (token !== renderToken) return;
+          var old = previewFrame.querySelector('.pdf-pages');
+          var scrollTop = old ? old.scrollTop : 0;
+          if (old) old.remove();
+          previewFrame.appendChild(fresh);
+          fresh.scrollTop = scrollTop;
+        });
+      }).catch(function () {
+        // pdf.js unreachable (offline, blocked CDN): fall back to the native viewer.
+        if (token !== renderToken) return;
+        var f = document.createElement('iframe');
+        f.src = url;
+        previewFrame.appendChild(f);
+      });
+    }
+
     function generate() {
       if (inFlight) {
         pendingRerun = true;
@@ -894,12 +1011,7 @@
         .then(function (blob) {
           var url = URL.createObjectURL(blob);
           previewPlaceholder.style.display = 'none';
-          var iframe = previewFrame.querySelector('iframe');
-          if (!iframe) {
-            iframe = document.createElement('iframe');
-            previewFrame.appendChild(iframe);
-          }
-          iframe.src = url;
+          showPreview(blob, url);
           openLink.href = url;
           downloadLink.href = url;
           previewActions.classList.add('show');

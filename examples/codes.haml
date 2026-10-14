@@ -1,0 +1,26 @@
+%DocumentLayout(size="a4")
+  %Header(title="Barcodes & QR codes" subtitle="Generated natively, no network, no images to upload")
+
+  .grid.grid-cols-3.gap-4.mb-6
+    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style="padding:16px")
+      %p.text-xs.uppercase.tracking-wider.text-slate-500 QR code
+      %QRCode(value="{{ qr.value }}" size="120px")
+      %p.text-sm.text-slate-600(style="margin-top:6px") {{ qr.caption }}
+    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style="padding:16px")
+      %p.text-xs.uppercase.tracking-wider.text-slate-500 Payment link
+      %QRCode(value="{{ pay.value }}" size="120px")
+      %p.text-sm.text-slate-600(style="margin-top:6px") {{ pay.caption }}
+    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style="padding:16px")
+      %p.text-xs.uppercase.tracking-wider.text-slate-500 Wi-Fi join
+      %QRCode(value="{{ wifi.value }}" size="120px")
+      %p.text-sm.text-slate-600(style="margin-top:6px") {{ wifi.caption }}
+
+  %h2.text-xl.font-semibold.mb-2 Linear barcodes
+  .grid.grid-cols-2.gap-4
+    - for code in barcodes
+      .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style="padding:16px")
+        .flex.justify-between.items-center.mb-2
+          %p.font-semibold.text-slate-900 {{ code.name }}
+          %Badge(variant="outline" label="{{ code.scheme }}")
+        %Barcode(scheme="{{ code.scheme }}" value="{{ code.value }}" w="220px" h="56px")
+        %p.text-xs.text-slate-500(style="margin-top:6px") {{ code.note }}
