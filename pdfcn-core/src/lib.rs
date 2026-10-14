@@ -27,7 +27,7 @@ pub use error::CoreError;
 pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
-pub use pdfcn_styles::{Theme, ThemeMode};
+pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
 use std::collections::hash_map::DefaultHasher;
@@ -109,6 +109,18 @@ const BUILTIN_FONTS: &[(&str, &[u8])] = &[
 
 /// The default document font-family, set on `body` by [`html_render::wrap_document`].
 pub const DEFAULT_FONT_FAMILY: &str = "Inter";
+
+/// The family a built-in face belongs to: `"Inter Bold Italic"` -> `"Inter"`.
+fn family_of(face: &str) -> &str {
+    let mut family = face;
+    while let Some(shorter) = family
+        .strip_suffix(" Italic")
+        .or_else(|| family.strip_suffix(" Bold"))
+    {
+        family = shorter;
+    }
+    family
+}
 
 /// Builds a font pool from raw font bytes with **no system font scan**.
 ///
@@ -337,7 +349,10 @@ pub fn render_html_with_theme(
     // before the stylesheet is built — which also means the injected
     // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
     // every other utility (see pdfcn_styles::rewrite_gaps).
-    let body_html = pdfcn_styles::rewrite_gaps(&body.into_string());
+    let body_html = pdfcn_styles::rewrite_composites(
+        &pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body.into_string())),
+        theme,
+    );
     let classes = pdfcn_styles::extract_classes(&body_html);
     let stylesheet = cached_stylesheet(&classes, theme);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))
@@ -416,7 +431,15 @@ pub fn render_pdf_with_assets(
     let mut fonts = BTreeMap::new();
     let mut raw_fonts: BTreeMap<String, &[u8]> = BTreeMap::new();
     for (family, bytes) in BUILTIN_FONTS {
-        if *family != DEFAULT_FONT_FAMILY && !used_families.contains(*family) {
+        // A face belongs to its family: `font-bold` / `italic` select the
+        // Bold / Italic face of the family the CSS names (or of Inter, the
+        // default), so those faces must be registered too -- not only when
+        // their own spelling ("Inter Bold") is spelled out in the CSS.
+        let base = family_of(family);
+        if base != DEFAULT_FONT_FAMILY
+            && !used_families.contains(*family)
+            && !used_families.contains(base)
+        {
             continue;
         }
         fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));
@@ -581,6 +604,33 @@ pub fn render_files(
     render_files_with_remote_images(template_path, data_path, options, None)
 }
 
+/// Reads `template_path` and `data_path` and runs the pipeline up to the
+/// HTML document (no PDF yet), returning it with the template's directory
+/// (where relative `include`s and `<img src>` resolve from).
+pub fn render_files_html(
+    template_path: &Path,
+    data_path: &Path,
+    theme: &Theme,
+) -> Result<(String, PathBuf), CoreError> {
+    let source = std::fs::read_to_string(template_path)
+        .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
+    let data_source = std::fs::read_to_string(data_path)
+        .map_err(|e| CoreError::Render(format!("reading {data_path:?}: {e}")))?;
+    let format = data_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(DataFormat::from_extension)
+        .unwrap_or(DataFormat::Json);
+    let data = load_data(&data_source, format)?;
+    let base_dir = template_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let loader = FsPartialLoader::new(base_dir.clone());
+    let html = render_html_with_theme(&source, &data, &loader, theme)?;
+    Ok((html, base_dir))
+}
+
 /// A caller-supplied `http(s):` image fetcher for
 /// [`render_files_with_remote_images`]: given a `src` URL, returns its
 /// bytes, or `None` to leave that `<img>` unresolved.
@@ -601,22 +651,7 @@ pub fn render_files_with_remote_images(
     options: &RenderOptions,
     fetch_remote: Option<&RemoteImageFetcher>,
 ) -> Result<Vec<u8>, CoreError> {
-    let source = std::fs::read_to_string(template_path)
-        .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
-    let data_source = std::fs::read_to_string(data_path)
-        .map_err(|e| CoreError::Render(format!("reading {data_path:?}: {e}")))?;
-    let format = data_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(DataFormat::from_extension)
-        .unwrap_or(DataFormat::Json);
-    let data = load_data(&data_source, format)?;
-    let base_dir = template_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    let loader = FsPartialLoader::new(base_dir.clone());
-    let html = render_html_with_theme(&source, &data, &loader, &options.theme)?;
+    let (html, base_dir) = render_files_html(template_path, data_path, &options.theme)?;
     let images = load_images(&html, &base_dir, fetch_remote);
     render_pdf_with_assets(&html, &BTreeMap::new(), &images, options)
 }

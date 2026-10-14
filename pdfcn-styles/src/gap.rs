@@ -38,22 +38,22 @@ fn is_tag_name_char(c: char) -> bool {
 }
 
 /// One node in a scope (the inside of an element, or the document top).
-enum Node<'a> {
+pub(crate) enum Node<'a> {
     Text(Range<usize>),
     Element(Element<'a>),
 }
 
-struct Element<'a> {
+pub(crate) struct Element<'a> {
     /// Full span of the element (open tag through closing tag) in its scope.
-    span: Range<usize>,
-    classes: Vec<&'a str>,
+    pub(crate) span: Range<usize>,
+    pub(crate) classes: Vec<&'a str>,
     /// Span of the `class="…"` attribute value, if the element has one.
-    class_value: Option<Range<usize>>,
+    pub(crate) class_value: Option<Range<usize>>,
     /// Offset just after the tag name — where a `class="…"` attribute can be
     /// inserted when the element has none.
-    attrs_start: usize,
+    pub(crate) attrs_start: usize,
     /// Span of the element's content, `None` for void/self-closing elements.
-    inner: Option<Range<usize>>,
+    pub(crate) inner: Option<Range<usize>>,
 }
 
 /// Finds the end of an open tag's markup (inclusive of `>`), honoring quoted
@@ -114,7 +114,7 @@ fn tag_name_after(s: &str, lt_pos: usize) -> (&str, usize) {
 /// Scans one scope into sibling nodes. Malformed input degrades gracefully:
 /// anything the scanner can't structure is preserved verbatim as text, so
 /// the rewrite is always lossless on markup it doesn't understand.
-fn scan_scope(s: &str) -> Vec<Node<'_>> {
+pub(crate) fn scan_scope(s: &str) -> Vec<Node<'_>> {
     let mut nodes = Vec::new();
     let mut pos = 0usize;
     while pos < s.len() {

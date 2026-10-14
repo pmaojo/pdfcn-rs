@@ -248,7 +248,11 @@ const RADIUS: &[(&str, &str)] = &[
     ("xl", "12px"),
     ("2xl", "16px"),
     ("3xl", "24px"),
-    ("full", "9999px"),
+    // Not the usual 9999px: the engine stores a corner radius as a 16-bit
+    // tenths-of-px value, so anything past ~3276px is dropped as "unset"
+    // and `rounded-full` rendered square. 1000px survives the encoding and the
+    // engine clamps it to the box (a pill, or a circle on a square).
+    ("full", "1000px"),
 ];
 
 /// Resolves a `rounded-*` suffix to its literal `border-radius` value.
@@ -257,20 +261,19 @@ pub fn radius(name: &str) -> Option<&'static str> {
 }
 
 /// shadcn's elevation scale, keyed by the Tailwind `shadow-*` suffix.
+///
+/// Tailwind's `md`/`lg`/`xl` are two stacked shadows; the layout engine
+/// only honors a single `box-shadow` layer (the two-layer value parses to
+/// nothing, verified -- the element rendered with no shadow at all). Each
+/// step here is therefore the two layers folded into one. They are also
+/// tighter than Tailwind's (a smaller offset and blur): painted as stacked
+/// translucent rects, a full-size shadow reads as a wide gray band.
 const SHADOW: &[(&str, &str)] = &[
     ("sm", "0 1px 2px 0 rgba(0,0,0,0.05)"),
-    (
-        "md",
-        "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)",
-    ),
-    (
-        "lg",
-        "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)",
-    ),
-    (
-        "xl",
-        "0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
-    ),
+    ("md", "0 2px 4px -1px rgba(0,0,0,0.09)"),
+    ("lg", "0 4px 8px -3px rgba(0,0,0,0.10)"),
+    ("xl", "0 8px 14px -4px rgba(0,0,0,0.11)"),
+    ("2xl", "0 14px 26px -8px rgba(0,0,0,0.16)"),
 ];
 
 /// Resolves a `shadow-*` suffix to its literal `box-shadow` value.

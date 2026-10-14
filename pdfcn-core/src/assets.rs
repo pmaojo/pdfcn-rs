@@ -93,6 +93,7 @@ struct BoxStyle {
     width_px: Option<f64>,
     height_px: Option<f64>,
     object_fit: Option<String>,
+    object_position: Option<String>,
 }
 
 fn parse_style(style: &str) -> BoxStyle {
@@ -100,6 +101,7 @@ fn parse_style(style: &str) -> BoxStyle {
         width_px: None,
         height_px: None,
         object_fit: None,
+        object_position: None,
     };
     for decl in style.split(';') {
         let Some((prop, value)) = decl.split_once(':') else {
@@ -111,6 +113,7 @@ fn parse_style(style: &str) -> BoxStyle {
             "width" => out.width_px = px_value(value),
             "height" => out.height_px = px_value(value),
             "object-fit" => out.object_fit = Some(value.to_ascii_lowercase()),
+            "object-position" => out.object_position = Some(value.to_ascii_lowercase()),
             _ => {}
         }
     }
@@ -356,6 +359,16 @@ fn apply_cover_crops(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Stri
             continue;
         };
         if style.object_fit.as_deref() != Some("cover") || width <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        // This pass can only crop around the center. An `object-position`
+        // other than the center is left to the layout engine, which crops
+        // from the right anchor (it fits and clips the full image itself).
+        if style
+            .object_position
+            .as_deref()
+            .is_some_and(|p| !matches!(p, "center" | "center center" | "50% 50%"))
+        {
             continue;
         }
         let Some(source_bytes) = images.get(&src) else {
@@ -664,6 +677,22 @@ mod tests {
             assert_eq!(out, html, "style {style} must be untouched");
         }
         assert_eq!(images.len(), 1);
+    }
+
+    #[test]
+    fn a_non_center_object_position_is_left_to_the_engine() {
+        let src = "photo.png";
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(400, 100, [1, 2, 3]))]);
+        let html = format!(
+            r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover;object-position:left">"#
+        );
+        assert_eq!(prepare_assets(&html, &mut images), html);
+        assert_eq!(images.len(), 1);
+        // The center position is what the crop does anyway, so it still applies.
+        let html = format!(
+            r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover;object-position:center">"#
+        );
+        assert_ne!(prepare_assets(&html, &mut images), html);
     }
 
     #[test]

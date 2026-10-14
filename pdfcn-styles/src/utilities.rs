@@ -261,6 +261,13 @@ fn size_value(key: &str, axis_viewport: &str) -> Option<String> {
     }
 }
 
+/// Crate-visible color resolver (palette, theme tokens, scales, arbitrary
+/// hex, `/NN` opacity) for passes that compose several classes into one
+/// declaration (`composite.rs`).
+pub(crate) fn color_value(key: &str, theme: &Theme) -> Option<String> {
+    resolve_color_alpha(key, theme)
+}
+
 /// Resolves a color suffix with an optional `/NN` opacity (`black/50`).
 /// Hex and `hsl(...)` colors gain an alpha channel; anything else (named
 /// `transparent`) is returned unchanged.
@@ -289,6 +296,15 @@ fn resolve_color_alpha(key: &str, theme: &Theme) -> Option<String> {
         return Some(format!("hsla({inner}, {a})"));
     }
     Some(base)
+}
+
+/// A size-like value for transform utilities: Tailwind's spacing scale, a
+/// fraction of the box (`1/2` -> `50%`) or an arbitrary `[...]` length.
+pub(crate) fn offset_value(key: &str) -> Option<String> {
+    if key == "full" {
+        return Some("100%".to_string());
+    }
+    fraction_percent(key).or_else(|| scale_or_arbitrary(key))
 }
 
 fn spacing_decls(props: &[&str], scale: &str) -> Option<String> {
@@ -624,6 +640,17 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         };
         return Some(literal.to_string());
     }
+    // `text-shadow` is not a Tailwind v3 utility; v4 spells it like this.
+    if let Some(rest) = class.strip_prefix("text-shadow") {
+        let value = match rest {
+            "" | "-sm" => "0 1px 2px rgba(0,0,0,0.20)",
+            "-md" => "0 2px 4px rgba(0,0,0,0.22)",
+            "-lg" => "0 3px 6px rgba(0,0,0,0.25)",
+            "-none" => "none",
+            _ => return None,
+        };
+        return Some(format!("text-shadow:{value}"));
+    }
     if let Some(rest) = class.strip_prefix("text-") {
         if let Some(size) = lookup(FONT_SIZE, rest) {
             return Some(format!("font-size:{size}"));
@@ -658,6 +685,18 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         } {
             return Some(format!("{prop}-width:1px;border-style:solid"));
         }
+        // `border-2`, `border-4`, ...: Tailwind's all-sides width scale.
+        if let Some(n) = rest
+            .parse::<u32>()
+            .ok()
+            .filter(|n| matches!(n, 0 | 1 | 2 | 4 | 8))
+        {
+            return Some(if n == 0 {
+                "border-width:0".to_string()
+            } else {
+                format!("border-width:{n}px;border-style:solid")
+            });
+        }
         if let Some(color) = resolve_color_alpha(rest, theme) {
             return Some(format!("border-color:{color}"));
         }
@@ -680,6 +719,20 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         let value = tokens::shadow(rest)?;
         return Some(format!("box-shadow:{value}"));
     }
+    if let Some(rest) = class.strip_prefix("grid-rows-") {
+        let n: u32 = rest.parse().ok().filter(|n| (1..=12).contains(n))?;
+        return Some(format!("grid-template-rows:repeat({n}, minmax(0, 1fr))"));
+    }
+    if let Some(rest) = class.strip_prefix("row-span-") {
+        if rest == "full" {
+            return Some("grid-row:1/-1".to_string());
+        }
+        return rest
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=12).contains(n))
+            .map(|n| format!("grid-row:span {n}/span {n}"));
+    }
     if let Some(rest) = class.strip_prefix("grid-cols-") {
         let n: u32 = rest.parse().ok()?;
         return Some(format!("grid-template-columns:repeat({n}, minmax(0, 1fr))"));
@@ -695,9 +748,12 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             "bold" => "700",
             "extrabold" => "800",
             "black" => "900",
-            "sans" => return Some("font-family:sans-serif".to_string()),
-            "serif" => return Some("font-family:serif".to_string()),
-            "mono" => return Some("font-family:monospace".to_string()),
+            // The generic keywords resolve to no embedded face (the engine falls
+            // back to whatever it registered first), so name the bundled
+            // families instead: Inter, Source Serif 4, JetBrains Mono.
+            "sans" => return Some("font-family:'Inter',sans-serif".to_string()),
+            "serif" => return Some("font-family:'Source Serif 4',serif".to_string()),
+            "mono" => return Some("font-family:'JetBrains Mono',monospace".to_string()),
             _ => return None,
         };
         return Some(format!("font-weight:{weight}"));
@@ -748,6 +804,10 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         "align-middle" => Some("vertical-align:middle"),
         "align-bottom" => Some("vertical-align:bottom"),
         "align-baseline" => Some("vertical-align:baseline"),
+        "align-sub" => Some("vertical-align:sub"),
+        "align-super" => Some("vertical-align:super"),
+        "align-text-top" => Some("vertical-align:text-top"),
+        "align-text-bottom" => Some("vertical-align:text-bottom"),
         "inline" => Some("display:inline"),
         "table" => Some("display:table"),
         "table-row" => Some("display:table-row"),
@@ -1196,7 +1256,7 @@ mod tests {
         assert_eq!(resolve("font-black").as_deref(), Some("font-weight:900"));
         assert_eq!(
             resolve("font-mono").as_deref(),
-            Some("font-family:monospace")
+            Some("font-family:'JetBrains Mono',monospace")
         );
     }
 
@@ -1245,5 +1305,44 @@ mod tests {
         // The all-corners utility and the unrelated colors still resolve.
         assert_eq!(resolve("rounded-lg").as_deref(), Some("border-radius:8px"));
         assert_eq!(resolve("rounded-t-nonsense"), None);
+    }
+
+    #[test]
+    fn resolves_all_sides_border_widths() {
+        assert_eq!(
+            resolve("border-2").as_deref(),
+            Some("border-width:2px;border-style:solid")
+        );
+        assert_eq!(resolve("border-0").as_deref(), Some("border-width:0"));
+        assert_eq!(resolve("border-3"), None);
+        // Colors and the directional forms are unaffected.
+        assert_eq!(
+            resolve("border-red-500").as_deref(),
+            Some("border-color:#ef4444")
+        );
+        assert_eq!(
+            resolve("border-b-2").as_deref(),
+            Some("border-bottom-width:2px;border-style:solid")
+        );
+    }
+
+    #[test]
+    fn resolves_text_shadow_and_vertical_align_sub_super() {
+        assert_eq!(
+            resolve("text-shadow").as_deref(),
+            Some("text-shadow:0 1px 2px rgba(0,0,0,0.20)")
+        );
+        assert_eq!(
+            resolve("text-shadow-none").as_deref(),
+            Some("text-shadow:none")
+        );
+        assert_eq!(resolve("text-shadow-xl"), None);
+        assert_eq!(
+            resolve("align-super").as_deref(),
+            Some("vertical-align:super")
+        );
+        assert_eq!(resolve("align-sub").as_deref(), Some("vertical-align:sub"));
+        // The text size/color branch is unaffected.
+        assert_eq!(resolve("text-lg").as_deref(), Some("font-size:1.125rem"));
     }
 }

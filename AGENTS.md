@@ -86,5 +86,12 @@ cargo tree --edges features -p pdfcn-vercel   # resvg/lopdf are expected now
   header/footer rendering is wired but a no-op in 0.12.6; it has zero
   embedded-file support). `printpdf`, `lopdf`, `resvg` sources are in
   `~/.cargo/registry/src/`.
+- **`printpdf` and `azul-*` come from forks** (`pmaojo/printpdf`,
+  `pmaojo/azul`, branch `pdfcn` of each) through `[patch.crates-io]` in the
+  root `Cargo.toml`, pinned by commit. Each branch is the sum of small
+  `fix/*` branches proposed upstream (fschutt/printpdf, fschutt/azul). To
+  change engine behavior: fix it in the fork on its own `fix/*` branch with a
+  test, merge into `pdfcn`, then bump the `rev` here. Do not patch engine
+  code in this repo. Drop a `[patch]` entry once its fix is released.
 - **Never commit a git amend/force-push** without being asked; this repo
   develops on feature branches merged via PR.

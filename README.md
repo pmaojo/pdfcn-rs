@@ -204,6 +204,19 @@ Not yet validated against a real Factur-X/PDF-A validator (veraPDF,
 Mustang) in this environment -- see the spike doc for exactly what is and
 isn't confirmed.
 
+## Examples
+
+`examples/` holds runnable templates; `pdfcn build examples/<name>.haml -d examples/<name>.json -o out.pdf`.
+The live demo (`index.html`) loads the same ones in its editor.
+
+| Example | Shows |
+|---|---|
+| `dashboard` | gradient hero, KPI cards with shadows, bar chart, progress, `divide-y` list, ring callout |
+| `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
+| `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
+| `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
+
 ## Known limitations
 
 - **`gap` (flex and grid) has no effect.** Neither `display:flex` nor
@@ -215,18 +228,20 @@ isn't confirmed.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next
   page. See the row-grouping note above for the workaround.
-- **`box-shadow` has no effect.** `shadow-sm`/`shadow-md`/etc. resolve to a
-  real CSS declaration, but the renderer doesn't paint it — cards render
-  flat, without a drop shadow.
-- **`object-fit` has no effect in the renderer itself.** An image is scaled
-  to exactly fill its box on both axes (not cropped to cover, nor
-  letterboxed to contain). `pdfcn-core`'s asset-preparation pass works
-  around this by center-cropping the source ahead of time when *both* the
-  box's width and height are known in px (inline `style=""`, not classes) --
-  but a box with only one dimension known in px (e.g. `%Card`'s cover
-  image, whose width is the relative `w-full`) still can't be cropped, only
-  resolution-capped. Pick a source image close to the box's aspect ratio to
-  keep the distortion imperceptible in that case.
+- **`box-shadow` is approximated.** The layout engine emits it but upstream
+  printpdf dropped it; the `pmaojo/printpdf` fork (see `docs/spikes/003-style-coverage.md`)
+  paints outset shadows as stacked translucent rects (blur is a stepped
+  approximation, inset shadows are not drawn, and the shadow also shows
+  through a transparent-background box). Only a single shadow layer is
+  honored, so `shadow-md`/`lg`/`xl` fold Tailwind's two layers into one.
+- **Text decoration stops about one glyph short** of the end of the text
+  (engine width quirk on the underline/line-through bounds).
+- **`object-fit` / `object-position` work through the patched engine**
+  (`contain`, `cover`, `none`, `scale-down`, with a clip to the box), also
+  for boxes whose size only layout knows (a class like `w-full`). A box with
+  both dimensions in px still gets `pdfcn-core`'s asset pass first, which
+  center-crops the source to shrink the embedded image; a non-center
+  `object-position` skips that pass so the engine anchors the crop itself.
 - **`border-radius` needs a `px` value, not `rem`.** `pdfcn-styles`'
   `rounded-*` scale already emits `px` for this reason; a hand-written
   `style="border-radius:0.5rem"` renders square corners; `style="border-radius:8px"`

@@ -42,3 +42,102 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
     Given the templates in "examples/" and the component sources
     When their class attributes are audited against the stylesheet builder
     Then only the known semantic marker classes are left unresolved
+
+  @covers(pdfcn-cli/src/build.rs)
+  Scenario: Warning about, or failing on, unrecognized utility classes
+    Given a template using the classes "p-4 flexx hover:bg-red-500"
+    When "pdfcn build" runs without "--strict"
+    Then it warns that "flexx" and "hover:bg-red-500" were ignored and still writes the PDF
+    When "pdfcn build" runs with "--strict"
+    Then it fails naming the unrecognized classes
+
+  @covers(pdfcn-styles/src/decoration.rs)
+  Scenario: Underline and line-through on a block element reach the output
+    Given a "%p" with the class "underline" or "line-through"
+    When the document is rendered
+    Then the text is wrapped in decorated inline spans so the engine draws the line
+
+  @covers(pdfcn-styles/src/tokens.rs)
+  Scenario Outline: Shadow utilities are painted
+    Given a white box with the class "<shadow>"
+    When the document is rendered
+    Then the drawn output differs from the same box without a shadow
+
+    Examples:
+      | shadow    |
+      | shadow-sm |
+      | shadow    |
+      | shadow-md |
+      | shadow-lg |
+      | shadow-2xl|
+
+  @covers(pdfcn-styles/src/composite.rs)
+  Scenario Outline: Composite utilities are painted
+    Given a template using the classes "<classes>"
+    When the document is rendered
+    Then the drawn output differs from the same markup without them
+    And the composed classes are not reported as unrecognized
+
+    Examples:
+      | classes                                      |
+      | divide-y divide-slate-300                    |
+      | flex divide-x-2 divide-red-500               |
+      | bg-gradient-to-r from-blue-500 to-red-500    |
+      | ring-2 ring-red-500                          |
+      | outline outline-blue-500                     |
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario Outline: Grid row utilities
+    Given a grid using the class "<class>"
+    When the document is rendered
+    Then the row layout differs from the same grid without it
+
+    Examples:
+      | class       |
+      | grid-rows-4 |
+      | row-span-2  |
+
+  @covers(pdfcn-core/src/lib.rs)
+  Scenario Outline: Opacity utilities are painted, also across page breaks
+    Given a box with the class "<opacity>"
+    When the document is rendered
+    Then the drawn output differs from the same box without it
+
+    Examples:
+      | opacity    |
+      | opacity-50 |
+      | opacity-25 |
+
+  @covers(pdfcn-core/src/assets.rs)
+  Scenario Outline: object-fit and object-position are honored, also for relative-width boxes
+    Given an image in a box with "<style>"
+    When the document is rendered
+    Then the drawn output differs from the same image without object-fit
+    And a non-center object-position leaves the crop to the layout engine
+
+    Examples:
+      | style                                              |
+      | width:100%;height:150px;object-fit:cover           |
+      | width:100%;height:150px;object-fit:contain         |
+      | width:100%;height:150px;object-fit:cover;object-position:left |
+
+  @covers(pdfcn-styles/src/composite.rs)
+  Scenario Outline: Transform utilities compose into one transform and are painted
+    Given a box with the classes "<classes>"
+    When the document is rendered
+    Then the box is wrapped in a non-identity transformation matrix
+
+    Examples:
+      | classes              |
+      | rotate-12            |
+      | scale-75             |
+      | skew-x-6             |
+      | -translate-y-2       |
+      | scale-110 rotate-6   |
+
+  @covers(pdfcn-styles/src/utilities.rs)
+  Scenario: text-shadow and vertical-align reach the output
+    Given a paragraph with "text-shadow" and a span with "align-super" or "align-sub"
+    When the document is rendered
+    Then the text is drawn again offset in the shadow color
+    And the span sits above or below the baseline
