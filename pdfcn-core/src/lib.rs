@@ -110,6 +110,18 @@ const BUILTIN_FONTS: &[(&str, &[u8])] = &[
 /// The default document font-family, set on `body` by [`html_render::wrap_document`].
 pub const DEFAULT_FONT_FAMILY: &str = "Inter";
 
+/// The family a built-in face belongs to: `"Inter Bold Italic"` -> `"Inter"`.
+fn family_of(face: &str) -> &str {
+    let mut family = face;
+    while let Some(shorter) = family
+        .strip_suffix(" Italic")
+        .or_else(|| family.strip_suffix(" Bold"))
+    {
+        family = shorter;
+    }
+    family
+}
+
 /// Builds a font pool from raw font bytes with **no system font scan**.
 ///
 /// `printpdf::PdfDocument::from_html` builds one internally (via
@@ -419,7 +431,15 @@ pub fn render_pdf_with_assets(
     let mut fonts = BTreeMap::new();
     let mut raw_fonts: BTreeMap<String, &[u8]> = BTreeMap::new();
     for (family, bytes) in BUILTIN_FONTS {
-        if *family != DEFAULT_FONT_FAMILY && !used_families.contains(*family) {
+        // A face belongs to its family: `font-bold` / `italic` select the
+        // Bold / Italic face of the family the CSS names (or of Inter, the
+        // default), so those faces must be registered too -- not only when
+        // their own spelling ("Inter Bold") is spelled out in the CSS.
+        let base = family_of(family);
+        if base != DEFAULT_FONT_FAMILY
+            && !used_families.contains(*family)
+            && !used_families.contains(base)
+        {
             continue;
         }
         fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));

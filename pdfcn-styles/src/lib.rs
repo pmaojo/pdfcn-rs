@@ -128,6 +128,7 @@ pub fn is_marker_class(class: &str) -> bool {
     ];
     const PREFIXES: &[&str] = &[
         "alert-",
+        "avatar",
         "breadcrumb",
         "card-",
         "checkbox-",

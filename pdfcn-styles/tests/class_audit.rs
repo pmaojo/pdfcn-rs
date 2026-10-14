@@ -34,7 +34,15 @@ fn class_attrs(text: &str) -> String {
     while let Some(pos) = rest.find("class=\"") {
         let after = &rest[pos + 7..];
         let Some(end) = after.find('"') else { break };
-        out.push_str(&format!("<i class=\"{}\">", &after[..end]));
+        // A `{{ ... }}` interpolation is a value, not a class name.
+        let mut value = after[..end].to_string();
+        while let (Some(open), Some(close)) = (value.find("{{"), value.find("}}")) {
+            if close < open {
+                break;
+            }
+            value.replace_range(open..close + 2, "");
+        }
+        out.push_str(&format!("<i class=\"{value}\">"));
         rest = &after[end + 1..];
     }
     out

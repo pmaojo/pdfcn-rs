@@ -44,7 +44,15 @@ use printpdf::{parse_pdf_from_bytes, render_to_svg, PdfParseOptions, PdfToSvgOpt
 /// Every example that ships in `examples/`. These are the documents the
 /// README tells a new user to run first, so a regression in one of them is a
 /// regression in the project's own front door.
-const EXAMPLES: &[&str] = &["invoice", "catalog", "showcase"];
+const EXAMPLES: &[&str] = &[
+    "invoice",
+    "catalog",
+    "showcase",
+    "dashboard",
+    "pricing",
+    "certificate",
+    "ticket",
+];
 
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR is `<repo>/pdfcn-core`.

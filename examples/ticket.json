@@ -1,0 +1,15 @@
+{
+  "airline": "Northwind Air · NW 1042",
+  "cabin": "Business",
+  "from": {"code": "MAD", "city": "Madrid"},
+  "to": {"code": "SFO", "city": "San Francisco"},
+  "details": [
+    {"label": "Date", "value": "19 Aug"},
+    {"label": "Boarding", "value": "10:25"},
+    {"label": "Gate", "value": "B42"},
+    {"label": "Seat", "value": "4A"}
+  ],
+  "passenger": "LOVELACE / ADA",
+  "note": "Booking reference NW7K2P · Flexible fare",
+  "code": "NW1042-MADSFO-4A-LOVELACE"
+}

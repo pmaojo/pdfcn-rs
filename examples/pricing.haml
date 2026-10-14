@@ -1,0 +1,37 @@
+%DocumentLayout(size="a4")
+  .text-center.mb-6
+    %p.text-xs.uppercase.tracking-widest.text-violet-600.font-semibold {{ eyebrow }}
+    %p.text-4xl.font-bold.text-slate-900(style="margin-top:6px") {{ title }}
+    %p.text-base.text-slate-500(style="margin-top:6px") {{ subtitle }}
+
+  .grid.grid-cols-3.gap-4.mb-6
+    - for plan in plans
+      - if plan.featured
+        .rounded-2xl.bg-slate-900.text-white.shadow-xl.ring-4.ring-violet-500.break-inside-avoid
+          .rounded-t-2xl.bg-gradient-to-br.from-violet-600.to-fuchsia-500(style="padding:18px")
+            .flex.justify-between.items-center
+              %p.text-lg.font-bold {{ plan.name }}
+              .rounded-full.bg-white.text-violet-700.text-xs.font-semibold(style="padding:3px 10px;display:inline-block") Most popular
+            %p.text-4xl.font-bold(style="margin-top:8px") {{ plan.price }}
+            %p.text-xs.text-violet-100 {{ plan.period }}
+          .divide-y.divide-slate-700(style="padding:6px 18px 18px")
+            - for feature in plan.features
+              %p.text-sm.py-2 ✓ {{ feature }}
+      - else
+        .rounded-2xl.bg-white.shadow-lg.border.border-slate-200.break-inside-avoid
+          .rounded-t-2xl.bg-slate-100(style="padding:18px")
+            %p.text-lg.font-bold.text-slate-900 {{ plan.name }}
+            %p.text-4xl.font-bold.text-slate-900(style="margin-top:8px") {{ plan.price }}
+            %p.text-xs.text-slate-500 {{ plan.period }}
+          .divide-y.divide-slate-200(style="padding:6px 18px 18px")
+            - for feature in plan.features
+              %p.text-sm.text-slate-700.py-2 ✓ {{ feature }}
+
+  .rounded-xl.bg-gradient-to-r.from-slate-100.to-violet-100.border.border-dashed.border-violet-300(style="padding:16px")
+    .flex.justify-between.items-center
+      .flex-col
+        %p.font-semibold.text-slate-900 {{ cta.title }}
+        %p.text-sm.text-slate-600(style="margin-top:2px") {{ cta.body }}
+      %p.text-sm.font-semibold.text-violet-700.underline {{ cta.link }}
+
+  %p.text-xs.text-slate-400.text-center.mt-4 {{ fineprint }}

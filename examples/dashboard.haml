@@ -1,0 +1,46 @@
+%DocumentLayout(size="a4")
+  .rounded-2xl.bg-gradient-to-r.from-indigo-600.via-violet-600.to-fuchsia-500.text-white.shadow-xl(style="padding:28px;margin-bottom:20px")
+    .flex.justify-between.items-center
+      .flex-col
+        %p.text-xs.uppercase.tracking-widest.text-indigo-200 {{ period }}
+        %p.text-4xl.font-bold(style="margin-top:4px") {{ company }}
+        %p.text-sm.text-indigo-100(style="margin-top:4px") {{ headline }}
+      .rounded-full.bg-white.text-indigo-700.text-xs.font-semibold(style="padding:6px 14px;display:inline-block") {{ status }}
+
+  .grid.grid-cols-3.gap-4.mb-6
+    - for kpi in kpis
+      .rounded-xl.bg-white.shadow-lg.border.border-slate-200.break-inside-avoid(style="padding:16px")
+        %p.text-xs.uppercase.tracking-wider.text-slate-500 {{ kpi.label }}
+        %p.text-3xl.font-bold.text-slate-900(style="margin-top:6px") {{ kpi.value }}
+        %p.text-sm.font-medium(class="{{ kpi.tone }}" style="margin-top:4px") {{ kpi.delta }}
+
+  .grid.grid-cols-2.gap-4.mb-6
+    .rounded-xl.bg-white.shadow-md.border.border-slate-200(style="padding:16px")
+      %p.text-lg.font-semibold.text-slate-900.mb-2 Revenue by month
+      %BarChart(values={{ revenue }} labels={{ months }} height="150px")
+    .rounded-xl.bg-white.shadow-md.border.border-slate-200(style="padding:16px")
+      %p.text-lg.font-semibold.text-slate-900.mb-2 Goal progress
+      - for goal in goals
+        .mb-3
+          .flex.justify-between.text-sm.mb-1
+            %p.font-medium.text-slate-700 {{ goal.name }}
+            %p.text-slate-500 {{ goal.value }}%
+          %Progress(value="{{ goal.value }}")
+
+  .break-before-page
+
+  .rounded-xl.bg-white.shadow-md.border.border-slate-200.mb-6(style="padding:16px")
+    %p.text-lg.font-semibold.text-slate-900.mb-2 Top accounts
+    .divide-y.divide-slate-200
+      - for account in accounts
+        .flex.justify-between.items-center.py-2.break-inside-avoid
+          .flex.items-center.gap-3
+            %Avatar(name="{{ account.initials }}")
+            .flex-col
+              %p.font-medium.text-slate-900 {{ account.name }}
+              %p.text-xs.text-slate-500 {{ account.plan }}
+          %p.font-semibold.text-slate-900 {{ account.mrr }}
+
+  .rounded-xl.ring-2.ring-indigo-500.bg-indigo-50(style="padding:16px")
+    %p.text-sm.font-semibold.text-indigo-900 Heads-up
+    %p.text-sm.text-indigo-800(style="margin-top:4px") {{ note }}

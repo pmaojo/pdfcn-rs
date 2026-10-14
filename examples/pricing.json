@@ -1,0 +1,15 @@
+{
+  "eyebrow": "Pricing",
+  "title": "Simple plans that grow with you",
+  "subtitle": "Switch or cancel any time. Every plan includes unlimited PDFs.",
+  "plans": [
+    {"name": "Starter", "price": "$0", "period": "free forever", "featured": false,
+     "features": ["100 documents / month", "Community support", "Templates gallery", "Watermarked output"]},
+    {"name": "Pro", "price": "$29", "period": "per user / month", "featured": true,
+     "features": ["Unlimited documents", "Priority support", "Custom fonts and themes", "Batch rendering API", "Factur-X invoices"]},
+    {"name": "Scale", "price": "$99", "period": "per user / month", "featured": false,
+     "features": ["Everything in Pro", "SSO and audit log", "Dedicated region", "99.9% uptime SLA"]}
+  ],
+  "cta": {"title": "Need a custom plan?", "body": "Volume pricing and on-premise builds are available.", "link": "talk to sales →"},
+  "fineprint": "Prices in USD, excluding taxes. Billed annually or monthly."
+}

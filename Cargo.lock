@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "azul-core"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
+source = "git+https://github.com/pmaojo/azul?rev=b17cefc2636b284d50f3e90a2de0f726bd1f3ddb#b17cefc2636b284d50f3e90a2de0f726bd1f3ddb"
 dependencies = [
  "azul-css",
  "gl-context-loader",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "azul-css"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
+source = "git+https://github.com/pmaojo/azul?rev=b17cefc2636b284d50f3e90a2de0f726bd1f3ddb#b17cefc2636b284d50f3e90a2de0f726bd1f3ddb"
 dependencies = [
  "azul-simplecss",
  "libm",
@@ -280,7 +280,7 @@ dependencies = [
 [[package]]
 name = "azul-layout"
 version = "0.0.16"
-source = "git+https://github.com/pmaojo/azul?rev=0a54cc5a14a6f1bd6dde21619dca210a68a0ce36#0a54cc5a14a6f1bd6dde21619dca210a68a0ce36"
+source = "git+https://github.com/pmaojo/azul?rev=b17cefc2636b284d50f3e90a2de0f726bd1f3ddb#b17cefc2636b284d50f3e90a2de0f726bd1f3ddb"
 dependencies = [
  "allsorts-azul",
  "azul-core",

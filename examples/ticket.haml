@@ -1,0 +1,37 @@
+%DocumentLayout(size="a4")
+  .rounded-2xl.shadow-xl.bg-white.border.border-slate-200
+    .rounded-t-2xl.bg-gradient-to-r.from-sky-600.to-indigo-600.text-white(style="padding:22px")
+      .flex.justify-between.items-center
+        %p.text-xs.uppercase.tracking-widest.text-sky-100 {{ airline }}
+        .rounded-full.bg-white.text-indigo-700.text-xs.font-semibold(style="padding:4px 12px;display:inline-block") {{ cabin }}
+      .flex.justify-between.items-center(style="margin-top:14px")
+        .flex-col
+          %p.text-5xl.font-bold {{ from.code }}
+          %p.text-sm.text-sky-100 {{ from.city }}
+        %p.text-3xl ✈
+        .flex-col.text-right
+          %p.text-5xl.font-bold {{ to.code }}
+          %p.text-sm.text-sky-100 {{ to.city }}
+
+    .grid.grid-cols-4.gap-4(style="padding:20px")
+      - for item in details
+        .flex-col
+          %p.text-xs.uppercase.tracking-wider.text-slate-400 {{ item.label }}
+          %p.text-lg.font-bold.text-slate-900 {{ item.value }}
+
+    .border-t.border-dashed.border-slate-300
+
+    .flex.justify-between.items-center(style="padding:20px")
+      .flex-col
+        %p.text-xs.uppercase.tracking-wider.text-slate-400 Passenger
+        %p.text-xl.font-bold.text-slate-900 {{ passenger }}
+        %p.text-sm.text-slate-500(style="margin-top:6px") {{ note }}
+      %QRCode(value="{{ code }}" size="110px")
+
+  .grid.grid-cols-2.gap-4(style="margin-top:20px")
+    .rounded-xl.bg-amber-50.border.border-amber-300(style="padding:14px")
+      %p.text-sm.font-semibold.text-amber-900 Boarding closes 40 min before departure
+      %p.text-xs.text-amber-800(style="margin-top:4px") Be at the gate with your passport and this pass.
+    .rounded-xl.bg-slate-50.border.border-slate-200(style="padding:14px")
+      %p.text-sm.font-semibold.text-slate-900 Baggage
+      %p.text-xs.text-slate-600(style="margin-top:4px") 1 cabin bag + 1 checked bag up to 23 kg.

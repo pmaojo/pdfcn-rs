@@ -1,0 +1,29 @@
+{
+  "company": "Northwind Labs",
+  "period": "Q3 2026 · Executive summary",
+  "headline": "Revenue up 18% quarter over quarter",
+  "status": "On track",
+  "kpis": [
+    {"label": "Revenue", "value": "$482k", "delta": "+18.2% vs Q2", "tone": "text-green-600"},
+    {"label": "Active users", "value": "12,840", "delta": "+6.4% vs Q2", "tone": "text-green-600"},
+    {"label": "Churn", "value": "2.1%", "delta": "-0.4 pts vs Q2", "tone": "text-green-600"},
+    {"label": "Support tickets", "value": "913", "delta": "+9.0% vs Q2", "tone": "text-red-500"},
+    {"label": "NPS", "value": "54", "delta": "+3 vs Q2", "tone": "text-green-600"},
+    {"label": "Cash runway", "value": "22 mo", "delta": "unchanged", "tone": "text-slate-500"}
+  ],
+  "revenue": [62000, 71000, 68000, 90000, 97000, 94000],
+  "months": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
+  "goals": [
+    {"name": "Enterprise pipeline", "value": 82},
+    {"name": "Hiring plan", "value": 64},
+    {"name": "Roadmap delivery", "value": 91},
+    {"name": "Cost targets", "value": 47}
+  ],
+  "accounts": [
+    {"initials": "AC", "name": "Acme Corporation", "plan": "Enterprise · annual", "mrr": "$18,400"},
+    {"initials": "GL", "name": "Globex Ltd.", "plan": "Business · annual", "mrr": "$9,750"},
+    {"initials": "IN", "name": "Initech", "plan": "Business · monthly", "mrr": "$6,120"},
+    {"initials": "UM", "name": "Umbrella Group", "plan": "Team · annual", "mrr": "$3,900"}
+  ],
+  "note": "Support volume grew faster than revenue this quarter; a self-serve help center ships in October."
+}

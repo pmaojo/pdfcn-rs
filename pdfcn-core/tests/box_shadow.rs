@@ -57,3 +57,38 @@ fn opacity_utilities_change_the_drawn_output() {
         assert!(opaque != faded, "{opacity} had no visible effect");
     }
 }
+
+/// The `box-shadow` shorthand sets the same shadow on all four sides, and the
+/// engine used to emit one shadow item per side, painting it four times over
+/// (four times too dark). One blurred shadow is at most a dozen translucent
+/// layers.
+#[test]
+fn a_shadow_is_painted_once_not_once_per_side() {
+    let html = match render_html(
+        "%div(class=\"bg-white w-32 h-16 shadow-lg\") x",
+        &json!({}),
+        &NoPartials,
+    ) {
+        Ok(html) => html,
+        Err(e) => panic!("render_html failed: {e:?}"),
+    };
+    let bytes = match render_pdf(&html, &RenderOptions::default()) {
+        Ok(bytes) => bytes,
+        Err(e) => panic!("render_pdf failed: {e:?}"),
+    };
+    let mut warnings = Vec::new();
+    let doc = match parse_pdf_from_bytes(&bytes, &PdfParseOptions::default(), &mut warnings) {
+        Ok(doc) => doc,
+        Err(e) => panic!("re-parsing failed: {e}"),
+    };
+    let alpha_scopes = doc
+        .pages
+        .iter()
+        .flat_map(|p| p.ops.iter())
+        .filter(|op| matches!(op, printpdf::Op::LoadGraphicsState { .. }))
+        .count();
+    assert!(
+        (1..=12).contains(&alpha_scopes),
+        "one shadow should be at most 12 translucent layers, found {alpha_scopes}"
+    );
+}

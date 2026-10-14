@@ -665,6 +665,18 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         } {
             return Some(format!("{prop}-width:1px;border-style:solid"));
         }
+        // `border-2`, `border-4`, ...: Tailwind's all-sides width scale.
+        if let Some(n) = rest
+            .parse::<u32>()
+            .ok()
+            .filter(|n| matches!(n, 0 | 1 | 2 | 4 | 8))
+        {
+            return Some(if n == 0 {
+                "border-width:0".to_string()
+            } else {
+                format!("border-width:{n}px;border-style:solid")
+            });
+        }
         if let Some(color) = resolve_color_alpha(rest, theme) {
             return Some(format!("border-color:{color}"));
         }
@@ -716,9 +728,12 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             "bold" => "700",
             "extrabold" => "800",
             "black" => "900",
-            "sans" => return Some("font-family:sans-serif".to_string()),
-            "serif" => return Some("font-family:serif".to_string()),
-            "mono" => return Some("font-family:monospace".to_string()),
+            // The generic keywords resolve to no embedded face (the engine falls
+            // back to whatever it registered first), so name the bundled
+            // families instead: Inter, Source Serif 4, JetBrains Mono.
+            "sans" => return Some("font-family:'Inter',sans-serif".to_string()),
+            "serif" => return Some("font-family:'Source Serif 4',serif".to_string()),
+            "mono" => return Some("font-family:'JetBrains Mono',monospace".to_string()),
             _ => return None,
         };
         return Some(format!("font-weight:{weight}"));
@@ -1217,7 +1232,7 @@ mod tests {
         assert_eq!(resolve("font-black").as_deref(), Some("font-weight:900"));
         assert_eq!(
             resolve("font-mono").as_deref(),
-            Some("font-family:monospace")
+            Some("font-family:'JetBrains Mono',monospace")
         );
     }
 
@@ -1266,5 +1281,24 @@ mod tests {
         // The all-corners utility and the unrelated colors still resolve.
         assert_eq!(resolve("rounded-lg").as_deref(), Some("border-radius:8px"));
         assert_eq!(resolve("rounded-t-nonsense"), None);
+    }
+
+    #[test]
+    fn resolves_all_sides_border_widths() {
+        assert_eq!(
+            resolve("border-2").as_deref(),
+            Some("border-width:2px;border-style:solid")
+        );
+        assert_eq!(resolve("border-0").as_deref(), Some("border-width:0"));
+        assert_eq!(resolve("border-3"), None);
+        // Colors and the directional forms are unaffected.
+        assert_eq!(
+            resolve("border-red-500").as_deref(),
+            Some("border-color:#ef4444")
+        );
+        assert_eq!(
+            resolve("border-b-2").as_deref(),
+            Some("border-bottom-width:2px;border-style:solid")
+        );
     }
 }
