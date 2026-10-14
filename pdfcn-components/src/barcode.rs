@@ -33,9 +33,15 @@ pub fn barcode(attrs: &[ResolvedAttr]) -> Markup {
     // time; the encoder in pdfcn-core stays the authority (check digits).
     let digits = value.bytes().all(|b| b.is_ascii_digit());
     let problem = match scheme {
-        "ean13" if !(digits && matches!(value.len(), 12 | 13)) => Some("ean13 needs exactly 12 or 13 digits"),
-        "ean8" if !(digits && matches!(value.len(), 7 | 8)) => Some("ean8 needs exactly 7 or 8 digits"),
-        "upca" if !(digits && matches!(value.len(), 11 | 12)) => Some("upca needs exactly 11 or 12 digits"),
+        "ean13" if !(digits && matches!(value.len(), 12 | 13)) => {
+            Some("ean13 needs exactly 12 or 13 digits")
+        }
+        "ean8" if !(digits && matches!(value.len(), 7 | 8)) => {
+            Some("ean8 needs exactly 7 or 8 digits")
+        }
+        "upca" if !(digits && matches!(value.len(), 11 | 12)) => {
+            Some("upca needs exactly 11 or 12 digits")
+        }
         "itf" if !digits => Some("itf needs digits only"),
         _ => None,
     };

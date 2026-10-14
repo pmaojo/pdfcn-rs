@@ -44,9 +44,16 @@ fn external_and_mail_links_become_uri_actions() {
             _ => None,
         })
         .collect();
-    assert_eq!(uris, vec!["https://example.com/a?b=1&c=2", "mailto:hi@example.com"]);
+    assert_eq!(
+        uris,
+        vec!["https://example.com/a?b=1&c=2", "mailto:hi@example.com"]
+    );
     for (_, l) in &found {
-        assert!(l.rect.width.0 > 5.0 && l.rect.height.0 > 5.0, "{:?}", l.rect);
+        assert!(
+            l.rect.width.0 > 5.0 && l.rect.height.0 > 5.0,
+            "{:?}",
+            l.rect
+        );
     }
 }
 

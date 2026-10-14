@@ -64,7 +64,11 @@ pub fn bar_chart(attrs: &[ResolvedAttr]) -> Markup {
     // (content-box), so its content height is the requested height minus
     // those; the frame's width is left `auto` for the same reason (an
     // explicit `w-full` plus padding overflows the parent).
-    let total_h = height.trim_end_matches("px").trim().parse::<f64>().unwrap_or(160.0);
+    let total_h = height
+        .trim_end_matches("px")
+        .trim()
+        .parse::<f64>()
+        .unwrap_or(160.0);
     let label_h = if labels.is_empty() { 0.0 } else { LABEL_ROW_PX };
     let plot_h = (total_h - FRAME_PAD_PX - label_h).max(8.0);
     html! {
@@ -137,6 +141,9 @@ mod tests {
         // 220px total = 26 frame + 194 plot, so the lone bar fills 194px.
         let out = bar_chart(&[a("values", "[5]"), a("height", "220px")]).into_string();
         assert!(out.contains("height:194.0px"), "{out}");
-        assert!(!out.contains("w-full barchart") && !out.contains("barchart w-full"), "{out}");
+        assert!(
+            !out.contains("w-full barchart") && !out.contains("barchart w-full"),
+            "{out}"
+        );
     }
 }
