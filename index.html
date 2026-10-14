@@ -404,6 +404,7 @@
           <option value="invoice">Invoice example</option>
           <option value="minimal">Minimal example</option>
           <option value="catalog">Catalog example (images)</option>
+          <option value="links">Hyperlinks &amp; internal jumps</option>
           <option value="codes">QR codes &amp; barcodes</option>
           <option value="charts">Charts, barcode & vector logo</option>
           <option value="facturx">Factur-X invoice</option>
@@ -422,6 +423,7 @@
       <button type="button" class="gcard" data-example="catalog" role="listitem"><img src="thumbs/catalog.jpg" alt="" loading="lazy"><span class="gname">Catalog</span><span class="gtag">images &middot; object-fit</span></button>
       <button type="button" class="gcard" data-example="charts" role="listitem"><img src="thumbs/charts.jpg" alt="" loading="lazy"><span class="gname">Charts</span><span class="gtag">vector &middot; barcode</span></button>
       <button type="button" class="gcard" data-example="codes" role="listitem"><img src="thumbs/codes.jpg" alt="" loading="lazy"><span class="gname">Codes</span><span class="gtag">QR &middot; Code 128 &middot; EAN &middot; UPC</span></button>
+      <button type="button" class="gcard" data-example="links" role="listitem"><img src="thumbs/links.jpg" alt="" loading="lazy"><span class="gname">Links</span><span class="gtag">URLs &middot; mailto &middot; jumps</span></button>
     </div>
 
     <div class="grid">
@@ -556,8 +558,27 @@
       <code>Label</code> <code>Checkbox</code> <code>RadioItem</code> <code>Progress</code>
       <code>Breadcrumb</code> <code>Pagination</code> <code>BarChart</code> <code>QRCode</code>
       <code>PageFooter</code> <code>LineChart</code> <code>StackedBarChart</code> <code>PieChart</code>
-      <code>Sparkline</code> <code>Barcode</code> <code>Vector</code>
+      <code>Sparkline</code> <code>Barcode</code> <code>Vector</code> <code>a</code> (links)
     </p>
+
+    <h2 style="margin-top:2rem">Hyperlinks</h2>
+    <p class="lede">A plain <code>%a(href="…")</code> becomes a real, clickable PDF link annotation.
+    See the "Links" example above.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th><code>href</code></th><th>What happens in the PDF</th></tr></thead>
+        <tbody>
+          <tr><td><code>https://…</code> / <code>http://…</code></td><td>Opens the URL.</td></tr>
+          <tr><td><code>mailto:…</code> / <code>tel:…</code></td><td>Opens the mail or phone app.</td></tr>
+          <tr><td><code>#section</code></td><td>Jumps to the element with <code>id="section"</code> (<code>%h2#section</code>), on whichever page it lands.</td></tr>
+          <tr><td>anything else</td><td>Left as plain text: <code>javascript:</code>, relative paths and unknown ids never become links.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:0.75rem">A link that wraps onto several lines gets one clickable area per line; a
+    link that should cover a whole card needs <code>display:block</code> (class <code>block</code>). Links inside a
+    CSS-transformed element are not repositioned. Text and inline elements on neighbouring template lines are separated
+    by a space, as in HAML.</p>
 
     <h2 style="margin-top:2rem">QR codes &amp; barcodes</h2>
     <p class="lede">Generated natively at render time &mdash; no network, no uploaded images. Try the
@@ -724,6 +745,10 @@
       minimal: {
         haml: '%h1 Invoice\n%p Total: {{ total }}',
         json: JSON.stringify({ total: '$42.00' }, null, 2)
+      },
+      links: {
+        haml: "%DocumentLayout(size=\"a4\")\n  %Header(title=\"{{ title }}\" subtitle=\"{{ subtitle }}\")\n\n  %h2.text-lg.font-semibold.mb-2 Contents\n  .mb-6\n    - for s in sections\n      %p.mb-1\n        %a.text-indigo-600.underline(href=\"#{{ s.id }}\") {{ s.title }}\n\n  %p.text-sm.text-slate-600.mb-4\n    Links are real PDF annotations: tap\n    %a.text-indigo-600.underline(href=\"{{ site }}\") the project site\n    or write to\n    %a.text-indigo-600.underline(href=\"mailto:{{ email }}\") {{ email }}.\n\n  %a.block.rounded-xl.border.border-slate-200.bg-slate-50.p-4.mb-6(href=\"{{ site }}\")\n    %p.font-semibold.text-slate-900 A whole card can be a link\n    %p.text-sm.text-slate-500 {{ site }}\n\n  - for s in sections\n    .break-inside-avoid.mb-6\n      %h2.text-xl.font-bold.text-slate-900(id=\"{{ s.id }}\") {{ s.title }}\n      %p.text-slate-600 {{ s.body }}\n      %p.text-sm\n        %a.text-indigo-600.underline(href=\"#top\") Back to contents\n",
+        json: "{\n  \"title\": \"Hyperlinks\",\n  \"subtitle\": \"External URLs, e-mail and jumps inside the document\",\n  \"site\": \"https://pdfcn-rs.vercel.app\",\n  \"email\": \"hello@example.com\",\n  \"sections\": [\n    { \"id\": \"external\", \"title\": \"External links\", \"body\": \"http(s), mailto and tel links open in the reader. Anything else, such as javascript:, is left as plain text.\" },\n    { \"id\": \"internal\", \"title\": \"Jumps inside the PDF\", \"body\": \"href=\\\"#id\\\" jumps to the element with that id, on whatever page it lands.\" },\n    { \"id\": \"wrapping\", \"title\": \"Wrapped and block links\", \"body\": \"A link that wraps onto several lines gets one clickable area per line; a block link is one box.\" }\n  ]\n}"
       },
       codes: {
         haml: "%DocumentLayout(size=\"a4\")\n  %Header(title=\"Barcodes & QR codes\" subtitle=\"Generated natively, no network, no images to upload\")\n\n  .grid.grid-cols-3.gap-4.mb-6\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 QR code\n      %QRCode(value=\"{{ qr.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ qr.caption }}\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 Payment link\n      %QRCode(value=\"{{ pay.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ pay.caption }}\n    .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n      %p.text-xs.uppercase.tracking-wider.text-slate-500 Wi-Fi join\n      %QRCode(value=\"{{ wifi.value }}\" size=\"120px\")\n      %p.text-sm.text-slate-600(style=\"margin-top:6px\") {{ wifi.caption }}\n\n  %h2.text-xl.font-semibold.mb-2 Linear barcodes\n  .grid.grid-cols-2.gap-4\n    - for code in barcodes\n      .rounded-xl.bg-white.shadow-md.border.border-slate-200.break-inside-avoid(style=\"padding:16px\")\n        .flex.justify-between.items-center.mb-2\n          %p.font-semibold.text-slate-900 {{ code.name }}\n          %Badge(variant=\"outline\" label=\"{{ code.scheme }}\")\n        %Barcode(scheme=\"{{ code.scheme }}\" value=\"{{ code.value }}\" w=\"220px\" h=\"56px\")\n        %p.text-xs.text-slate-500(style=\"margin-top:6px\") {{ code.note }}\n",

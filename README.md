@@ -125,6 +125,13 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
+## Hyperlinks
+
+`%a(href="https://…")`, `mailto:`/`tel:` and in-document jumps (`%a(href="#sec")` to `%h2#sec`)
+become real PDF link annotations; see `examples/links.haml`. Other schemes stay
+plain text. Links are located with a marker-colored probe render (`pdfcn-core/src/links.rs`),
+so documents with links render twice.
+
 ## Charts, barcodes and raw SVG (`vector` Cargo feature, on by default)
 
 `%Barcode(scheme="…")` supports `code128`, `ean13`, `ean8`, `upca`, `code39` and

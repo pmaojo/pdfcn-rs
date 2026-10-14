@@ -21,6 +21,25 @@ pub fn render_body(nodes: &[Resolved]) -> Result<Markup, CoreError> {
     })
 }
 
+/// Tags that flow inside a line of text.
+const INLINE_TAGS: [&str; 14] = [
+    "a", "span", "b", "strong", "i", "em", "u", "s", "small", "sub", "sup", "code", "mark", "abbr",
+];
+
+fn is_inline_flow(node: &Resolved) -> bool {
+    match node {
+        Resolved::Text(_) => true,
+        Resolved::Element { tag, .. } => INLINE_TAGS.contains(&tag.as_str()),
+        Resolved::Component { .. } => false,
+    }
+}
+
+/// Whether two adjacent siblings share a line and so need a space between
+/// them (text and inline elements in any combination).
+fn needs_space(prev: &Resolved, next: &Resolved) -> bool {
+    is_inline_flow(prev) && is_inline_flow(next)
+}
+
 fn render_node(node: &Resolved) -> Result<Markup, CoreError> {
     Ok(match node {
         Resolved::Text(text) => html! { (text) },
@@ -33,7 +52,12 @@ fn render_node(node: &Resolved) -> Result<Markup, CoreError> {
         } => {
             let class_attr = classes.join(" ");
             let mut rendered_children = Vec::with_capacity(children.len());
-            for child in children {
+            for (i, child) in children.iter().enumerate() {
+                // HAML separates sibling lines with a newline, which HTML
+                // reads as one space: keep "Visit" and `%a link` apart.
+                if i > 0 && needs_space(&children[i - 1], child) {
+                    rendered_children.push(html! { " " });
+                }
                 rendered_children.push(render_node(child)?);
             }
             html! {

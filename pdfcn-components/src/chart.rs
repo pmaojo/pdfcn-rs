@@ -1,6 +1,6 @@
 //! `%BarChart`: a simple vertical bar chart rendered entirely with the
 //! layout primitives the engine already handles — one flex row of columns,
-//! each column stacking a bar (percentage height against the chart's
+//! each column stacking a bar (pixel height in proportion to the chart's
 //! tallest value) and an optional label underneath.
 //!
 //! No SVG, no canvas: every visual property maps to utilities and inline
@@ -58,14 +58,23 @@ pub fn bar_chart(attrs: &[ResolvedAttr]) -> Markup {
     // A tallest value of zero would divide by zero; clamp so an all-zero
     // chart still renders (as flat, zero-height bars) instead of NaN.
     let max = values.iter().copied().fold(0.0, f64::max).max(1e-9);
+    // Bars get explicit pixel heights. A percentage would be taken against
+    // the whole column -- label row included -- so bars would not be in
+    // proportion to each other. The frame carries padding and a border
+    // (content-box), so its content height is the requested height minus
+    // those; the frame's width is left `auto` for the same reason (an
+    // explicit `w-full` plus padding overflows the parent).
+    let total_h = height.trim_end_matches("px").trim().parse::<f64>().unwrap_or(160.0);
+    let label_h = if labels.is_empty() { 0.0 } else { LABEL_ROW_PX };
+    let plot_h = (total_h - FRAME_PAD_PX - label_h).max(8.0);
     html! {
-        div class="barchart w-full rounded-md border border-border bg-card p-3" style={ "height:" (height) } {
-            div class="flex h-full items-end justify-between gap-2" {
+        div class="barchart rounded-md border border-border bg-card p-3" {
+            div class="flex items-end justify-between gap-2" style={ "height:" (plot_h + label_h) "px" } {
                 @for (i, value) in values.iter().enumerate() {
-                    div class="flex h-full flex-1 flex-col items-center justify-end" {
-                        div class="w-full rounded-t bg-primary" style={ "height:" (value / max * 100.0) "%" } title=(value.to_string()) {}
+                    div class="flex flex-1 flex-col items-center justify-end" style={ "height:" (plot_h + label_h) "px" } {
+                        div class="w-full rounded-t bg-primary" style={ "height:" (format!("{:.1}", value / max * plot_h)) "px" } title=(value.to_string()) {}
                         @if let Some(label) = labels.get(i) {
-                            span class="mt-1 text-xs text-muted-foreground" { (label) }
+                            span class="mt-1 text-xs text-muted-foreground" style={ "height:" (LABEL_ROW_PX) "px" } { (label) }
                         }
                     }
                 }
@@ -73,6 +82,11 @@ pub fn bar_chart(attrs: &[ResolvedAttr]) -> Markup {
         }
     }
 }
+
+/// Vertical space the frame's `p-3` padding (2 x 12px) and 1px borders take.
+const FRAME_PAD_PX: f64 = 26.0;
+/// Height reserved for the label row under the bars.
+const LABEL_ROW_PX: f64 = 18.0;
 
 #[cfg(test)]
 mod tests {
@@ -87,10 +101,11 @@ mod tests {
 
     #[test]
     fn bars_scale_against_the_tallest_value() {
+        // 160px frame, no labels: plot = 160 - 26 = 134px for the tallest bar.
         let out = bar_chart(&[a("values", "[10, 20, 40]")]).into_string();
-        assert!(out.contains("height:25%"), "{out}");
-        assert!(out.contains("height:50%"), "{out}");
-        assert!(out.contains("height:100%"), "{out}");
+        assert!(out.contains("height:33.5px"), "{out}");
+        assert!(out.contains("height:67.0px"), "{out}");
+        assert!(out.contains("height:134.0px"), "{out}");
     }
 
     #[test]
@@ -119,7 +134,9 @@ mod tests {
 
     #[test]
     fn custom_height_is_applied_to_the_frame() {
+        // 220px total = 26 frame + 194 plot, so the lone bar fills 194px.
         let out = bar_chart(&[a("values", "[5]"), a("height", "220px")]).into_string();
-        assert!(out.contains("height:220px"), "{out}");
+        assert!(out.contains("height:194.0px"), "{out}");
+        assert!(!out.contains("w-full barchart") && !out.contains("barchart w-full"), "{out}");
     }
 }

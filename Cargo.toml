@@ -136,6 +136,6 @@ strip = true
 # from the same revision. Drop each entry once the fix is released upstream.
 [patch.crates-io]
 printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "0e593f0ab370c9a8dcb274478571d5e103fcd63f" }
-azul-layout = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }
-azul-core = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }
-azul-css = { git = "https://github.com/pmaojo/azul", rev = "2757176c213457a2d9369c0923cc65afc6efa8af" }
+azul-layout = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }
+azul-core = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }
+azul-css = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }

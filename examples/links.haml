@@ -1,0 +1,25 @@
+%DocumentLayout(size="a4")
+  %Header(title="{{ title }}" subtitle="{{ subtitle }}")
+
+  %h2.text-lg.font-semibold.mb-2 Contents
+  .mb-6
+    - for s in sections
+      %p.mb-1
+        %a.text-indigo-600.underline(href="#{{ s.id }}") {{ s.title }}
+
+  %p.text-sm.text-slate-600.mb-4
+    Links are real PDF annotations: tap
+    %a.text-indigo-600.underline(href="{{ site }}") the project site
+    or write to
+    %a.text-indigo-600.underline(href="mailto:{{ email }}") {{ email }}.
+
+  %a.block.rounded-xl.border.border-slate-200.bg-slate-50.p-4.mb-6(href="{{ site }}")
+    %p.font-semibold.text-slate-900 A whole card can be a link
+    %p.text-sm.text-slate-500 {{ site }}
+
+  - for s in sections
+    .break-inside-avoid.mb-6
+      %h2.text-xl.font-bold.text-slate-900(id="{{ s.id }}") {{ s.title }}
+      %p.text-slate-600 {{ s.body }}
+      %p.text-sm
+        %a.text-indigo-600.underline(href="#top") Back to contents

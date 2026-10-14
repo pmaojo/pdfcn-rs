@@ -2,6 +2,7 @@ mod assets;
 mod data;
 mod error;
 mod html_render;
+mod links;
 mod options;
 mod page;
 // The Wave 1 vector substrate (Ola 1.2/1.3): SVG rasterization and the
@@ -470,9 +471,25 @@ pub fn render_pdf_with_assets(
         &fonts,
         &pdf_options,
         &mut warnings,
-        Some(pool),
+        Some(pool.clone()),
     )
     .map_err(CoreError::Render)?;
+
+    // Hyperlinks: find where each link box landed with a marker-colored probe
+    // render, then annotate the real document. See `links`.
+    if let Some(plan) = links::plan(html) {
+        let mut probe_warnings = Vec::new();
+        let probe = PdfDocument::from_html_with_cache(
+            &plan.marked_html,
+            &image_map,
+            &fonts,
+            &pdf_options,
+            &mut probe_warnings,
+            Some(pool),
+        )
+        .map_err(CoreError::Render)?;
+        links::apply(&plan, &probe, &mut doc);
+    }
 
     // Set directly on the saved document rather than via printpdf's own
     // `<meta name="pdf.metadata.*">` mechanism -- see `DocumentMetadata`'s

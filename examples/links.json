@@ -1,0 +1,11 @@
+{
+  "title": "Hyperlinks",
+  "subtitle": "External URLs, e-mail and jumps inside the document",
+  "site": "https://pdfcn-rs.vercel.app",
+  "email": "hello@example.com",
+  "sections": [
+    { "id": "external", "title": "External links", "body": "http(s), mailto and tel links open in the reader. Anything else, such as javascript:, is left as plain text." },
+    { "id": "internal", "title": "Jumps inside the PDF", "body": "href=\"#id\" jumps to the element with that id, on whatever page it lands." },
+    { "id": "wrapping", "title": "Wrapped and block links", "body": "A link that wraps onto several lines gets one clickable area per line; a block link is one box." }
+  ]
+}
