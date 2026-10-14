@@ -1,0 +1,24 @@
+{
+  "id": "xx-demo",
+  "description": "A made-up profile, not any real country's specification. It shows what a profile can express: other field rules, another date and amount format, a payload that is not a URL, a higher error-correction level, and an environment switch.",
+  "label": "SCAN TO VERIFY",
+  "size": "140px",
+  "ecc": "H",
+  "fields": {
+    "tax_id": { "type": "text", "charset": "digits", "length": 8 },
+    "doc_type": { "type": "text", "allowed": ["INV", "CRN"] },
+    "number": { "type": "text", "charset": "printable_ascii", "min": 1, "max": 30, "encode": "url" },
+    "date": { "type": "date", "input": ["yyyy-mm-dd", "dd/mm/yyyy"], "output": "yyyymmdd" },
+    "total": { "type": "amount", "max_integer_digits": 10, "max_decimals": 2, "fixed_decimals": 2, "decimal_comma": true }
+  },
+  "payload": "{base}?t={tax_id}*k={doc_type}*n={number}*d={date}*v={total}",
+  "variants": {
+    "env": {
+      "default": "production",
+      "options": {
+        "production": { "vars": { "base": "https://verify.example.org/check" } },
+        "test": { "vars": { "base": "https://sandbox.verify.example.org/check" } }
+      }
+    }
+  }
+}

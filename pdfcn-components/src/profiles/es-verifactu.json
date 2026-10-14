@@ -1,0 +1,30 @@
+{
+  "id": "es-verifactu",
+  "description": "Spain, AEAT VERI*FACTU: QR of the verification URL printed on every invoice (Real Decreto 1007/2023).",
+  "label": "VERI*FACTU",
+  "size": "150px",
+  "ecc": "M",
+  "fields": {
+    "nif": { "type": "text", "uppercase": true, "charset": "alnum", "length": 9 },
+    "numserie": { "type": "text", "charset": "printable_ascii", "min": 1, "max": 60, "encode": "url", "trim": false },
+    "fecha": { "type": "date", "input": ["dd-mm-yyyy", "yyyy-mm-dd"], "output": "dd-mm-yyyy" },
+    "importe": { "type": "amount", "max_integer_digits": 12, "max_decimals": 2, "allow_negative": true, "decimal_comma": true }
+  },
+  "payload": "{base}/{endpoint}?nif={nif}&numserie={numserie}&fecha={fecha}&importe={importe}",
+  "variants": {
+    "env": {
+      "default": "production",
+      "options": {
+        "production": { "vars": { "base": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT" } },
+        "test": { "vars": { "base": "https://prewww2.aeat.es/wlpl/TIKE-CONT" } }
+      }
+    },
+    "mode": {
+      "default": "verifactu",
+      "options": {
+        "verifactu": { "vars": { "endpoint": "ValidarQR" } },
+        "no-verifactu": { "vars": { "endpoint": "ValidarQRNoVerifactu" }, "label": null }
+      }
+    }
+  }
+}

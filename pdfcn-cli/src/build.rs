@@ -58,6 +58,13 @@ pub struct BuildArgs {
     /// Moot while the above render nothing.
     #[arg(long, default_value_t = false)]
     skip_first_page: bool,
+    /// JSON file describing an invoice QR for `%FiscalQR(profile="<id>" ...)`:
+    /// its fields and how to validate them, and the text the QR encodes. Lets a
+    /// project follow any country's specification without changing pdfcn;
+    /// repeat the flag for several. A profile with the id of a built-in one
+    /// (e.g. `es-verifactu`) replaces it.
+    #[arg(long = "fiscal-profile", value_name = "PATH")]
+    fiscal_profiles: Vec<PathBuf>,
     /// JPEG-family compression quality, 0.0-1.0 (printpdf's own default:
     /// 0.85). Compression is already on; this only tunes it.
     #[arg(long)]
@@ -300,6 +307,12 @@ fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {
+    for path in &args.fiscal_profiles {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("--fiscal-profile: cannot read {path:?}: {e}"))?;
+        pdfcn_core::register_fiscal_profile(&json)
+            .map_err(|e| anyhow::anyhow!("--fiscal-profile {path:?}: {e}"))?;
+    }
     // Fail on a bad certificate or password before spending time rendering.
     #[cfg(feature = "sign")]
     let signer = signing_identity(&args)?;

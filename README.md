@@ -257,10 +257,21 @@ must outlive the certificate chain), or sign with a key that lives in a smart
 card or HSM. A signature is only as trustworthy as the certificate behind it;
 for legal weight use a qualified certificate.
 
+## Invoice QR codes for any country: `%FiscalQR`
+
+Tax authorities each ask for a different QR on invoices. Instead of hard-coding
+them, `%FiscalQR` is driven by a **profile**: a JSON file that declares the
+fields, how to validate them, and the text the QR encodes. A developer follows
+their country's specification by writing one file and passing
+`--fiscal-profile` (or `register_fiscal_profile` from Rust); no pdfcn change.
+See [docs/fiscal-profiles.md](docs/fiscal-profiles.md) and
+`examples/fiscal-profiles/xx-demo.json`. Spain's VERI*FACTU is the one profile
+that ships built in, as data.
+
 ## Spanish invoices: VERI*FACTU QR
 
-`%VerifactuQR` prints the QR the tax agency requires on invoices under Real
-Decreto 1007/2023. It encodes the AEAT verification URL built from the invoice's
+`%VerifactuQR` is `%FiscalQR(profile="es-verifactu" ...)` under its own name. It
+prints the QR the tax agency requires on invoices under Real Decreto 1007/2023. It encodes the AEAT verification URL built from the invoice's
 issuer NIF, series and number, date and total, so it cannot disagree with what
 the page says:
 
