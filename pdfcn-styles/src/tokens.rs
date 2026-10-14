@@ -257,20 +257,18 @@ pub fn radius(name: &str) -> Option<&'static str> {
 }
 
 /// shadcn's elevation scale, keyed by the Tailwind `shadow-*` suffix.
+///
+/// Tailwind's `md`/`lg`/`xl` are two stacked shadows; the layout engine
+/// only honors a single `box-shadow` layer (the two-layer value parses to
+/// nothing, verified -- the element rendered with no shadow at all). Each
+/// step here is therefore the two layers folded into one: the larger
+/// (key-light) layer, with its alpha nudged up to stand in for the second.
 const SHADOW: &[(&str, &str)] = &[
     ("sm", "0 1px 2px 0 rgba(0,0,0,0.05)"),
-    (
-        "md",
-        "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)",
-    ),
-    (
-        "lg",
-        "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)",
-    ),
-    (
-        "xl",
-        "0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
-    ),
+    ("md", "0 4px 6px -1px rgba(0,0,0,0.13)"),
+    ("lg", "0 10px 15px -3px rgba(0,0,0,0.13)"),
+    ("xl", "0 20px 25px -5px rgba(0,0,0,0.13)"),
+    ("2xl", "0 25px 50px -12px rgba(0,0,0,0.25)"),
 ];
 
 /// Resolves a `shadow-*` suffix to its literal `box-shadow` value.

@@ -217,9 +217,14 @@ isn't confirmed.
   page. See the row-grouping note above for the workaround.
 - **`align-*` (`vertical-align`) has no effect**, even on inline elements
   (verified in `docs/spikes/003-style-coverage.md`).
-- **`box-shadow` has no effect.** `shadow-sm`/`shadow-md`/etc. resolve to a
-  real CSS declaration, but the renderer doesn't paint it — cards render
-  flat, without a drop shadow.
+- **`box-shadow` is approximated.** The layout engine emits it but upstream
+  printpdf dropped it; the vendored printpdf (`vendor/printpdf/PDFCN_PATCHES.md`)
+  paints outset shadows as stacked translucent rects (blur is a stepped
+  approximation, inset shadows are not drawn, and the shadow also shows
+  through a transparent-background box). Only a single shadow layer is
+  honored, so `shadow-md`/`lg`/`xl` fold Tailwind's two layers into one.
+- **Text decoration stops about one glyph short** of the end of the text
+  (engine width quirk on the underline/line-through bounds).
 - **`object-fit` has no effect in the renderer itself.** An image is scaled
   to exactly fill its box on both axes (not cropped to cover, nor
   letterboxed to contain). `pdfcn-core`'s asset-preparation pass works

@@ -1,0 +1,358 @@
+name: Build and test
+on: [push, pull_request]
+
+jobs:
+
+  check-no-default-features:
+    name: Check and test (no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --no-default-features --verbose
+      # Not just `--lib`: the no-`text_layout` fallback font parser is only compiled in
+      # this configuration, and it was returning a blank shell (no cmap, no widths) so that
+      # external fonts rendered nothing at all (#258). `tests/no_text_layout.rs` covers it,
+      # and only runs here.
+      - run: cargo test --no-default-features --verbose
+
+  check-feature-combinations:
+    name: Check feature combinations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          # text_layout alone (without the html layer on top) is a supported public
+          # configuration that no other job builds.
+          - "text_layout"
+          - "images"
+          - "images,png"
+          - "images,jpeg"
+          - "images,gif"
+          - "images,tiff"
+          - "images,bmp"
+          - "images,webp"
+          - "images,png,jpeg,gif,tiff,bmp,webp"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --no-default-features --features "${{ matrix.features }}" --verbose
+
+  check-and-test-unix:
+    name: Cargo check and test on Unix systems
+    strategy:
+      matrix:
+        channel: [stable]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ${{ matrix.channel }} toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.channel }}
+      - run: cargo check --verbose --examples
+      - run: cargo check --verbose
+      # Re-enabled. This was commented out as "fails because of SIMD issues, test on
+      # Windows only", which meant the whole suite only ever ran on Windows — and so a
+      # panic in the HTML font-subsetting path (allsorts panics outright on an empty subset
+      # cmap) sat here undetected, because it only reproduces with the fonts a Linux box
+      # resolves.
+      - run: cargo test --verbose
+      # svg is not a default feature, so its tests (Svg::parse, parse_with_fonts)
+      # run nowhere else.
+      - run: cargo test --verbose --features svg --test svg
+
+
+  check-and-test-windows:
+    name: Cargo check and test on Windows
+    strategy:
+      matrix:
+        target-sys: ["i686-pc-windows", "x86_64-pc-windows"]
+        target-abi: ["msvc"]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain for ${{ matrix.target-sys }}-${{ matrix.target-abi }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target-sys }}-${{ matrix.target-abi }}
+      - run: cargo check --verbose --target ${{ matrix.target-sys }}-${{ matrix.target-abi }} --examples
+      - run: cargo check --verbose --target ${{ matrix.target-sys }}-${{ matrix.target-abi }}
+      - run: cargo test --verbose --target ${{ matrix.target-sys }}-${{ matrix.target-abi }}
+
+  check-wasm32:
+    name: Cargo check on wasm32
+    strategy:
+      matrix:
+        channel: [stable]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain using wasm32-unknown-unknown target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          target: wasm32-unknown-unknown
+          toolchain: ${{ matrix.channel }}
+      - run: rustup target add wasm32-wasip1
+      - run: rustup target add wasm32-wasip2
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo check --verbose --target wasm32-unknown-unknown --examples
+      - run: cargo check --verbose --target wasm32-unknown-unknown
+      - run: cargo check --verbose --target wasm32-wasip1 --examples
+      - run: cargo check --verbose --target wasm32-wasip1
+      - run: cargo check --verbose --target wasm32-wasip2 --examples
+      - run: cargo check --verbose --target wasm32-wasip2
+      - run: cargo check --verbose --target wasm32-wasip2 --no-default-features
+      # NOT --all-features: that pulls html_multithreaded + rayon
+      # (rust-fontconfig/multithreading, image/rayon) which require rayon and can't
+      # compile on wasm. Check the broad wasm-safe feature set instead.
+      - run: cargo check --verbose --target wasm32-wasip2 --features "gif,jpeg,png,pnm,tiff,bmp,ico,tga,hdr,dds,webp"
+      # The js-sys feature (browser canvas/Date paths, 16 cfg sites) was never built by
+      # any CI job — only docs.rs ever compiled it, and on a native target at that.
+      - run: cargo check --verbose --target wasm32-unknown-unknown --features js-sys
+      # js-sys + wasi: the browser fast paths are cfg'd out for p1/p2 (src/image.rs,
+      # src/date.rs) so a wasi binary gets no browser imports — and the combination has
+      # to keep compiling, since the feature is additive and unification can turn it on.
+      - run: cargo check --verbose --target wasm32-wasip2 --features js-sys
+      # svg (svg2pdf/resvg) compiles for browser wasm; keep it that way.
+      - run: cargo check --verbose --target wasm32-unknown-unknown --features svg
+
+  # docs.rs builds with --all-features (see [package.metadata.docs.rs]) on a native
+  # builder. Nothing else compiles that exact configuration, so keep it green here
+  # instead of finding out on the docs.rs build page after a release.
+  check-all-features-native:
+    name: Check --all-features on the docs.rs target
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-features --verbose
+
+  # Verifies the produced PDFs with poppler, which shares no code with printpdf.
+  #
+  # Every other test in this repo checks printpdf against printpdf. That symmetry is how
+  # issue #277 shipped: the writer emitted an empty /FontFile2, the reader happily read a
+  # font resource back out, and the round-trip test stayed green while Acrobat refused the
+  # file. `pdffonts` and `pdftotext` are an independent oracle for the two things users
+  # actually care about — does the font embed, and is the text copy-able.
+  font-verification-external:
+    name: Verify fonts with external tools (poppler)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install poppler-utils
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - run: pdffonts -v && pdftotext -v
+      - run: cargo test --features html --test external_tools --test font_embedding --test font_embedding_mock --test font -- --nocapture
+
+  # Font-embedding verification against BOTH viewer families (#280/#281 taught
+  # us one family is not enough — 03ad4bc fixed Acrobat and broke Chrome):
+  #
+  # Layer 1, Acrobat/Preview semantics (fontTools — independent of printpdf and
+  # allsorts): verify_pdf_font.py resolves every Identity-H code the way ISO
+  # 32000-1 9.7.4.2 says (code -> CID -> CFF charset -> glyph), cross-checks the
+  # glyph against the source font's cmap, /W against the advances, ToUnicode
+  # against the exact source text — and STRUCTURALLY rejects the one encoding no
+  # code assignment can make portable: a CID-keyed CFF with a non-identity
+  # charset left inside an sfnt wrapper (FreeType never flags that face
+  # CID-keyed, so the two families read the same codes differently).
+  #
+  # Layer 2, FreeType-family semantics (poppler — the same resolution PDFium/
+  # Chrome applies): check_pdf_render.py asserts pdffonts no longer sees a
+  # "CID Type 0C (OT)" wrapper and that poppler actually INKS the page. The
+  # #280 inversion drew near-blank pages (codes beyond the subset's glyph
+  # count); the ink floor catches that whole failure family empirically, with
+  # zero modeling assumptions.
+  font-verification-viewer-semantics:
+    name: Verify Identity-H codes with fontTools (Acrobat semantics, #280)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install fontTools + poppler
+        run: |
+          pip install fonttools
+          sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: Build the otf-font example PDFs (full embed + subset)
+        run: |
+          cargo run --example otf-font
+          cargo run --example otf-font-subset
+      - name: Verify code/charset/W/ToUnicode consistency against the source text
+        run: |
+          python3 scripts/verify_pdf_font.py font.pdf --expect scripts/otf_font_expected.txt \
+            --source-font examples/assets/fonts/NotoSansJP-Regular.otf
+          python3 scripts/verify_pdf_font.py font_subset.pdf --expect scripts/otf_font_expected.txt \
+            --source-font examples/assets/fonts/NotoSansJP-Regular.otf
+      - name: Verify poppler (FreeType semantics) sees no OT wrapper and inks the page
+        # min-ink floor: the correct render measures ~7400 dark px at 100 dpi;
+        # the #280-inverted subset rendered near-blank. 3000 leaves room for
+        # antialiasing drift between poppler versions without letting a blank
+        # page through. --forbid-otto-cid-cff is valid here because NotoSansJP
+        # is CID-keyed (a name-keyed CFF may legitimately stay sfnt-wrapped).
+        run: |
+          python3 scripts/check_pdf_render.py font.pdf --min-ink 3000 --forbid-otto-cid-cff
+          python3 scripts/check_pdf_render.py font_subset.pdf --min-ink 3000 --forbid-otto-cid-cff
+      - name: Mock fonts regenerate byte-identically (defined-metrics oracle stays intact)
+        run: |
+          python3 scripts/gen_mock_fonts.py
+          git diff --exit-code tests/assets/fonts/mock/
+
+  # Builds the working tree the way a CONSUMER resolves it — fresh project, fresh
+  # lockfile, path-dependency on the checkout. A "today's freshest" resolution can land
+  # on the one dependency version that happens to work while the declared version
+  # *ranges* still admit broken graphs; every green job above proves only that single
+  # resolution. That is how #279 shipped: fresh resolution on a current toolchain picks
+  # time 0.3.53 and lopdf 0.44's `time` feature compiles, while any consumer whose
+  # lockfile predates time 0.3.48 (or whose MSRV-aware resolver walks below it) got a
+  # compile error inside lopdf. This job builds the consumer shape and then re-pins the
+  # known-bad dependency lines, keeping the once-shipped breakage scenarios red forever.
+  consumer-resolution:
+    name: Fresh consumer resolution (ignore committed lockfile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { args: "" }
+          - { args: "--no-default-features" }
+          - { args: "--no-default-features --features jpeg", regression279: true }
+          - { args: "--no-default-features --features svg" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build as a consumer would (fresh lockfile, registry dependencies)
+        env:
+          ADD_ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          cargo new "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          # $ADD_ARGS is intentionally word-split.
+          cargo add printpdf --path "$GITHUB_WORKSPACE" $ADD_ARGS
+          cargo check
+      - name: "Regression: known-bad old pins in the consumer lockfile must still build"
+        if: matrix.regression279 == true
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/consumer"
+          # Both pins are printpdf's declared dependency FLOORS. A floor that does not
+          # compile is exactly how #279 shipped (lopdf's `time` feature broke on every
+          # time <= 0.3.47; pinning our 0.3.36 floor replays that scenario and more):
+          #   - time 0.3.36: declared floor; 0.3.25–0.3.35 fail inference on new rustc.
+          #   - image 0.25.2: declared floor; `image::ImageReader` first exists there.
+          # Pin failures (cargo refuses because the graph's floors moved) are skips,
+          # not errors — the scenario has become inexpressible, which is fine.
+          PINNED=false
+          if cargo update -p time --precise 0.3.36; then PINNED=true; else
+            echo "::notice::time 0.3.36 no longer pinnable in this graph — skipping that scenario."
+          fi
+          if cargo update -p image --precise 0.25.2; then PINNED=true; else
+            echo "::notice::image 0.25.2 no longer pinnable in this graph — skipping that scenario."
+          fi
+          if [ "$PINNED" = true ]; then
+            cargo check
+          fi
+
+  # THE RELEASE GATE.
+  #
+  # `cargo publish` STRIPS [patch.crates-io]. A crate published while that section exists
+  # is built against dependencies nobody ever compiled or tested against — the local
+  # checkout and the published artifact are different programs. That is exactly how 0.10.0
+  # shipped broken: locally azul-layout came from a git branch whose
+  # `ParsedFont::from_bytes` retains the source font bytes; on crates.io it resolved to
+  # azul-layout 0.0.9, whose `from_bytes` does not, so every embedded font became an empty
+  # /FontFile2 (#277). The same trap then bit azul itself twice while releasing 0.0.10.
+  #
+  # printpdf carries no [patch] any more. This job keeps it that way: it fails outright if
+  # one reappears, then runs the font suite against the real registry dependency graph —
+  # which is now, by construction, the one users get.
+  publish-safety:
+    name: No [patch], and the published dep graph passes the font suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install poppler-utils
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: Refuse to build with a [patch.crates-io] section
+        run: |
+          if grep -q '^\[patch\.' Cargo.toml; then
+            echo "::error::Cargo.toml has a [patch] section. cargo publish strips it, so the"
+            echo "::error::published crate would be built against untested dependencies."
+            echo "::error::Publish the patched dependency to crates.io and pin it instead."
+            grep -n '^\[patch\.' -A5 Cargo.toml
+            exit 1
+          fi
+          echo "no [patch] section — what we build is what we publish"
+      - name: Package size stays under the crates.io cap
+        run: |
+          set -euo pipefail
+          # Everything under examples/assets is include_bytes!'d by tests/examples and
+          # must ship, which parks the package at ~87% of crates.io's 10 MiB limit. One
+          # carelessly added asset and `cargo publish` refuses mid-release. --no-verify:
+          # this step only measures; the jobs around it do the building.
+          cargo package --no-verify
+          CRATE=$(ls target/package/*.crate)
+          SIZE=$(stat -c%s "$CRATE")
+          LIMIT=10485760
+          echo "package: $CRATE = $SIZE bytes ($(( SIZE * 100 / LIMIT ))% of the crates.io limit)"
+          if [ "$SIZE" -gt $(( LIMIT * 95 / 100 )) ]; then
+            echo "::error::.crate is $SIZE bytes — over 95% of crates.io's $LIMIT-byte limit. Remove or shrink assets before releasing."
+            exit 1
+          fi
+      - name: Dependency versions a published printpdf resolves to
+        run: cargo tree --features html -i azul-layout || true
+      - run: cargo test --features html --test external_tools --test font_embedding --test font --test no_text_layout || true
+      - run: cargo test --features html --test external_tools --test font_embedding --test font
+      - run: cargo test --no-default-features --test no_text_layout
+
+  generate-pdf-artifacts:
+    name: Generate PDF artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # No-feature examples
+      - name: Run no-feature examples
+        run: |
+          for ex in advanced bookmarks customfont graphics layers multipage text otf-font; do
+            echo "=== Running $ex ==="
+            cargo run --example "$ex" || true
+          done
+
+      # Image example
+      - name: Run image example
+        run: cargo run --example image --features "images,png" || true
+
+      # SVG example
+      - name: Run svg example
+        run: cargo run --example svg --features svg || true
+
+      # HTML-feature examples
+      - name: Run HTML examples
+        run: |
+          for ex in html css_shapes html_full html_full_debug shape pagination_test \
+                    baseline_alignment table_debug debug_pagination debug_displaylist \
+                    pagination_boundary_test margin_collapse margin_collapse_inline \
+                    margin_collapse_border_test margin_collapse_comprehensive; do
+            echo "=== Running $ex ==="
+            cargo run --example "$ex" || true
+          done
+
+      # Collect and upload PDFs
+      - name: Collect PDFs
+        run: |
+          mkdir -p pdf-artifacts
+          find . -maxdepth 1 -name '*.pdf' -exec cp {} pdf-artifacts/ \;
+          ls -la pdf-artifacts/
+      - name: Upload PDF artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-output-${{ github.sha }}
+          path: pdf-artifacts/
+          retention-days: 30
+

@@ -128,3 +128,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Vendored copy of printpdf 0.12.6 with a small patch to its HTML bridge
+# (BoxShadow display items were dropped). See vendor/printpdf/PDFCN_PATCHES.md.
+[patch.crates-io]
+printpdf = { path = "vendor/printpdf" }

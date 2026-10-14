@@ -86,5 +86,9 @@ cargo tree --edges features -p pdfcn-vercel   # resvg/lopdf are expected now
   header/footer rendering is wired but a no-op in 0.12.6; it has zero
   embedded-file support). `printpdf`, `lopdf`, `resvg` sources are in
   `~/.cargo/registry/src/`.
+- **`vendor/printpdf` is a patched copy of printpdf 0.12.6** (via
+  `[patch.crates-io]`); every change is marked `PDFCN PATCH` and listed in
+  `vendor/printpdf/PDFCN_PATCHES.md`. Add to it only when the layout engine
+  already emits the thing and the bridge drops it; record it in that file.
 - **Never commit a git amend/force-push** without being asked; this repo
   develops on feature branches merged via PR.

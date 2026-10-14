@@ -50,3 +50,23 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
     Then it warns that "flexx" and "hover:bg-red-500" were ignored and still writes the PDF
     When "pdfcn build" runs with "--strict"
     Then it fails naming the unrecognized classes
+
+  @covers(pdfcn-styles/src/decoration.rs)
+  Scenario: Underline and line-through on a block element reach the output
+    Given a "%p" with the class "underline" or "line-through"
+    When the document is rendered
+    Then the text is wrapped in decorated inline spans so the engine draws the line
+
+  @covers(pdfcn-styles/src/tokens.rs)
+  Scenario Outline: Shadow utilities are painted
+    Given a white box with the class "<shadow>"
+    When the document is rendered
+    Then the drawn output differs from the same box without a shadow
+
+    Examples:
+      | shadow    |
+      | shadow-sm |
+      | shadow    |
+      | shadow-md |
+      | shadow-lg |
+      | shadow-2xl|

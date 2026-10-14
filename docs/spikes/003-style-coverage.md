@@ -51,8 +51,19 @@ and one fixed page size.
   block. A HTML rewrite pass (like `gap.rs`) now wraps the text in a
   decorated `<span>`.
 - `box-shadow`: layout emits `DisplayListItem::BoxShadow`, but printpdf's
-  `html/bridge.rs` drops it (not in its match arms). Fixing that means
-  patching printpdf's bridge, not azul-layout.
+  `html/bridge.rs` drops it (it falls into the `_ => {}` arm). Fixed by
+  vendoring printpdf (`vendor/printpdf`, `[patch.crates-io]`) and painting the
+  item there -- patching the bridge, not azul-layout, was enough. The engine
+  also only honors ONE shadow layer: Tailwind's two-layer `shadow-md/lg/xl`
+  parsed to nothing, so `tokens::SHADOW` folds them into one layer.
+- **Where the leverage is:** `printpdf::html::xml_to_pdf_pages` is
+  layout -> `DisplayList` -> `bridge` -> PDF ops. The display list already
+  carries `Underline`, `Strikethrough`, `BoxShadow`, gradients, borders and
+  opacity; the gap is mostly in the small bridge, which is a few hundred
+  lines we can patch, not in the layout engine. A new renderer is not needed
+  for these.
+- Still open: `vertical-align` (no effect even inline) and `object-fit`
+  (the layout engine has no display-list item for it).
 - `border-collapse` is already forced by the document stylesheet
   (`table{border-collapse:collapse}`), so the utility only matters to
   switch it off.
