@@ -204,6 +204,19 @@ Not yet validated against a real Factur-X/PDF-A validator (veraPDF,
 Mustang) in this environment -- see the spike doc for exactly what is and
 isn't confirmed.
 
+## Examples
+
+`examples/` holds runnable templates; `pdfcn build examples/<name>.haml -d examples/<name>.json -o out.pdf`.
+The live demo (`index.html`) loads the same ones in its editor.
+
+| Example | Shows |
+|---|---|
+| `dashboard` | gradient hero, KPI cards with shadows, bar chart, progress, `divide-y` list, ring callout |
+| `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
+| `certificate` | serif type, double border, gradient background, circular seal |
+| `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
+
 ## Known limitations
 
 - **`gap` (flex and grid) has no effect.** Neither `display:flex` nor
