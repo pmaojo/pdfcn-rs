@@ -42,3 +42,11 @@ Feature: Utility-class coverage — wider Tailwind subset, variants and unresolv
     Given the templates in "examples/" and the component sources
     When their class attributes are audited against the stylesheet builder
     Then only the known semantic marker classes are left unresolved
+
+  @covers(pdfcn-cli/src/build.rs)
+  Scenario: Warning about, or failing on, unrecognized utility classes
+    Given a template using the classes "p-4 flexx hover:bg-red-500"
+    When "pdfcn build" runs without "--strict"
+    Then it warns that "flexx" and "hover:bg-red-500" were ignored and still writes the PDF
+    When "pdfcn build" runs with "--strict"
+    Then it fails naming the unrecognized classes

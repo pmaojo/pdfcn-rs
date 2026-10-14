@@ -215,6 +215,10 @@ isn't confirmed.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next
   page. See the row-grouping note above for the workaround.
+- **`underline`, `line-through`, `align-*` and the `border-collapse`
+  utility have no effect.** They resolve to their standard CSS but the
+  engine ignores them (verified in `docs/spikes/003-style-coverage.md`).
+  Use `border-b` for a visible underline.
 - **`box-shadow` has no effect.** `shadow-sm`/`shadow-md`/etc. resolve to a
   real CSS declaration, but the renderer doesn't paint it — cards render
   flat, without a drop shadow.

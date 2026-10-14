@@ -108,17 +108,49 @@ fn split_variant(class: &str) -> Option<(&'static str, &str)> {
     Some((pseudo, base))
 }
 
+/// Classes the built-in components emit as structural hooks rather than
+/// utilities (`breadcrumb-item`, `pdfcn-chart`, ...), plus `table-striped`,
+/// which is styled by its own rule. They are intentionally absent from the
+/// utility table, so they are not "unresolved" in any useful sense.
+pub fn is_marker_class(class: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "badge",
+        "barchart",
+        "card",
+        "document",
+        "qrcode",
+        "separator",
+        "table-striped",
+    ];
+    const PREFIXES: &[&str] = &[
+        "alert-",
+        "breadcrumb",
+        "card-",
+        "checkbox-",
+        "document-",
+        "form-field",
+        "invoice-",
+        "page-footer-",
+        "pagination",
+        "pdfcn-",
+        "progress",
+        "radio-",
+        "signature-",
+    ];
+    EXACT.contains(&class) || PREFIXES.iter().any(|p| class.starts_with(p))
+}
+
 /// The utility classes in `html` that resolve to no CSS -- typos, utilities
 /// this crate doesn't implement, or variants that can't apply to a PDF.
 /// Unknown classes are skipped silently when building the stylesheet (as an
 /// unknown Tailwind class would be), so this is the way to find out which
-/// ones were dropped. Classes that are plain markers rather than utilities
-/// (e.g. `card`, `table-striped`) are reported too; callers filter as needed.
+/// ones were dropped. Component marker classes ([`is_marker_class`]) are
+/// excluded.
 pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
     extract_classes(html)
         .into_iter()
         .filter(|class| {
-            class != "table-striped"
+            !is_marker_class(class)
                 && split_variant(class)
                     .and_then(|(_, base)| utilities::resolve_with(base, theme))
                     .is_none()

@@ -27,7 +27,7 @@ pub use error::CoreError;
 pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
-pub use pdfcn_styles::{Theme, ThemeMode};
+pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 
 use std::collections::hash_map::DefaultHasher;
@@ -581,6 +581,33 @@ pub fn render_files(
     render_files_with_remote_images(template_path, data_path, options, None)
 }
 
+/// Reads `template_path` and `data_path` and runs the pipeline up to the
+/// HTML document (no PDF yet), returning it with the template's directory
+/// (where relative `include`s and `<img src>` resolve from).
+pub fn render_files_html(
+    template_path: &Path,
+    data_path: &Path,
+    theme: &Theme,
+) -> Result<(String, PathBuf), CoreError> {
+    let source = std::fs::read_to_string(template_path)
+        .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
+    let data_source = std::fs::read_to_string(data_path)
+        .map_err(|e| CoreError::Render(format!("reading {data_path:?}: {e}")))?;
+    let format = data_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(DataFormat::from_extension)
+        .unwrap_or(DataFormat::Json);
+    let data = load_data(&data_source, format)?;
+    let base_dir = template_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let loader = FsPartialLoader::new(base_dir.clone());
+    let html = render_html_with_theme(&source, &data, &loader, theme)?;
+    Ok((html, base_dir))
+}
+
 /// A caller-supplied `http(s):` image fetcher for
 /// [`render_files_with_remote_images`]: given a `src` URL, returns its
 /// bytes, or `None` to leave that `<img>` unresolved.
@@ -601,22 +628,7 @@ pub fn render_files_with_remote_images(
     options: &RenderOptions,
     fetch_remote: Option<&RemoteImageFetcher>,
 ) -> Result<Vec<u8>, CoreError> {
-    let source = std::fs::read_to_string(template_path)
-        .map_err(|e| CoreError::Render(format!("reading {template_path:?}: {e}")))?;
-    let data_source = std::fs::read_to_string(data_path)
-        .map_err(|e| CoreError::Render(format!("reading {data_path:?}: {e}")))?;
-    let format = data_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(DataFormat::from_extension)
-        .unwrap_or(DataFormat::Json);
-    let data = load_data(&data_source, format)?;
-    let base_dir = template_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    let loader = FsPartialLoader::new(base_dir.clone());
-    let html = render_html_with_theme(&source, &data, &loader, &options.theme)?;
+    let (html, base_dir) = render_files_html(template_path, data_path, &options.theme)?;
     let images = load_images(&html, &base_dir, fetch_remote);
     render_pdf_with_assets(&html, &BTreeMap::new(), &images, options)
 }

@@ -55,35 +55,12 @@ fn repo_templates_and_components_only_use_resolvable_utilities() {
         }
     }
     let unresolved = unresolved_classes(&html, &Theme::light());
-    // Semantic marker classes the components emit for structure/hooks; they
-    // are intentionally not utilities. Anything else unresolved is a typo or
-    // a missing utility.
-    let unexpected: Vec<&String> = unresolved.iter().filter(|c| !is_marker(c)).collect();
+    let unexpected: Vec<&String> = unresolved
+        .iter()
+        .filter(|c| !(c.contains('.') && c.contains("bg-destructive")))
+        .collect();
     assert!(
         unexpected.is_empty(),
         "classes used by examples/components that resolve to no CSS: {unexpected:?}"
     );
-}
-
-fn is_marker(class: &str) -> bool {
-    // A haml-style selector pasted into a doc comment, not a real class.
-    if class.contains('.') && class.contains("bg-destructive") {
-        return true;
-    }
-    const PREFIXES: &[&str] = &[
-        "alert-",
-        "breadcrumb",
-        "card-",
-        "checkbox-",
-        "form-field",
-        "invoice-",
-        "page-footer-",
-        "pagination",
-        "pdfcn-",
-        "progress",
-        "radio-",
-        "signature-",
-    ];
-    const EXACT: &[&str] = &["barchart", "qrcode"];
-    EXACT.contains(&class) || PREFIXES.iter().any(|p| class.starts_with(p))
 }

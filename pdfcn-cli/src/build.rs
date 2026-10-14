@@ -35,6 +35,11 @@ pub struct BuildArgs {
     /// embed them (opt-in: pdfcn never does this by default, see NFR-3)
     #[arg(long, default_value_t = false)]
     fetch_remote_images: bool,
+    /// Fail instead of warning when the template uses a utility class that
+    /// resolves to no CSS (a typo, an unimplemented utility, or a variant
+    /// that cannot apply to a PDF such as `hover:` or `md:`).
+    #[arg(long, default_value_t = false)]
+    strict: bool,
     /// light or dark -- picks shadcn's built-in token table
     #[arg(long, default_value = "light")]
     theme: String,
@@ -244,6 +249,16 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
         },
         svg_assets,
     };
+    let (html, _) = pdfcn_core::render_files_html(&args.template, &args.data, &options.theme)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let unresolved = pdfcn_core::unresolved_classes(&html, &options.theme);
+    if !unresolved.is_empty() {
+        let list = unresolved.iter().cloned().collect::<Vec<_>>().join(", ");
+        if args.strict {
+            anyhow::bail!("unrecognized utility classes (--strict): {list}");
+        }
+        eprintln!("warning: unrecognized utility classes, ignored: {list}");
+    }
     let fetcher: Option<&pdfcn_core::RemoteImageFetcher> =
         args.fetch_remote_images.then_some(&fetch_remote_image);
     let bytes =
