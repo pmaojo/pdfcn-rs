@@ -1,4 +1,4 @@
-Feature: Wave 1 vector substrate — %Vector, Charts v2 and %Barcode over an opt-in SVG-to-PNG pass
+Feature: Wave 1 vector substrate — %Vector, Charts v2, %Barcode, %Icon and QR codes as PDF vectors
   As a developer generating business documents
   I want charts with axes, scannable barcodes, and arbitrary caller-supplied SVG
   rendered through one shared substrate
@@ -118,3 +118,25 @@ Feature: Wave 1 vector substrate — %Vector, Charts v2 and %Barcode over an opt
     Given a container with "space-x-2" and no flex display class
     When the gap-rewrite pass runs
     Then no margin is injected, exactly as plain CSS would render it
+
+  # Spike 004 — real vectors in the PDF
+  @covers(pdfcn-core/src/vector_pdf.rs)
+  Scenario: Landing every SVG placeholder as vector graphics
+    Given a template with a %Vector, a chart, a barcode, an icon or a QR code
+    When it is rendered to PDF with the vector feature
+    Then the placeholder's image XObject is replaced in place by a Form XObject
+    And the Form draws the SVG's own paths into the box the PNG occupied
+    And no raster image is left for that placeholder
+
+  @covers(pdfcn-core/src/vector_pdf.rs)
+  Scenario: Keeping the PNG when the SVG cannot become vectors
+    Given a placeholder whose SVG source the vector pass cannot convert
+    When the PDF is post-processed
+    Then the placeholder keeps its PNG and the document is returned unchanged
+
+  @covers(pdfcn-core/tests/golden.rs)
+  Scenario: Failing CI when a vector placeholder slips back to a raster image
+    Given every example in examples/
+    When the golden suite renders them
+    Then any %Vector, chart, barcode, icon or QR code left as an image fails the suite
+    And each Form's bounding box and drawing operators are part of the snapshot

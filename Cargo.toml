@@ -109,6 +109,11 @@ resvg = "0.45"
 # 0.44 printpdf already resolves transitively, so this adds no new crate
 # to the dependency tree, only a direct edge to one already being built.
 lopdf = "0.44"
+# SVG -> PDF vector graphics for the `vector` feature: every SVG placeholder
+# lands in the PDF as a Form XObject instead of a PNG (see
+# docs/spikes/004-vector-form-xobjects.md). 0.13 is the release built on the
+# same usvg 0.45 resvg already uses, so the parsed tree type is shared.
+svg2pdf = { version = "0.13", default-features = false, features = ["image", "text", "filters"] }
 qrcodegen = "1"
 # PAdES digital signatures (pdfcn-core's opt-in `sign` feature). RustCrypto,
 # pure Rust: no OpenSSL, so the feature stays buildable for musl/wasm targets.

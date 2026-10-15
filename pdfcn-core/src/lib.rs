@@ -22,6 +22,8 @@ mod raster;
 // (see Cargo.toml) -- same `--no-default-features` opt-out as `vector`.
 #[cfg(feature = "factur-x")]
 mod factur_x;
+#[cfg(feature = "vector")]
+mod vector_pdf;
 
 // PAdES signing of a finished PDF. Opt-in `sign` cargo feature.
 #[cfg(feature = "sign")]
@@ -473,11 +475,13 @@ pub fn render_pdf_with_assets(
         f64::from((width_mm - 2.0 * margin_mm).max(1.0)) * px_per_mm,
         f64::from((height_mm - 2.0 * margin_mm).max(1.0)) * px_per_mm,
     );
+    let mut vector_sources = BTreeMap::new();
     let html = assets::prepare_assets_with_vectors(
         html,
         &mut prepared_images,
         &options.svg_assets,
         Some(page_bound),
+        &mut vector_sources,
     );
     let html = html.as_str();
 
@@ -598,7 +602,14 @@ pub fn render_pdf_with_assets(
         ..Default::default()
     };
     let mut save_warnings = Vec::new();
-    Ok(doc.save(&save_options, &mut save_warnings))
+    let pdf = doc.save(&save_options, &mut save_warnings);
+    // The layout placed every SVG placeholder as a PNG; swap those for real
+    // vectors now that the document exists (see `vector_pdf`).
+    #[cfg(feature = "vector")]
+    let pdf = vector_pdf::vectorize(pdf, &vector_sources);
+    #[cfg(not(feature = "vector"))]
+    let _ = vector_sources;
+    Ok(pdf)
 }
 
 /// The per-image budget, in *uncompressed* bytes, above which printpdf shrinks

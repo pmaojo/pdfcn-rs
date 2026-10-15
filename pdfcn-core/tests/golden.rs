@@ -21,11 +21,15 @@
 //!   of the file and none of it reviewable. Each payload is replaced with a
 //!   stable digest, so changed bytes still fail the test while unchanged ones
 //!   cost one line.
-//! * **Vector content.** `render_to_svg` only materialises `XObject::Image`
-//!   (its image map is populated solely from that variant), so a form XObject
-//!   renders as nothing at all. If the vector substrate lands, these
-//!   snapshots will show its output as blank -- they would pass trivially and
-//!   prove nothing. That path needs its own oracle; see the roadmap.
+//!
+//! **Vector content has its own oracle.** `render_to_svg` only materialises
+//! `XObject::Image`, so the Form XObjects that SVG placeholders become (see
+//! docs/spikes/004) would render as nothing and pass trivially. With the
+//! `vector` feature each snapshot's first page therefore ends with one
+//! `<!-- vector ... -->` line per Form: its resource name, `/BBox` and a
+//! digest of its drawing operators. And no example may leave a vector
+//! placeholder (`%Vector`, charts, barcodes, icons, QR codes) as a raster
+//! image: [`vector_placeholders_never_land_as_raster_images`] fails if one does.
 //!
 //! Refresh after an intentional change with:
 //!
@@ -166,7 +170,8 @@ fn render_pages(example: &str) -> Vec<String> {
     );
 
     let opts = PdfToSvgOptions::default();
-    doc.pages
+    let mut pages: Vec<String> = doc
+        .pages
         .iter()
         .map(|page| {
             let mut page_warnings = Vec::new();
@@ -177,8 +182,105 @@ fn render_pages(example: &str) -> Vec<String> {
                 &mut page_warnings,
             ))
         })
-        .collect()
+        .collect();
+    #[cfg(feature = "vector")]
+    if let Some(first) = pages.first_mut() {
+        for xobject in xobjects(example, &bytes) {
+            if xobject.form {
+                first.push_str(&format!(
+                    "\n<!-- vector {} bbox={} ops={} -->",
+                    xobject.name, xobject.bbox, xobject.ops
+                ));
+            }
+        }
+    }
+    pages
 }
+
+/// One `HtmlImg_*` XObject of a rendered example, as the vector oracle sees it.
+#[cfg(feature = "vector")]
+struct PlacedXObject {
+    name: String,
+    form: bool,
+    bbox: String,
+    ops: String,
+}
+
+/// Every image/form XObject printpdf placed for an `<img>`, sorted by name.
+#[cfg(feature = "vector")]
+fn xobjects(example: &str, bytes: &[u8]) -> Vec<PlacedXObject> {
+    use lopdf::{Document, Object};
+    let doc = match Document::load_mem(bytes) {
+        Ok(doc) => doc,
+        Err(e) => panic!("lopdf could not read the {example} PDF: {e}"),
+    };
+    let mut found = std::collections::BTreeMap::new();
+    for page_id in doc.get_pages().into_values() {
+        let resources = doc
+            .get_dictionary(page_id)
+            .and_then(|page| page.get(b"Resources"))
+            .and_then(|r| doc.dereference(r))
+            .and_then(|(_, r)| r.as_dict());
+        let Ok(resources) = resources else { continue };
+        let xobjects = resources
+            .get(b"XObject")
+            .and_then(|x| doc.dereference(x))
+            .and_then(|(_, x)| x.as_dict());
+        let Ok(xobjects) = xobjects else { continue };
+        for (name, value) in xobjects.iter() {
+            let name = String::from_utf8_lossy(name).to_string();
+            if !name.starts_with("HtmlImg_") {
+                continue;
+            }
+            let Ok(stream) = value
+                .as_reference()
+                .and_then(|id| doc.get_object(id))
+                .and_then(Object::as_stream)
+            else {
+                continue;
+            };
+            let form =
+                stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(&b"Form"[..]);
+            let bbox = stream
+                .dict
+                .get(b"BBox")
+                .and_then(Object::as_array)
+                .map(|a| {
+                    let n: Vec<String> = a
+                        .iter()
+                        .map(|v| v.as_float().map(|f| format!("{f:.2}")).unwrap_or_default())
+                        .collect();
+                    format!("[{}]", n.join(" "))
+                })
+                .unwrap_or_default();
+            let ops = stream
+                .decompressed_content()
+                .map(|c| digest(&c))
+                .unwrap_or_else(|_| digest(&stream.content));
+            found.insert(
+                name.clone(),
+                PlacedXObject {
+                    name,
+                    form,
+                    bbox,
+                    ops,
+                },
+            );
+        }
+    }
+    found.into_values().collect()
+}
+
+/// The resource-name prefixes of every vector placeholder scheme, as
+/// printpdf sanitizes them (`pdfcn-chart:` -> `pdfcn_chart_`).
+#[cfg(feature = "vector")]
+const VECTOR_PLACEHOLDERS: &[&str] = &[
+    "HtmlImg_pdfcn_vector_",
+    "HtmlImg_pdfcn_chart_",
+    "HtmlImg_pdfcn_barcode_",
+    "HtmlImg_pdfcn_icon_",
+    "HtmlImg_pdfcn_qrcode_",
+];
 
 fn check_example(example: &str) {
     let pages = render_pages(example);
@@ -228,6 +330,50 @@ fn check_example(example: &str) {
             pages.len() + 1
         );
     }
+}
+
+/// Every SVG-backed placeholder must reach the PDF as vectors. A new
+/// generator that forgets to register its SVG source would otherwise slip
+/// back to a PNG without any snapshot noticing.
+#[cfg(feature = "vector")]
+#[test]
+fn vector_placeholders_never_land_as_raster_images() {
+    let root = repo_root();
+    let mut checked = 0usize;
+    for example in EXAMPLES {
+        let examples = root.join("examples");
+        let template = TEMPLATE_EXTENSIONS
+            .iter()
+            .map(|ext| examples.join(format!("{example}.{ext}")))
+            .find(|p| p.exists())
+            .unwrap_or_else(|| panic!("no template found for example {example}"));
+        let own_data = examples.join(format!("{example}.json"));
+        let data = if own_data.exists() {
+            own_data
+        } else {
+            examples.join("formats.json")
+        };
+        let bytes = match render_files(&template, &data, &RenderOptions::default()) {
+            Ok(bytes) => bytes,
+            Err(e) => panic!("rendering {example} failed: {e:?}"),
+        };
+        for xobject in xobjects(example, &bytes) {
+            if VECTOR_PLACEHOLDERS
+                .iter()
+                .any(|p| xobject.name.starts_with(p))
+            {
+                assert!(
+                    xobject.form,
+                    "{example}: {} is still a raster image, not vectors",
+                    xobject.name
+                );
+                checked += 1;
+            }
+        }
+    }
+    // The examples do contain charts, barcodes, icons and QR codes: a check
+    // that never found one would prove nothing.
+    assert!(checked > 0, "no vector placeholder found in any example");
 }
 
 #[test]

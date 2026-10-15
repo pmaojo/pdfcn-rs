@@ -18,7 +18,7 @@ default = ["vector", "factur-x"]
 # that wants the smallest possible binary can opt out explicitly with
 # `--no-default-features`; enabling it pulls in resvg and turns on the
 # matching component set in pdfcn-components.
-vector = ["dep:resvg", "pdfcn-components/vector"]
+vector = ["dep:resvg", "dep:svg2pdf", "dep:lopdf", "pdfcn-components/vector"]
 
 # Ola 3: post-processes printpdf's own output to splice in a Factur-X
 # EN 16931/CII invoice attachment (embedded XML + PDF/A-3 catalog
@@ -52,6 +52,7 @@ printpdf = { workspace = true }
 image = { workspace = true }
 qrcodegen = { workspace = true }
 resvg = { workspace = true, optional = true }
+svg2pdf = { workspace = true, optional = true }
 lopdf = { workspace = true, optional = true }
 cms = { workspace = true, optional = true }
 x509-cert = { workspace = true, optional = true }

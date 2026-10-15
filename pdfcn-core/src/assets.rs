@@ -194,10 +194,41 @@ fn qrcode_png(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<Vec<u8>> {
     Some(png)
 }
 
+/// The same symbol as [`qrcode_png`], as SVG: one path, one unit square per
+/// dark module, the quiet zone kept in the viewBox. It lets the QR land in the
+/// PDF as vectors (see `vector_pdf`) while the PNG stays the layout's input.
+fn qrcode_svg(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<String> {
+    use qrcodegen::QrCode;
+    use std::fmt::Write as _;
+
+    if payload.is_empty() || payload.len() > MAX_QRCODE_PAYLOAD_BYTES {
+        return None;
+    }
+    let qr = QrCode::encode_binary(payload, ecc).ok()?;
+    let size = qr.size();
+    let dim = size + 2 * QR_QUIET_ZONE;
+    let mut path = String::new();
+    for y in 0..size {
+        for x in 0..size {
+            if qr.get_module(x, y) {
+                let _ = write!(path, "M{} {}h1v1h-1z", x + QR_QUIET_ZONE, y + QR_QUIET_ZONE);
+            }
+        }
+    }
+    Some(format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {dim} {dim}" shape-rendering="crispEdges"><rect width="{dim}" height="{dim}" fill="#fff"/><path d="{path}" fill="#000"/></svg>"##
+    ))
+}
+
 /// Pass 1: for every `<img src="pdfcn-qrcode:…">`, generate the PNG and
 /// register it under that exact src (no HTML rewrite needed — the layout
-/// engine resolves it like any caller-supplied image).
-fn generate_qrcodes(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
+/// engine resolves it like any caller-supplied image). Its SVG goes into
+/// `sources` under the same src, for the vector pass.
+fn generate_qrcodes(
+    html: &str,
+    images: &mut BTreeMap<String, Vec<u8>>,
+    sources: &mut BTreeMap<String, String>,
+) {
     let srcs: Vec<String> = scan_img_tags(html)
         .iter()
         .filter_map(|tag| attr_value(&tag.attrs, "src").map(str::to_string))
@@ -214,6 +245,9 @@ fn generate_qrcodes(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
             continue;
         };
         if let Some(png) = qrcode_png(&payload, ecc) {
+            if let Some(svg) = qrcode_svg(&payload, ecc) {
+                sources.insert(src.clone(), svg);
+            }
             images.insert(src, png);
         }
     }
@@ -253,12 +287,16 @@ fn short_placeholder_src(scheme: &str, src: &str) -> String {
 /// placeholder whose SVG can't be produced (unknown id, malformed spec,
 /// unencodable payload) is left unresolved and degrades exactly like any
 /// missing image; nothing here fails or panics the render.
+/// `sources` receives each placeholder's SVG text under the same key as its
+/// PNG, so the PNG can be swapped for real vectors once the PDF is saved
+/// (see `vector_pdf`); the PNG stays the layout's input and the fallback.
 /// No-op (and compiles to nothing, returning `html` unchanged) without the
 /// `vector` cargo feature.
 pub(crate) fn generate_vectors(
     html: &str,
     images: &mut BTreeMap<String, Vec<u8>>,
     svg_assets: &BTreeMap<String, String>,
+    sources: &mut BTreeMap<String, String>,
 ) -> String {
     #[cfg(feature = "vector")]
     {
@@ -304,22 +342,21 @@ pub(crate) fn generate_vectors(
             let registered_key = short_src.as_ref().unwrap_or(&src);
             if !images.contains_key(registered_key) {
                 // One closure so any step can bail out with `?`: an
-                // unfillable placeholder is simply left unresolved.
-                let png = (|| {
+                // unfillable placeholder is simply left unresolved. Yields
+                // the SVG and the box to rasterize it at.
+                let svg = (|| {
                     if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
-                        let svg = svg_assets.get(id)?;
-                        return raster::svg_to_png(svg, box_w, box_h);
+                        return Some((svg_assets.get(id)?.clone(), box_w, box_h));
                     }
                     if let Some(payload) = src.strip_prefix(ICON_SCHEME) {
                         let (name, color, stroke) = pdfcn_components::decode_icon_payload(payload)?;
                         let svg = pdfcn_components::icon_svg(&name, &color, stroke.as_deref())?;
-                        return raster::svg_to_png(&svg, box_w, box_h);
+                        return Some((svg, box_w, box_h));
                     }
                     if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
                         let bytes = hex_decode(spec_hex)?;
                         let spec: JsonValue = serde_json::from_slice(&bytes).ok()?;
-                        let svg = charts_svg::chart_svg(&spec)?;
-                        return raster::svg_to_png(&svg, box_w, box_h);
+                        return Some((charts_svg::chart_svg(&spec)?, box_w, box_h));
                     }
                     if let Some(rest) = src.strip_prefix(BARCODE_SCHEME) {
                         let (scheme, hex_value) = rest.split_once(':')?;
@@ -328,10 +365,15 @@ pub(crate) fn generate_vectors(
                         let w = box_w.unwrap_or(240.0);
                         let h = box_h.unwrap_or(60.0);
                         let svg = barcode::barcode_svg(scheme, &value, w, h)?;
-                        return raster::svg_to_png(&svg, Some(w), Some(h));
+                        return Some((svg, Some(w), Some(h)));
                     }
                     None
                 })();
+                let png = svg.and_then(|(svg, w, h)| {
+                    let png = raster::svg_to_png(&svg, w, h)?;
+                    sources.insert(registered_key.clone(), svg);
+                    Some(png)
+                });
                 if let Some(png) = png {
                     images.insert(registered_key.clone(), png);
                 } else if short_src.is_some() {
@@ -362,7 +404,7 @@ pub(crate) fn generate_vectors(
     }
     #[cfg(not(feature = "vector"))]
     {
-        let _ = (images, svg_assets);
+        let _ = (images, svg_assets, sources);
         html.to_string()
     }
 }
@@ -678,7 +720,7 @@ fn downscale_to_limits(
 /// the side channel reaches the substrate.
 #[cfg(test)]
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
-    prepare_assets_with_vectors(html, images, &BTreeMap::new(), None)
+    prepare_assets_with_vectors(html, images, &BTreeMap::new(), None, &mut BTreeMap::new())
 }
 
 /// Like [`prepare_assets`], with the vector substrate's side channel:
@@ -688,6 +730,7 @@ pub(crate) fn prepare_assets_with_vectors(
     images: &mut BTreeMap<String, Vec<u8>>,
     svg_assets: &BTreeMap<String, String>,
     page: Option<PageBound>,
+    vector_sources: &mut BTreeMap<String, String>,
 ) -> String {
     // Orientation first, on the full-resolution bytes: the crops and the
     // normalisation below must all see the picture the right way up.
@@ -698,11 +741,11 @@ pub(crate) fn prepare_assets_with_vectors(
     // loss into every variant (a 400x100 source into a 100px square box
     // would come out 75x75 instead of 100x100).
     let rewritten = apply_cover_crops(html, images);
-    generate_qrcodes(&rewritten, images);
+    generate_qrcodes(&rewritten, images, vector_sources);
     // May further rewrite `<img src>` for any Charts v2/vector/barcode
     // placeholder too long to survive as a PDF Name once printpdf turns it
     // into an XObject resource id (see `MAX_SAFE_PLACEHOLDER_SRC_LEN`).
-    let rewritten = generate_vectors(&rewritten, images, svg_assets);
+    let rewritten = generate_vectors(&rewritten, images, svg_assets, vector_sources);
     // The original stays registered under its own src untouched, so
     // normalization -- last, capping everything at box * MAX_PRINT_SCALE --
     // parks any src that has a cropped variant aside: its visual role is
@@ -779,7 +822,7 @@ mod tests {
             .collect();
         let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
         let mut images = BTreeMap::new();
-        generate_vectors(&html, &mut images, &BTreeMap::new());
+        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut BTreeMap::new());
         let png = images
             .get(&format!("pdfcn-icon:{payload}"))
             .expect("the icon was rasterised");
@@ -800,7 +843,7 @@ mod tests {
             .collect();
         let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
         let mut images = BTreeMap::new();
-        generate_vectors(&html, &mut images, &BTreeMap::new());
+        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut BTreeMap::new());
         assert!(images.is_empty());
     }
 
@@ -952,7 +995,13 @@ mod tests {
         let src = "photo.png";
         let mut images = BTreeMap::from([(src.to_string(), png_bytes(3060, 4080, [1, 2, 3]))]);
         let html = format!(r#"<img src="{src}" style="width:100%;height:300px;object-fit:cover">"#);
-        prepare_assets_with_vectors(&html, &mut images, &BTreeMap::new(), Some((700.0, 1000.0)));
+        prepare_assets_with_vectors(
+            &html,
+            &mut images,
+            &BTreeMap::new(),
+            Some((700.0, 1000.0)),
+            &mut BTreeMap::new(),
+        );
         let decoded = image::load_from_memory(&images[src]).unwrap();
         // 700 CSS px across the page at 3x.
         assert_eq!(decoded.width(), 2100);

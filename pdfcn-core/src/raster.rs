@@ -48,6 +48,18 @@ fn font_db() -> Arc<fontdb::Database> {
         .clone()
 }
 
+/// Parses `svg` with the embedded fonts, the one way every SVG in a document
+/// is read -- here for the PNG, and by `vector_pdf` for the vector version, so
+/// both draw the same tree. `None` for SVG usvg rejects.
+pub(crate) fn parse_svg(svg: &str) -> Option<Tree> {
+    let options = Options {
+        fontdb: font_db(),
+        font_family: "Inter".to_string(),
+        ..Options::default()
+    };
+    Tree::from_str(svg, &options).ok()
+}
+
 /// Renders `svg` to PNG bytes. `box_w_px`/`box_h_px` are the layout box the
 /// placeholder paints into, when known in px: the output is that box at
 /// [`PRINT_SCALE`], capped at [`MAX_DIMENSION_PX`] per side. Without a box
@@ -60,12 +72,7 @@ pub(crate) fn svg_to_png(
     box_w_px: Option<f64>,
     box_h_px: Option<f64>,
 ) -> Option<Vec<u8>> {
-    let options = Options {
-        fontdb: font_db(),
-        font_family: "Inter".to_string(),
-        ..Options::default()
-    };
-    let tree = Tree::from_str(svg, &options).ok()?;
+    let tree = parse_svg(svg)?;
     let viewport = tree.size();
     let (iw, ih) = (f64::from(viewport.width()), f64::from(viewport.height()));
     if !(iw.is_finite() && ih.is_finite() && iw > 0.0 && ih > 0.0) {
