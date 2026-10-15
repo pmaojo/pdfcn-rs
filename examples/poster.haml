@@ -1,0 +1,19 @@
+.bg-slate-900
+  .relative
+    %img(src="assets/popcorn/poster-sea.jpg" alt="Olas y arena blanca" style="width:1587px;height:700px;object-fit:cover")
+    .absolute.bottom-0.left-0.right-0.text-white(style="background:rgba(15,23,42,0.5);padding:40px 80px")
+      %p.font-semibold.tracking-widest.uppercase(style="font-size:28px") {{ kicker }}
+      %h1.font-bold(style="font-size:120px;line-height:1.05") {{ title }}
+  .relative
+    %img(src="assets/popcorn/poster-texture.jpg" alt="Granos blancos y cantos negros" style="width:1587px;height:1000px;object-fit:cover")
+    .absolute.top-0.left-0.right-0.bottom-0.text-white(style="background:rgba(15,23,42,0.45);padding:90px 80px")
+      %p.font-semibold(style="font-size:56px;line-height:1.25;width:1000px") Una playa que parece de mentira
+      %p(style="font-size:30px;line-height:1.5;width:900px;margin-top:24px") {{ intro }}
+  .text-white(style="padding:60px 80px")
+    .grid.grid-cols-3.gap-4
+      - for f in features
+        .p-3
+          %Icon(name="{{ f.icon }}" size="64px" color="#ffffff")
+          %p.font-bold(style="font-size:40px;margin-top:16px") {{ f.title }}
+          %p(style="font-size:24px;line-height:1.45;margin-top:8px;color:#cbd5e1") {{ f.text }}
+    %p.font-semibold.uppercase.tracking-widest(style="font-size:28px;margin-top:60px;color:#5eead4") Fuerteventura · Canarias

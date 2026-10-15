@@ -32,3 +32,4 @@ target
 .vord-provenance.json
 .vord-audit.jsonl
 .vord-triage.json
+/out/
