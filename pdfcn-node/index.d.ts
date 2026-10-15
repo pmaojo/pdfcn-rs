@@ -20,6 +20,11 @@ export interface PageOptions {
   orientation?: Orientation;
   /** Page margin in mm. Default: 20. */
   marginMm?: number;
+  /**
+   * Template format: "haml" | "html" | "markdown" | "json" | "yaml" | "typst" | "latex".
+   * Omitted, it is detected from the text; YAML and Typst need it set.
+   */
+  format?: "haml" | "html" | "markdown" | "json" | "yaml" | "typst" | "latex";
   /** "light" | "dark". Default: "light". */
   theme?: Theme;
   /**

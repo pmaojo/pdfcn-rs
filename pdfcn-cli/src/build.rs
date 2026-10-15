@@ -14,7 +14,7 @@ const MAX_REMOTE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 #[derive(Args)]
 pub struct BuildArgs {
-    /// Path to the .haml template
+    /// Path to the template: .haml, .html, .md, .yaml, .json, .typ or .tex (the extension picks the format)
     template: PathBuf,
     /// Path to the JSON/YAML data file
     #[arg(short, long)]

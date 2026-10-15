@@ -42,7 +42,7 @@ enum Command {
     },
     /// Serve a live preview of the rendered document in a browser
     Dev {
-        /// Path to the .haml template
+        /// Path to the template: .haml, .html, .md, .yaml, .json, .typ or .tex (the extension picks the format)
         template: PathBuf,
         /// Path to the JSON/YAML data file
         #[arg(short, long)]

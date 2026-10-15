@@ -1,0 +1,15 @@
+{
+  "company": "Northwind Studio",
+  "month": "September 2026",
+  "paid": true,
+  "kpis": [
+    { "label": "Revenue", "value": "€48,200", "delta": "+12%", "up": true },
+    { "label": "New clients", "value": "31", "delta": "+4", "up": true },
+    { "label": "Churn", "value": "2.1%", "delta": "+0.3 pt", "up": false }
+  ],
+  "rows": [
+    { "item": "Brand identity", "qty": 1, "price": "€4,800" },
+    { "item": "Website build", "qty": 1, "price": "€9,500" },
+    { "item": "Monthly care plan", "qty": 3, "price": "€450" }
+  ]
+}

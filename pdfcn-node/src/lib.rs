@@ -6,7 +6,7 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdfcn_core::{
-    render, DocumentMetadata, ImageFormat, ImageOptimization, NoPartials, Orientation, PageConfig,
+    DocumentMetadata, ImageFormat, ImageOptimization, NoPartials, Orientation, PageConfig,
     PageSize, RenderOptions, Theme,
 };
 use std::collections::BTreeMap;
@@ -18,6 +18,11 @@ pub struct PageOptions {
     /// "portrait" | "landscape"
     pub orientation: Option<String>,
     pub margin_mm: Option<f64>,
+    /// Template format: "haml" | "html" | "markdown" | "json" | "yaml" |
+    /// "typst" | "latex". Omitted, it is detected from the text (HTML,
+    /// Markdown with front matter or a `#` heading, JSON and LaTeX
+    /// preambles are recognised; YAML and Typst need this field).
+    pub format: Option<String>,
     /// "light" | "dark" -- picks shadcn's built-in token table
     pub theme: Option<String>,
     /// Repeated on every page (see `skip_first_page`). Currently has no
@@ -159,8 +164,9 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
     })
 }
 
-/// Renders a `.haml`-style `template` against a JSON-encoded `data_json`
-/// context and returns PDF bytes.
+/// Renders a `template` (HAML, HTML, Markdown, JSON/YAML block tree, or the
+/// Typst/LaTeX subsets; see `PageOptions::format`) against a JSON-encoded
+/// `data_json` context and returns PDF bytes.
 #[napi]
 pub fn render_pdf(
     template: String,
@@ -169,8 +175,19 @@ pub fn render_pdf(
 ) -> Result<Buffer> {
     let data: serde_json::Value = serde_json::from_str(&data_json)
         .map_err(|e| Error::from_reason(format!("invalid data_json: {e}")))?;
+    let format = options
+        .as_ref()
+        .and_then(|o| o.format.as_deref())
+        .map(|name| {
+            pdfcn_core::Format::from_name(name)
+                .ok_or_else(|| Error::from_reason(format!("unknown template format: {name}")))
+        })
+        .transpose()?;
     let render_options = to_render_options(options)?;
-    let bytes = render(&template, &data, &NoPartials, &render_options)
+    let html =
+        pdfcn_core::render_html_as(&template, format, &data, &NoPartials, &render_options.theme)
+            .map_err(|e| Error::from_reason(format!("render error: {e}")))?;
+    let bytes = pdfcn_core::render_pdf(&html, &render_options)
         .map_err(|e| Error::from_reason(format!("render error: {e}")))?;
     Ok(bytes.into())
 }

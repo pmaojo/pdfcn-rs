@@ -58,7 +58,16 @@ const EXAMPLES: &[&str] = &[
     "utilities",
     "icons",
     "brochure",
+    // The same pipeline fed from other front-ends (see `pdfcn-formats`).
+    "format-html",
+    "format-markdown",
+    "format-blocks",
+    "format-typst",
+    "format-latex",
 ];
+
+/// Template extensions an example may use, in lookup order.
+const TEMPLATE_EXTENSIONS: &[&str] = &["haml", "html", "md", "yaml", "typ", "tex"];
 
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR is `<repo>/pdfcn-core`.
@@ -123,8 +132,19 @@ fn elide_data_payloads(svg: &str) -> String {
 /// Renders one example end-to-end and returns one normalised SVG per page.
 fn render_pages(example: &str) -> Vec<String> {
     let root = repo_root();
-    let template = root.join("examples").join(format!("{example}.haml"));
-    let data = root.join("examples").join(format!("{example}.json"));
+    let examples = root.join("examples");
+    let template = TEMPLATE_EXTENSIONS
+        .iter()
+        .map(|ext| examples.join(format!("{example}.{ext}")))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| panic!("no template found for example {example}"));
+    // The format-* examples share one data file.
+    let own_data = examples.join(format!("{example}.json"));
+    let data = if own_data.exists() {
+        own_data
+    } else {
+        examples.join("formats.json")
+    };
 
     let bytes = match render_files(&template, &data, &RenderOptions::default()) {
         Ok(bytes) => bytes,

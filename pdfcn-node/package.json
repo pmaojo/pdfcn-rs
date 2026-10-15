@@ -7,6 +7,8 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "components.js",
+    "components.d.ts",
     "pdfcn.linux-x64-gnu.node",
     "pdfcn.linux-x64-musl.node",
     "pdfcn.linux-arm64-gnu.node",

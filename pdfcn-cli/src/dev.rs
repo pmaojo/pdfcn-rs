@@ -49,7 +49,18 @@ async fn render_handler(State(state): State<DevState>) -> impl IntoResponse {
             .map(Path::to_path_buf)
             .unwrap_or_default();
         let loader = pdfcn_core::FsPartialLoader::new(base_dir);
-        let html = pdfcn_core::render_html(&source, &data, &loader)?;
+        let template_format = state
+            .template
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(pdfcn_core::Format::from_extension);
+        let html = pdfcn_core::render_html_as(
+            &source,
+            template_format,
+            &data,
+            &loader,
+            &pdfcn_core::Theme::light(),
+        )?;
         Ok(html.replacen("</body>", &format!("{RELOAD_SCRIPT}</body>"), 1))
     };
 

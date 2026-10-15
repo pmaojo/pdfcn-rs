@@ -1,0 +1,30 @@
+# A document as data: what an API client or an LLM can emit without writing markup.
+- type: Header
+  title: "Invoice for {{ company }}"
+  subtitle: "{{ month }} · declarative block tree (YAML or JSON)"
+
+- type: div
+  class: grid grid-cols-3 gap-4 mt-4
+  children:
+    - for: k in kpis
+      class: border rounded-lg p-4
+      children:
+        - { type: p, class: "text-xs uppercase text-slate-500", text: "{{ k.label }}" }
+        - { type: p, class: "text-3xl font-bold", text: "{{ k.value }}" }
+        - { type: p, if: k.up, class: "text-sm text-green-700", text: "▲ {{ k.delta }}" }
+        - { type: p, else: true, class: "text-sm text-red-700", text: "▼ {{ k.delta }}" }
+
+- type: div
+  class: mt-6
+  children:
+    - type: InvoiceTable
+      columns: '[{"key":"item","label":"Item"},{"key":"qty","label":"Qty"},{"key":"price","label":"Price"}]'
+      rows: "{{ rows }}"
+
+- { type: Separator, class: my-4 }
+- type: div
+  class: flex items-center space-x-2
+  children:
+    - { type: Icon, name: circle-check, size: 20px, color: "#15803d" }
+    - { type: span, if: paid, class: text-sm, text: "All invoices are paid." }
+    - { type: span, else: true, class: text-sm, text: "Some invoices are open." }

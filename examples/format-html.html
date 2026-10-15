@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <style>
+    .up   { color: #15803d; font-weight: 600; }
+    .down { color: #b91c1c; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <Header title="{{ company }} · {{ month }}" subtitle="Plain HTML with Tailwind classes, components and data bindings"></Header>
+
+  <div class="grid grid-cols-3 gap-4 mt-4">
+    <div data-for="k in kpis" class="border rounded-lg p-4">
+      <p class="text-xs uppercase tracking-wide text-slate-500">{{ k.label }}</p>
+      <p class="text-3xl font-bold mt-1">{{ k.value }}</p>
+      <p data-if="k.up" class="text-sm up">▲ {{ k.delta }}</p>
+      <p data-else class="text-sm down">▼ {{ k.delta }}</p>
+    </div>
+  </div>
+
+  <h2 class="text-lg font-semibold mt-6 mb-2">Line items</h2>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-left border-b"><th class="p-2 text-left">Item</th><th class="p-2 text-left">Qty</th><th class="p-2 text-right">Price</th></tr>
+    </thead>
+    <tbody>
+      <tr data-for="r in rows" class="border-b">
+        <td class="p-2">{{ r.item }}</td><td class="p-2">{{ r.qty }}</td><td class="p-2 text-right">{{ r.price }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="mt-6 flex items-center space-x-2">
+    <Icon name="circle-check" size="20px" color="#15803d"/>
+    <span data-if="paid" class="text-sm">All invoices for the period are <b>paid</b>.</span>
+    <span data-else class="text-sm">Some invoices are still <b>open</b>.</span>
+  </div>
+</body>
+</html>

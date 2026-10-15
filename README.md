@@ -19,6 +19,7 @@ process spawning — built to run inside a Vercel Function / AWS Lambda.
 | Crate | Responsibility |
 |---|---|
 | `pdfcn-parser` | Indentation-based HAML-like lexer/parser (`winnow`) → AST |
+| `pdfcn-formats` | HTML, Markdown, JSON/YAML block-tree and Typst/LaTeX-subset front-ends, all lowering to the same AST |
 | `pdfcn-template` | `{{ interpolation }}`, `- for`, `- if`, `- include` (`minijinja` as an expression engine) |
 | `pdfcn-components` | `%InvoiceTable`, `%Badge`, `%Card`, ... registry, expanding to `maud` markup |
 | `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
@@ -41,6 +42,24 @@ Try the bundled examples:
 ```sh
 cargo run -p pdfcn-cli -- build examples/invoice.haml -d examples/invoice.json -o /tmp/invoice.pdf
 cargo run -p pdfcn-cli -- build examples/catalog.haml -d examples/catalog.json -o /tmp/catalog.pdf
+```
+
+## Other template formats: HTML, Markdown, block trees, React
+
+HAML is the native syntax, but templates can also be **HTML** (Tailwind classes,
+`<Card>` components, `data-for`/`data-if`), **Markdown** (with YAML front matter
+as default data and components inline), **JSON/YAML block trees** (a document as
+data, for APIs and LLMs), and small **Typst** and **LaTeX** subsets. They all
+lower to the same AST, so bindings, loops, components, utilities and images work
+identically. The CLI picks the format from the extension, the API takes an
+optional `format`, and the text is auto-detected when it is unambiguous.
+`renderToStaticMarkup` output from React works as HTML. See
+[docs/formats.md](docs/formats.md) and `examples/format-*`.
+
+```sh
+pdfcn build report.md --data data.json
+pdfcn build dashboard.html --data data.json
+pdfcn build invoice.yaml --data data.json
 ```
 
 ## Composing with images
