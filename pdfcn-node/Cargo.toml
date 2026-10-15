@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # See the root Cargo.toml's pdfcn-core dependency for why this is
 # explicit rather than relying on pdfcn-core's own `default`.
-pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x"] }
+pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x", "jpeg-passthrough"] }
 napi = { workspace = true }
 napi-derive = { workspace = true }
 serde_json = { workspace = true }

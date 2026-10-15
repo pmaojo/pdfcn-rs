@@ -18,7 +18,8 @@
 //!    engine's "scale to fill" then produces exactly what a browser would
 //!    show. The `<img src>` is rewritten to the cropped variant, leaving
 //!    the original bytes untouched for any other reference.
-//! 3. **Resolution normalization** — a source image far larger than its
+//! 3. **Resolution normalization** (opt-in, `RenderOptions::shrink_images`;
+//!    `pdfcn images` is the tool for preparing photos) — a source image far larger than its
 //!    layout box can ever paint is dead weight in the output PDF (and in
 //!    layout time). Any image whose box is known in px is downscaled to
 //!    ~300dpi of that box (3x, see `MAX_PRINT_SCALE`); any image is capped
@@ -524,9 +525,7 @@ fn apply_exif_orientation(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
         let is_jpeg = bytes.starts_with(&[0xFF, 0xD8]);
         let mut out = Vec::new();
         let written = if is_jpeg {
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 92)
-                .encode_image(&image::DynamicImage::ImageRgb8(img.into_rgb8()))
-                .is_ok()
+            encode_jpeg(&img, &mut out).is_some()
         } else {
             img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
                 .is_ok()
@@ -538,15 +537,17 @@ fn apply_exif_orientation(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
 }
 
 /// Decodes `bytes` (JPEG/PNG/…), center-crops to `aspect` (w/h), and
-/// re-encodes as PNG. Returns None for anything undecodable — the caller
-/// leaves the original in place, degrading to the engine's stretch-fill
-/// rather than failing the render.
+/// re-encodes it: a JPEG stays a JPEG (so it can still go into the PDF
+/// without another re-encode), anything else becomes a PNG. Returns None for
+/// anything undecodable — the caller leaves the original in place, degrading
+/// to the engine's stretch-fill rather than failing the render.
 fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
     if !aspect.is_finite() || aspect <= 0.0 {
         return None;
     }
-    let img = decode_oriented(bytes)?;
-    let (iw, ih) = (img.width(), img.height());
+    // The shape comes from the header: a source that already fits its box
+    // (the common case) costs no decode at all.
+    let (iw, ih) = oriented_dimensions(bytes)?;
     if iw == 0 || ih == 0 {
         return None;
     }
@@ -555,6 +556,8 @@ fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
         // Already the right shape: re-encoding would only lose quality.
         return None;
     }
+    let img = decode_oriented(bytes)?;
+    let (iw, ih) = (img.width(), img.height());
     let (cw, ch) = if source_aspect > aspect {
         let cw = ((ih as f64 * aspect).round() as u32).clamp(1, iw);
         (cw, ih)
@@ -564,11 +567,16 @@ fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
     };
     let x = (iw - cw) / 2;
     let y = (ih - ch) / 2;
-    let mut png = Vec::new();
-    img.crop_imm(x, y, cw, ch)
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .ok()?;
-    Some(png)
+    let cropped = img.crop_imm(x, y, cw, ch);
+    let mut out = Vec::new();
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        encode_jpeg(&cropped, &mut out)?;
+    } else {
+        cropped
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .ok()?;
+    }
+    Some(out)
 }
 
 /// How many device pixels of source resolution one CSS px of layout box
@@ -648,8 +656,39 @@ fn normalize_resolutions(
     }
 }
 
+/// Below this fraction of a source's size, shrinking it is worth a decode, a
+/// resample and a re-encode (plus one more generation of JPEG loss). Above it
+/// the source is embedded as it is: at 0.75 the saving is under half the
+/// pixels, and the source can still travel into the PDF untouched (see
+/// `jpeg_passthrough`), which is how Typst treats every photo. The absolute
+/// [`MAX_IMAGE_DIMENSION_PX`] cap applies regardless.
+const MIN_WORTHWHILE_SHRINK: f64 = 0.5;
+
+/// Width and height of `bytes` as a viewer shows them (EXIF orientation
+/// applied), read from the header alone: no pixel is decoded.
+pub(crate) fn oriented_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    use image::metadata::Orientation;
+    use image::ImageDecoder;
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let (w, h) = decoder.dimensions();
+    let swapped = matches!(
+        decoder.orientation().unwrap_or(Orientation::NoTransforms),
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    Some(if swapped { (h, w) } else { (w, h) })
+}
+
 /// The shrunken re-encode of `bytes`, or `None` when it's already within
-/// its limits (or undecodable) and should be left exactly as-is.
+/// its limits (or undecodable) and should be left exactly as-is. Decides
+/// from the header alone, so a source that stays as it is never pays for a
+/// decode.
 fn downscale_to_limits(
     bytes: &[u8],
     box_w_px: Option<f64>,
@@ -657,8 +696,7 @@ fn downscale_to_limits(
     cover: bool,
     page: Option<PageBound>,
 ) -> Option<Vec<u8>> {
-    let img = decode_oriented(bytes)?;
-    let (iw, ih) = (img.width(), img.height());
+    let (iw, ih) = oriented_dimensions(bytes)?;
     if iw == 0 || ih == 0 {
         return None;
     }
@@ -691,6 +729,9 @@ fn downscale_to_limits(
             max_scale = max_scale.min((h * MAX_PRINT_SCALE) / ih as f64);
         }
     }
+    if max_scale >= MIN_WORTHWHILE_SHRINK {
+        max_scale = f64::INFINITY;
+    }
     let cap = MAX_IMAGE_DIMENSION_PX as f64;
     max_scale = max_scale.min(cap / iw as f64).min(cap / ih as f64);
     if !max_scale.is_finite() || max_scale >= 1.0 {
@@ -698,15 +739,13 @@ fn downscale_to_limits(
     }
     let nw = (((iw as f64) * max_scale).round() as u32).max(1);
     let nh = (((ih as f64) * max_scale).round() as u32).max(1);
-    let resized = img.resize(nw, nh, image::imageops::FilterType::Lanczos3);
+    let img = decode_oriented(bytes)?;
+    // Area averaging: at a 2x-or-more reduction it is as sharp as Lanczos3
+    // and a fraction of its cost (Lanczos3 was half of an image-heavy render).
+    let resized = img.thumbnail_exact(nw, nh);
     let mut out = Vec::new();
     if bytes.starts_with(&[0xFF, 0xD8]) {
-        image::DynamicImage::ImageRgb8(resized.into_rgb8())
-            .write_to(
-                &mut std::io::Cursor::new(&mut out),
-                image::ImageFormat::Jpeg,
-            )
-            .ok()?;
+        encode_jpeg(&resized, &mut out)?;
     } else {
         resized
             .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
@@ -715,21 +754,42 @@ fn downscale_to_limits(
     Some(out)
 }
 
+/// JPEG quality for every photo this module re-encodes. High enough that the
+/// re-encode is the last generation: the result goes into the PDF as it is.
+const JPEG_QUALITY: u8 = 92;
+
+/// Encodes `img` as a baseline RGB JPEG at [`JPEG_QUALITY`].
+fn encode_jpeg(img: &image::DynamicImage, out: &mut Vec<u8>) -> Option<()> {
+    image::codecs::jpeg::JpegEncoder::new_with_quality(out, JPEG_QUALITY)
+        .encode_image(&image::DynamicImage::ImageRgb8(img.to_rgb8()))
+        .ok()
+}
+
 /// The pre-vector entry point, kept for the asset pass's own test suite;
 /// production code always goes through [`prepare_assets_with_vectors`] so
 /// the side channel reaches the substrate.
 #[cfg(test)]
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
-    prepare_assets_with_vectors(html, images, &BTreeMap::new(), None, &mut BTreeMap::new())
+    prepare_assets_with_vectors(
+        html,
+        images,
+        &BTreeMap::new(),
+        None,
+        true,
+        &mut BTreeMap::new(),
+    )
 }
 
 /// Like [`prepare_assets`], with the vector substrate's side channel:
 /// `id -> SVG source` backing `<img src="pdfcn-vector:{id}">` placeholders.
+/// `shrink` runs pass 3 (resolution normalization); without it every source
+/// keeps its own resolution, and preparing photos is `pdfcn images`' job.
 pub(crate) fn prepare_assets_with_vectors(
     html: &str,
     images: &mut BTreeMap<String, Vec<u8>>,
     svg_assets: &BTreeMap<String, String>,
     page: Option<PageBound>,
+    shrink: bool,
     vector_sources: &mut BTreeMap<String, String>,
 ) -> String {
     // Orientation first, on the full-resolution bytes: the crops and the
@@ -761,7 +821,9 @@ pub(crate) fn prepare_assets_with_vectors(
         .into_iter()
         .filter_map(|base| images.remove(&base).map(|bytes| (base, bytes)))
         .collect();
-    normalize_resolutions(&rewritten, images, page);
+    if shrink {
+        normalize_resolutions(&rewritten, images, page);
+    }
     for (base, bytes) in parked {
         images.insert(base, bytes);
     }
@@ -993,19 +1055,51 @@ mod tests {
     #[test]
     fn a_cover_banner_with_an_unknown_width_keeps_the_pixels_the_page_width_needs() {
         let src = "photo.png";
-        let mut images = BTreeMap::from([(src.to_string(), png_bytes(3060, 4080, [1, 2, 3]))]);
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(6300, 8400, [1, 2, 3]))]);
         let html = format!(r#"<img src="{src}" style="width:100%;height:300px;object-fit:cover">"#);
         prepare_assets_with_vectors(
             &html,
             &mut images,
             &BTreeMap::new(),
             Some((700.0, 1000.0)),
+            true,
             &mut BTreeMap::new(),
         );
         let decoded = image::load_from_memory(&images[src]).unwrap();
         // 700 CSS px across the page at 3x.
         assert_eq!(decoded.width(), 2100);
         assert_eq!(decoded.height(), 2800);
+    }
+
+    /// Shrinking is opt-in: the render path embeds a source at its own
+    /// resolution unless asked (`pdfcn images` prepares photos beforehand).
+    #[test]
+    fn without_shrink_an_oversized_source_keeps_its_resolution() {
+        let src = "photo.png";
+        let original = png_bytes(2000, 1000, [1, 2, 3]);
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
+        prepare_assets_with_vectors(
+            &html,
+            &mut images,
+            &BTreeMap::new(),
+            Some((700.0, 1000.0)),
+            false,
+            &mut BTreeMap::new(),
+        );
+        assert_eq!(images[src], original);
+    }
+
+    /// A source less than twice what its box can use is embedded as it is:
+    /// the saving would not pay for a decode, a resample and a re-encode.
+    #[test]
+    fn a_marginally_oversized_source_is_left_as_it_is() {
+        let src = "photo.png";
+        let original = png_bytes(400, 200, [1, 2, 3]);
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
+        prepare_assets(&html, &mut images);
+        assert_eq!(images[src], original);
     }
 
     #[test]

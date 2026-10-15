@@ -12,7 +12,7 @@ name = "pdfcn"
 path = "src/main.rs"
 
 [features]
-default = ["vector", "factur-x"]
+default = ["vector", "factur-x", "jpeg-passthrough"]
 # Forwards to pdfcn-core's own `vector` feature (Charts v2, %Barcode,
 # %Vector). On by default, matching pdfcn-core -- `cargo build -p
 # pdfcn-cli --no-default-features` opts back out; without it, `--svg` and
@@ -20,6 +20,8 @@ default = ["vector", "factur-x"]
 # marker, never a silent no-op.
 vector = ["pdfcn-core/vector"]
 factur-x = ["pdfcn-core/factur-x"]
+# JPEG photos embedded as their own bytes; see pdfcn-core's feature of the same name.
+jpeg-passthrough = ["pdfcn-core/jpeg-passthrough"]
 # PAdES signing of the output (`pdfcn build --sign-p12 ...`). Opt-in: it pulls
 # in the RustCrypto stack, which the default binary does not carry.
 sign = ["pdfcn-core/sign"]

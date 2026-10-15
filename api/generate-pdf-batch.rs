@@ -316,6 +316,8 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         show_page_numbers: req.show_page_numbers,
         skip_first_page: req.skip_first_page,
         image_optimization,
+        // Photos go in at their own resolution; callers prepare them first.
+        shrink_images: false,
         metadata: req
             .metadata
             .map(MetadataDto::into_document_metadata)

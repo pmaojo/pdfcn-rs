@@ -24,6 +24,12 @@ mod raster;
 mod factur_x;
 #[cfg(feature = "vector")]
 mod vector_pdf;
+// JPEG photos embedded as their own bytes (`/DCTDecode`) instead of decoded
+// and re-encoded by printpdf. `jpeg-passthrough` cargo feature, on by default.
+#[cfg(feature = "jpeg-passthrough")]
+mod jpeg_passthrough;
+#[cfg(any(feature = "vector", feature = "jpeg-passthrough"))]
+mod pdf_xobjects;
 
 // PAdES signing of a finished PDF. Opt-in `sign` cargo feature.
 #[cfg(feature = "sign")]
@@ -481,9 +487,18 @@ pub fn render_pdf_with_assets(
         &mut prepared_images,
         &options.svg_assets,
         Some(page_bound),
+        options.shrink_images,
         &mut vector_sources,
     );
     let html = html.as_str();
+    // Last, after every pass that may re-encode a photo: whatever JPEG is
+    // left goes into the PDF as it is (see `jpeg_passthrough`).
+    #[cfg(feature = "jpeg-passthrough")]
+    let jpegs = if jpeg_passthrough::allowed(options.image_optimization.as_ref()) {
+        jpeg_passthrough::take(&mut prepared_images)
+    } else {
+        BTreeMap::new()
+    };
 
     // header_text/footer_text/show_page_numbers/skip_first_page are wired
     // through exactly as printpdf's own API declares them, but currently
@@ -595,10 +610,24 @@ pub fn render_pdf_with_assets(
         doc.metadata.info.producer = producer.clone();
     }
 
+    #[allow(unused_mut)]
+    let mut image_optimization =
+        to_printpdf_image_optimization(options.image_optimization.as_ref());
+    // When every image printpdf is about to write is a placeholder that a
+    // later pass replaces (a held-back JPEG, an SVG turned vector), compressing
+    // its pixels is pure waste -- it was a third of an image-heavy render.
+    // Write them raw; `jpeg_passthrough::splice` compresses whatever is left.
+    #[cfg(feature = "jpeg-passthrough")]
+    let raw_placeholders = !prepared_images.is_empty()
+        && prepared_images
+            .keys()
+            .all(|src| jpegs.contains_key(src) || vector_sources.contains_key(src));
+    #[cfg(feature = "jpeg-passthrough")]
+    if raw_placeholders {
+        image_optimization.format = Some(printpdf::ImageCompression::None);
+    }
     let save_options = PdfSaveOptions {
-        image_optimization: Some(to_printpdf_image_optimization(
-            options.image_optimization.as_ref(),
-        )),
+        image_optimization: Some(image_optimization),
         ..Default::default()
     };
     let mut save_warnings = Vec::new();
@@ -609,6 +638,8 @@ pub fn render_pdf_with_assets(
     let pdf = vector_pdf::vectorize(pdf, &vector_sources);
     #[cfg(not(feature = "vector"))]
     let _ = vector_sources;
+    #[cfg(feature = "jpeg-passthrough")]
+    let pdf = jpeg_passthrough::splice(pdf, &jpegs, raw_placeholders);
     Ok(pdf)
 }
 

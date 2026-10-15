@@ -8,7 +8,7 @@ rust-version.workspace = true
 description = "Orchestrates parsing, template evaluation, component expansion, styling and PDF rendering"
 
 [features]
-default = ["vector", "factur-x"]
+default = ["vector", "factur-x", "jpeg-passthrough"]
 
 # The Wave 1 vector substrate (Ola 1.2/1.3): `%Vector`, Charts v2 and
 # `%Barcode` all emit SVG placeholders that this crate rasterizes to PNG
@@ -28,6 +28,13 @@ vector = ["dep:resvg", "dep:svg2pdf", "dep:lopdf", "pdfcn-components/vector"]
 # this doesn't grow the default build's dependency tree at all, only
 # pdfcn-core's own surface. `--no-default-features` opts back out.
 factur-x = ["dep:lopdf"]
+
+# JPEG photos go into the PDF as their own bytes (`/DCTDecode`), the way Typst
+# embeds them, instead of being decoded to pixels and re-encoded by printpdf
+# (docs/spikes/005). On by default: it adds no crate (lopdf, as above) and is
+# most of the cost of an image-heavy render. `--no-default-features` falls back
+# to printpdf's own decode + re-encode.
+jpeg-passthrough = ["dep:lopdf"]
 
 # PAdES (ETSI.CAdES.detached) signing of a finished PDF with an X.509
 # certificate: RSA or ECDSA P-256, from PEM or PKCS#12. Opt-in, not in
