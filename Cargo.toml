@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "pdfcn-parser",
+    "pdfcn-formats",
     "pdfcn-template",
     "pdfcn-components",
     "pdfcn-styles",
@@ -77,6 +78,7 @@ rust-version = "1.82"
 
 [workspace.dependencies]
 pdfcn-parser = { path = "pdfcn-parser", version = "0.1.0" }
+pdfcn-formats = { path = "pdfcn-formats", version = "0.1.0" }
 pdfcn-template = { path = "pdfcn-template", version = "0.1.0" }
 pdfcn-components = { path = "pdfcn-components", version = "0.1.0" }
 pdfcn-styles = { path = "pdfcn-styles", version = "0.1.0" }

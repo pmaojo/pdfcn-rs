@@ -21,7 +21,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
 use pdfcn_core::{
-    img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
+    img_srcs, render_html_as, render_pdf_with_assets, theme_from_json, EvalError, Format,
     Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
@@ -83,8 +83,10 @@ impl PageConfigDto {
 
 #[derive(Deserialize)]
 struct DocumentDto {
-    /// HAML-like template source.
+    /// Template source (HAML, HTML, Markdown, ...; see `/api/generate-pdf`).
     template: String,
+    #[serde(default)]
+    format: Option<String>,
     /// Data context merged over the request-level `data` (top-level keys
     /// here win). Omitted means "exactly the shared data".
     #[serde(default)]
@@ -326,7 +328,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
     } else {
         let mut parsed = BTreeMap::new();
         for (name, source) in &req.partials {
-            match pdfcn_parser::parse_document(source) {
+            match pdfcn_core::parse_partial(name, source) {
                 Ok(doc) => {
                     parsed.insert(name.clone(), doc);
                 }
@@ -371,8 +373,14 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
                 .par_iter()
                 .map(|doc| {
                     let data = merged_data(&base_data, doc.data.as_ref());
-                    render_html_with_theme(&doc.template, &data, loader.as_ref(), &theme)
-                        .map_err(|e| format!("render error: {e}"))
+                    render_html_as(
+                        &doc.template,
+                        doc.format.as_deref().and_then(Format::from_name),
+                        &data,
+                        loader.as_ref(),
+                        &theme,
+                    )
+                    .map_err(|e| format!("render error: {e}"))
                 })
                 .collect::<Vec<_>>()
         })

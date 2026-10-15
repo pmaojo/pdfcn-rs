@@ -35,9 +35,62 @@ fn is_inline_flow(node: &Resolved) -> bool {
 }
 
 /// Whether two adjacent siblings share a line and so need a space between
-/// them (text and inline elements in any combination).
+/// them (text and inline elements in any combination). No space is added
+/// where the text already has one, or where punctuation hugs the previous
+/// word (`<a>link</a>.`), which HTML sources rely on.
 fn needs_space(prev: &Resolved, next: &Resolved) -> bool {
-    is_inline_flow(prev) && is_inline_flow(next)
+    if !(is_inline_flow(prev) && is_inline_flow(next)) {
+        return false;
+    }
+    if let Resolved::Text(t) = prev {
+        if t.ends_with(char::is_whitespace) || t.ends_with(['(', '[', '\u{a0}']) {
+            return false;
+        }
+    }
+    if let Resolved::Text(t) = next {
+        if t.starts_with(char::is_whitespace)
+            || t.starts_with(['.', ',', ';', ':', '!', '?', ')', ']', '%'])
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Moves every `<style>...</style>` block out of rendered body markup:
+/// returns the body without them and their concatenated CSS, to be placed in
+/// the document stylesheet. Author CSS may sit anywhere in a template (HTML
+/// and Markdown sources put it where they like).
+pub fn hoist_styles(body: &str) -> (String, String) {
+    let mut out = String::with_capacity(body.len());
+    let mut css = String::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("<style>") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + "<style>".len()..];
+        match after.find("</style>") {
+            Some(end) => {
+                css.push_str(&unescape_css(&after[..end]));
+                rest = &after[end + "</style>".len()..];
+            }
+            None => {
+                rest = &rest[start..];
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    (out, css)
+}
+
+/// The renderer HTML-escapes text, which would turn a `>` combinator or a
+/// quoted `content` string in author CSS into entities.
+fn unescape_css(s: &str) -> String {
+    s.replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 }
 
 fn render_node(node: &Resolved) -> Result<Markup, CoreError> {

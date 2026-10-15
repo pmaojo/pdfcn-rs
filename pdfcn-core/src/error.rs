@@ -56,3 +56,12 @@ impl From<serde_yaml::Error> for CoreError {
         CoreError::Yaml(e)
     }
 }
+
+impl From<pdfcn_formats::FormatError> for CoreError {
+    fn from(e: pdfcn_formats::FormatError) -> Self {
+        match e {
+            pdfcn_formats::FormatError::Haml(e) => CoreError::Parse(e),
+            pdfcn_formats::FormatError::Message(m) => CoreError::Render(format!("template: {m}")),
+        }
+    }
+}

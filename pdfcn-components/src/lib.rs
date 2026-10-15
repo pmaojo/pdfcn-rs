@@ -115,6 +115,50 @@ impl fmt::Display for InteractiveOnlyComponent {
 
 impl std::error::Error for InteractiveOnlyComponent {}
 
+/// Every component name [`render`] knows, in registry order. Front-ends that
+/// cannot mark components syntactically (HTML lowercases tag names) match
+/// against this list; a test keeps it in sync with [`render`].
+pub const COMPONENT_NAMES: &[&str] = &[
+    "DocumentLayout",
+    "Header",
+    "Card",
+    "Table",
+    "Grid",
+    "Badge",
+    "Separator",
+    "SignatureBlock",
+    "InvoiceTable",
+    "Alert",
+    "Avatar",
+    "Input",
+    "Textarea",
+    "Select",
+    "Label",
+    "Checkbox",
+    "RadioItem",
+    "Progress",
+    "Breadcrumb",
+    "Pagination",
+    "QRCode",
+    "FiscalQR",
+    "Icon",
+    "VerifactuQR",
+    "BarChart",
+    "Vector",
+    "LineChart",
+    "StackedBarChart",
+    "PieChart",
+    "Sparkline",
+    "Barcode",
+    "PageFooter",
+];
+
+/// Names of the deliberately unsupported interactive-only components, which
+/// [`render`] rejects with an explicit error.
+pub fn interactive_only_names() -> &'static [&'static str] {
+    INTERACTIVE_ONLY
+}
+
 /// Expands a component instance (`%InvoiceTable`, `%Badge`, ...) into its
 /// underlying markup. `children` is the already-rendered markup of the
 /// component's child nodes.
@@ -505,6 +549,19 @@ mod tests {
         ResolvedAttr {
             name: name.into(),
             value: value.into(),
+        }
+    }
+
+    /// `COMPONENT_NAMES` is what the HTML front-end matches tags against, so
+    /// it must name exactly the components `render` expands.
+    #[test]
+    fn component_names_match_the_registry() {
+        for name in COMPONENT_NAMES {
+            let known = render(name, &[], html! {}).map(|m| m.is_some());
+            assert_eq!(known, Ok(true), "{name} is listed but not rendered");
+        }
+        for name in interactive_only_names() {
+            assert!(render(name, &[], html! {}).is_err());
         }
     }
 

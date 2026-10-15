@@ -43,6 +43,7 @@ pub use error::CoreError;
 pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
+pub use pdfcn_formats::Format;
 pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 pub use prepare::{prepare_image, PrepareFormat, PrepareOptions, Prepared};
@@ -202,9 +203,25 @@ impl PartialLoader for FsPartialLoader {
         let full = self.base_dir.join(path);
         let source = std::fs::read_to_string(&full)
             .map_err(|_| pdfcn_template::EvalError::PartialNotFound(path.to_string()))?;
-        pdfcn_parser::parse_document(&source)
+        // A partial may be in any supported format, chosen by its extension.
+        let format = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(Format::from_extension);
+        pdfcn_formats::parse_document(&source, format)
             .map_err(|_| pdfcn_template::EvalError::PartialNotFound(path.to_string()))
     }
+}
+
+/// Parses a named partial in the format its extension implies (`.html`,
+/// `.md`, `.yaml`, ...), or HAML/auto-detected when it has none. For callers
+/// that hold partials in memory rather than on disk (the HTTP API).
+pub fn parse_partial(name: &str, source: &str) -> Result<pdfcn_parser::Document, CoreError> {
+    let format = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(Format::from_extension);
+    Ok(pdfcn_formats::parse_document(source, format)?)
 }
 
 /// Builds a [`Theme`] from its JSON form, as accepted by the HTTP API's
@@ -256,15 +273,20 @@ pub fn theme_from_json(value: &JsonValue) -> Result<Theme, String> {
 /// sees. Only successful parses are cached -- a malformed template keeps
 /// failing identically.
 const PARSE_CACHE_CAP: usize = 128;
-type ParseCache = Mutex<(HashMap<u64, Arc<pdfcn_parser::Document>>, VecDeque<u64>)>;
+type ParseCache = Mutex<(HashMap<u64, Arc<pdfcn_formats::Parsed>>, VecDeque<u64>)>;
 static PARSE_CACHE: OnceLock<ParseCache> = OnceLock::new();
 
 /// Returns a process-wide-shared handle to the parsed AST: a hit is one
 /// atomic refcount bump, not a deep clone of the whole tree, regardless of
 /// how large the template is. `pdfcn_template::evaluate` only ever needs
 /// `&Document`, and `&Arc<Document>` derefs to that for free.
-fn cached_parse(source: &str) -> Result<Arc<pdfcn_parser::Document>, CoreError> {
+fn cached_parse(
+    source: &str,
+    format: Option<Format>,
+) -> Result<Arc<pdfcn_formats::Parsed>, CoreError> {
     let mut hasher = DefaultHasher::new();
+    // The same text can mean different things in different formats.
+    format.map(|f| f as u8).hash(&mut hasher);
     source.hash(&mut hasher);
     let key = hasher.finish();
     if let Some(cache) = PARSE_CACHE.get() {
@@ -274,7 +296,7 @@ fn cached_parse(source: &str) -> Result<Arc<pdfcn_parser::Document>, CoreError> 
             }
         }
     }
-    let doc = Arc::new(pdfcn_parser::parse_document(source)?);
+    let doc = Arc::new(pdfcn_formats::parse(source, format)?);
     let cache = PARSE_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
     if let Ok(mut guard) = cache.lock() {
         if !guard.0.contains_key(&key) {
@@ -358,23 +380,48 @@ pub fn render_html_with_theme(
     loader: &dyn PartialLoader,
     theme: &Theme,
 ) -> Result<String, CoreError> {
-    let doc = cached_parse(source)?;
-    let resolved = pdfcn_template::evaluate(&doc, data, loader)?;
+    render_html_as(source, None, data, loader, theme)
+}
+
+/// Like [`render_html_with_theme`], with the template's format given
+/// explicitly (`None` detects it from the text, see [`Format::detect`]).
+/// HAML, HTML, Markdown, JSON/YAML block trees and the Typst/LaTeX subsets
+/// all lower to the same AST, so everything after parsing is shared.
+pub fn render_html_as(
+    source: &str,
+    format: Option<Format>,
+    data: &JsonValue,
+    loader: &dyn PartialLoader,
+    theme: &Theme,
+) -> Result<String, CoreError> {
+    let parsed = cached_parse(source, format)?;
+    // Markdown front matter is default data: what the caller supplies wins.
+    let merged;
+    let data = match &parsed.front_matter {
+        Some(front) => {
+            merged = pdfcn_formats::merge_defaults(front, data);
+            &merged
+        }
+        None => data,
+    };
+    let resolved = pdfcn_template::evaluate(&parsed.document, data, loader)?;
     let body = html_render::render_body(&resolved)?;
     // The layout engine ignores the CSS `gap` declaration, so flex/grid
     // `gap-*` utilities are rewritten into equivalent margins on children
     // before the stylesheet is built — which also means the injected
     // `mr-*`/`mb-*` classes are picked up by the same used-classes scan as
     // every other utility (see pdfcn_styles::rewrite_gaps).
+    let (body_html, author_css) = html_render::hoist_styles(&body.into_string());
     let body_html = pdfcn_styles::rewrite_composites(
-        &pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body.into_string())),
+        &pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body_html)),
         theme,
     );
     // Last step, after every pass that reads utility classes: brackets in a
     // class name would make the engine drop the rules after their selector.
     let body_html = pdfcn_styles::encode_class_brackets(&body_html);
     let classes = pdfcn_styles::extract_classes(&body_html);
-    let stylesheet = cached_stylesheet(&classes, theme);
+    // Author `<style>` blocks come last so they win ties with utilities.
+    let stylesheet = format!("{}{}", cached_stylesheet(&classes, theme), author_css);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))
 }
 
@@ -694,7 +741,11 @@ pub fn render_files_html(
         .map(Path::to_path_buf)
         .unwrap_or_default();
     let loader = FsPartialLoader::new(base_dir.clone());
-    let html = render_html_with_theme(&source, &data, &loader, theme)?;
+    let template_format = template_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(Format::from_extension);
+    let html = render_html_as(&source, template_format, &data, &loader, theme)?;
     Ok((html, base_dir))
 }
 
@@ -1096,14 +1147,15 @@ mod tests {
     #[test]
     fn cached_parse_is_transparent_for_repeated_sources() {
         let source = "%p Cache me {{ n }}";
-        let first = cached_parse(source).unwrap();
-        let second = cached_parse(source).unwrap();
-        assert_eq!(first, second);
+        let first = cached_parse(source, None).unwrap();
+        let second = cached_parse(source, None).unwrap();
+        assert_eq!(first.document, second.document);
         // A cache hit shares the same allocation rather than deep-cloning
         // the AST -- the whole point of caching it.
         assert!(Arc::ptr_eq(&first, &second));
         // And the cached AST still evaluates correctly.
-        let resolved = pdfcn_template::evaluate(&second, &json!({ "n": 7 }), &NoPartials).unwrap();
+        let resolved =
+            pdfcn_template::evaluate(&second.document, &json!({ "n": 7 }), &NoPartials).unwrap();
         match &resolved[0] {
             pdfcn_template::Resolved::Element { children, .. } => {
                 assert_eq!(

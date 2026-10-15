@@ -166,6 +166,7 @@ fn split_variant(class: &str) -> Option<(&'static str, &str)> {
 /// utility table, so they are not "unresolved" in any useful sense.
 pub fn is_marker_class(class: &str) -> bool {
     const EXACT: &[&str] = &[
+        "alert",
         "badge",
         "barchart",
         "card",
@@ -205,11 +206,15 @@ pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
     // into inline styles before the stylesheet is built; judge what is left.
     // (Idempotent: HTML that already went through the pass has nothing to fold.)
     let html = rewrite_composites(html, theme);
+    // Classes the document's own `<style>` blocks define are the author's
+    // (an HTML or Markdown source with its own CSS), not typos.
+    let authored = classes_in_style_blocks(&html);
     extract_classes(&html)
         .into_iter()
         .map(|class| decode_class(&class))
         .filter(|class| {
             !is_marker_class(class)
+                && !authored.contains(class)
                 && split_variant(class).is_none_or(|(_, base)| {
                     utilities::resolve_with(base, theme).is_none()
                         && !utilities::is_screen_only(base)
@@ -217,6 +222,45 @@ pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
                 })
         })
         .collect()
+}
+
+/// Every `.name` class selector appearing inside `<style>` blocks of `html`.
+fn classes_in_style_blocks(html: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let mut rest = html;
+    while let Some(start) = rest.find("<style") {
+        let Some(open_end) = rest[start..].find('>') else {
+            break;
+        };
+        let css_start = start + open_end + 1;
+        let Some(len) = rest[css_start..].find("</style>") else {
+            break;
+        };
+        let css = &rest[css_start..css_start + len];
+        let bytes = css.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'.'
+                && i + 1 < bytes.len()
+                && (bytes[i + 1].is_ascii_alphabetic()
+                    || bytes[i + 1] == b'_'
+                    || bytes[i + 1] == b'-')
+            {
+                let mut j = i + 1;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'-')
+                {
+                    j += 1;
+                }
+                found.insert(css[i + 1..j].to_string());
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        rest = &rest[css_start + len..];
+    }
+    found
 }
 
 /// Builds the CSS selector for one utility class. A plain class name (the

@@ -1,0 +1,31 @@
+% A small LaTeX subset: title block, sections, lists, tables, links.
+\documentclass{article}
+\title{Monthly report}
+\author{Northwind Studio}
+\date{September 2026}
+\begin{document}
+\maketitle
+
+\section{Highlights}
+Revenue grew to \textbf{\texteuro{}48,200} -- a \emph{12\%} increase. See the
+\href{https://example.com}{full dashboard} for details.
+
+\begin{itemize}
+\item 31 new clients signed
+\item Churn rose slightly to 2.1\%
+\end{itemize}
+
+\section{Schedule}
+\begin{enumerate}
+\item Review the figures
+\item Approve the invoices
+\item Plan October
+\end{enumerate}
+
+\begin{tabular}{lcr}
+Project & Status & Budget \\ \hline
+Brand identity & Done & 4,800 \\
+Website build & Done & 9,500 \\
+Care plan & Ongoing & 450 / mo \\
+\end{tabular}
+\end{document}

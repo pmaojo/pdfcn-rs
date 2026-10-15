@@ -40,6 +40,7 @@ sign = [
 
 [dependencies]
 pdfcn-parser = { workspace = true }
+pdfcn-formats = { workspace = true }
 pdfcn-template = { workspace = true }
 pdfcn-components = { workspace = true }
 pdfcn-styles = { workspace = true }

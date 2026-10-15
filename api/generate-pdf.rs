@@ -7,7 +7,7 @@
 
 use http_body_util::BodyExt;
 use pdfcn_core::{
-    img_srcs, render_html_with_theme, render_pdf_with_assets, theme_from_json, EvalError,
+    img_srcs, render_html_as, render_pdf_with_assets, theme_from_json, EvalError, Format,
     Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
@@ -56,8 +56,13 @@ impl PageConfigDto {
 
 #[derive(Deserialize)]
 struct GenerateRequest {
-    /// HAML-like template source.
+    /// Template source. HAML by default; HTML, Markdown, JSON block trees
+    /// and the Typst/LaTeX subsets are detected from the text, or named
+    /// explicitly with `format` (`haml`, `html`, `markdown`, `json`, `yaml`,
+    /// `typst`, `latex`).
     template: String,
+    #[serde(default)]
+    format: Option<String>,
     /// Data context to render it against.
     #[serde(default = "default_data")]
     data: serde_json::Value,
@@ -284,7 +289,7 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
     } else {
         let mut parsed = BTreeMap::new();
         for (name, source) in &req.partials {
-            match pdfcn_parser::parse_document(source) {
+            match pdfcn_core::parse_partial(name, source) {
                 Ok(doc) => {
                     parsed.insert(name.clone(), doc);
                 }
@@ -298,7 +303,13 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
         Box::new(MemoryPartials { partials: parsed })
     };
 
-    let html = match render_html_with_theme(&req.template, &req.data, loader.as_ref(), &theme) {
+    let html = match render_html_as(
+        &req.template,
+        req.format.as_deref().and_then(Format::from_name),
+        &req.data,
+        loader.as_ref(),
+        &theme,
+    ) {
         Ok(html) => html,
         Err(e) => {
             return Ok(Response::builder()
