@@ -412,6 +412,9 @@
           <option value="minimal">Minimal example</option>
           <option value="catalog">Catalog example (images)</option>
           <option value="links">Hyperlinks &amp; internal jumps</option>
+          <option value="brochure">Brochure (photos)</option>
+          <option value="brochureBleed">Brochure, full-bleed photos</option>
+          <option value="poster">Poster A2 (photos)</option>
           <option value="icons">Icons</option>
           <option value="utilities">Utility classes</option>
           <option value="verifactu">Spanish invoice (VERI*FACTU QR)</option>
@@ -434,6 +437,9 @@
       <button type="button" class="gcard" data-example="charts" role="listitem"><img src="thumbs/charts.jpg" alt="" loading="lazy"><span class="gname">Charts</span><span class="gtag">vector &middot; barcode</span></button>
       <button type="button" class="gcard" data-example="codes" role="listitem"><img src="thumbs/codes.jpg" alt="" loading="lazy"><span class="gname">Codes</span><span class="gtag">QR &middot; Code 128 &middot; EAN &middot; UPC</span></button>
       <button type="button" class="gcard" data-example="links" role="listitem"><img src="thumbs/links.jpg" alt="" loading="lazy"><span class="gname">Links</span><span class="gtag">URLs &middot; mailto &middot; jumps</span></button>
+      <button type="button" class="gcard" data-example="brochure" role="listitem"><img src="thumbs/brochure.jpg" alt="" loading="lazy"><span class="gname">Brochure</span><span class="gtag">photos &middot; icons &middot; A4</span></button>
+      <button type="button" class="gcard" data-example="brochureBleed" role="listitem"><img src="thumbs/brochureBleed.jpg" alt="" loading="lazy"><span class="gname">Full-bleed brochure</span><span class="gtag">edge-to-edge photos &middot; margin 0</span></button>
+      <button type="button" class="gcard" data-example="poster" role="listitem"><img src="thumbs/poster.jpg" alt="" loading="lazy"><span class="gname">Poster A2</span><span class="gtag">large format &middot; 190 ppi photos</span></button>
       <button type="button" class="gcard" data-example="icons" role="listitem"><img src="thumbs/icons.jpg" alt="" loading="lazy"><span class="gname">Icons</span><span class="gtag">Tabler &middot; size &middot; colour &middot; stroke</span></button>
       <button type="button" class="gcard" data-example="utilities" role="listitem"><img src="thumbs/utilities.jpg" alt="" loading="lazy"><span class="gname">Utilities</span><span class="gtag">space-x/y &middot; lists &middot; columns</span></button>
       <button type="button" class="gcard" data-example="verifactu" role="listitem"><img src="thumbs/verifactu.jpg" alt="" loading="lazy"><span class="gname">VERI*FACTU invoice</span><span class="gtag">AEAT QR &middot; ES</span></button>
@@ -759,6 +765,35 @@
         haml: '%h1 Invoice\n%p Total: {{ total }}',
         json: JSON.stringify({ total: '$42.00' }, null, 2)
       },
+      brochure: {
+        haml: "%DocumentLayout(size=\"a4\")\n  .relative\n    %img(src=\"assets/popcorn/sea.jpg\" alt=\"Olas y arena blanca\" style=\"width:638px;height:185px;object-fit:cover\")\n    .absolute.bottom-0.left-0.right-0.px-6.py-4.text-white(style=\"background:rgba(15,23,42,0.55)\")\n      %p.text-xs.font-semibold.tracking-widest.uppercase {{ kicker }}\n      %h1.text-4xl.font-bold {{ title }}\n\n  .grid.grid-cols-2.gap-6.mt-4\n    .pr-2\n      %h2.text-xl.font-semibold Una playa que parece de mentira\n      %p.mt-2.text-sm.leading-relaxed.text-slate-700 {{ intro }}\n      %p.mt-3.text-sm.leading-relaxed.text-slate-700 De lejos es una playa blanca; de cerca, un mosaico de pequeñas formas redondeadas que invitan a agacharse y mirar.\n      .mt-4.flex.items-center.space-x-2\n        %Icon(name=\"map-pin\" size=\"18px\" color=\"#0f766e\")\n        %span.text-sm.font-semibold Fuerteventura, Canarias\n    %img(src=\"assets/popcorn/hand.jpg\" alt=\"Una mano con granos blancos y negros\" style=\"width:307px;height:205px;object-fit:cover;border-radius:12px\")\n\n  .grid.grid-cols-3.gap-4.mt-4\n    - for f in features\n      .border.rounded-lg.p-3\n        .flex.mb-2\n          %Icon(name=\"{{ f.icon }}\" size=\"26px\" color=\"{{ f.color }}\")\n        %p.font-semibold {{ f.title }}\n        %p.text-xs.text-slate-600.mt-1.leading-relaxed {{ f.text }}\n\n  .relative.mt-4\n    %img(src=\"assets/popcorn/texture.jpg\" alt=\"Detalle de los granos blancos y los cantos negros\" style=\"width:638px;height:90px;object-fit:cover;border-radius:12px\")\n    .absolute.bottom-0.left-0.px-4.py-2.text-white.text-sm.font-semibold(style=\"background:rgba(15,23,42,0.55);border-radius:0 12px 0 12px\") De cerca, cada grano recuerda a una palomita\n\n  %h3.font-semibold.mt-4 Antes de ir\n  .grid.grid-cols-2.gap-2.mt-2\n    - for t in tips\n      .flex.items-center.space-x-2\n        %Icon(name=\"{{ t.icon }}\" size=\"18px\" color=\"#0f766e\")\n        %span.text-sm {{ t.text }}\n  %p.text-xs.text-slate-400.mt-4 Texto de ejemplo para mostrar el diseño de un folleto con fotografías; revisa los datos prácticos antes de publicarlo.\n",
+        json: "{\n  \"title\": \"Playa de las Palomitas\",\n  \"kicker\": \"Fuerteventura · Islas Canarias\",\n  \"intro\": \"Granos blancos y rugosos que parecen palomitas de maíz, mezclados con cantos negros de origen volcánico, frente a un Atlántico de un azul intenso.\",\n  \"features\": [\n    {\n      \"icon\": \"camera\",\n      \"color\": \"#0369a1\",\n      \"title\": \"Para fotografiar\",\n      \"text\": \"El contraste del blanco, el negro y el azul se ve incluso a ras de suelo.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"color\": \"#b45309\",\n      \"title\": \"Luz y viento\",\n      \"text\": \"Playa abierta al mar: protección solar y algo de abrigo, por si acaso.\"\n    },\n    {\n      \"icon\": \"leaf\",\n      \"color\": \"#15803d\",\n      \"title\": \"Cuídala\",\n      \"text\": \"Mírala, tócala y déjala donde estaba. Es lo que la hace especial.\"\n    }\n  ],\n  \"tips\": [\n    {\n      \"icon\": \"droplet\",\n      \"text\": \"Lleva agua y algo de comer.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"text\": \"Gafas, gorra y protección solar.\"\n    },\n    {\n      \"icon\": \"trash\",\n      \"text\": \"Llévate tu basura y deja las piedras.\"\n    },\n    {\n      \"icon\": \"camera\",\n      \"text\": \"A primera o última hora, luz más suave.\"\n    }\n  ]\n}\n",
+        assets: {
+          "assets/popcorn/sea.jpg": "examples/assets/popcorn/sea.jpg",
+          "assets/popcorn/hand.jpg": "examples/assets/popcorn/hand.jpg",
+          "assets/popcorn/texture.jpg": "examples/assets/popcorn/texture.jpg",
+        }
+
+      },
+      brochureBleed: {
+        haml: ".bg-white\n  .relative\n    %img(src=\"assets/popcorn/sea.jpg\" alt=\"Olas y arena blanca\" style=\"width:794px;height:300px;object-fit:cover\")\n    .absolute.bottom-0.left-0.right-0.text-white(style=\"background:rgba(15,23,42,0.55);padding:18px 40px\")\n      %p.text-xs.font-semibold.tracking-widest.uppercase {{ kicker }}\n      %h1.text-5xl.font-bold {{ title }}\n\n  .grid.grid-cols-2.gap-6(style=\"padding:28px 40px 0 40px\")\n    .pr-2\n      %h2.text-xl.font-semibold Una playa que parece de mentira\n      %p.mt-2.text-sm.leading-relaxed.text-slate-700 {{ intro }}\n      %p.mt-3.text-sm.leading-relaxed.text-slate-700 De lejos es una playa blanca; de cerca, un mosaico de pequeñas formas redondeadas que invitan a agacharse y mirar.\n      .mt-4.flex.items-center.space-x-2\n        %Icon(name=\"map-pin\" size=\"18px\" color=\"#0f766e\")\n        %span.text-sm.font-semibold Fuerteventura, Canarias\n    %img(src=\"assets/popcorn/hand.jpg\" alt=\"Una mano con granos blancos y negros\" style=\"width:337px;height:230px;object-fit:cover;border-radius:12px\")\n\n  .grid.grid-cols-3.gap-4(style=\"padding:24px 40px 0 40px\")\n    - for f in features\n      .border.rounded-lg.p-3\n        .flex.mb-2\n          %Icon(name=\"{{ f.icon }}\" size=\"26px\" color=\"{{ f.color }}\")\n        %p.font-semibold {{ f.title }}\n        %p.text-xs.text-slate-600.mt-1.leading-relaxed {{ f.text }}\n\n  .relative(style=\"margin-top:28px\")\n    %img(src=\"assets/popcorn/texture.jpg\" alt=\"Detalle de los granos blancos y los cantos negros\" style=\"width:794px;height:150px;object-fit:cover\")\n    .absolute.bottom-0.left-0.text-white.text-sm.font-semibold(style=\"background:rgba(15,23,42,0.55);padding:8px 40px\") De cerca, cada grano recuerda a una palomita\n\n  .grid.grid-cols-2.gap-2(style=\"padding:20px 40px 0 40px\")\n    - for t in tips\n      .flex.items-center.space-x-2\n        %Icon(name=\"{{ t.icon }}\" size=\"18px\" color=\"#0f766e\")\n        %span.text-sm {{ t.text }}\n",
+        json: "{\n  \"title\": \"Playa de las Palomitas\",\n  \"kicker\": \"Fuerteventura · Islas Canarias\",\n  \"intro\": \"Granos blancos y rugosos que parecen palomitas de maíz, mezclados con cantos negros de origen volcánico, frente a un Atlántico de un azul intenso.\",\n  \"features\": [\n    {\n      \"icon\": \"camera\",\n      \"color\": \"#0369a1\",\n      \"title\": \"Para fotografiar\",\n      \"text\": \"El contraste del blanco, el negro y el azul se ve incluso a ras de suelo.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"color\": \"#b45309\",\n      \"title\": \"Luz y viento\",\n      \"text\": \"Playa abierta al mar: protección solar y algo de abrigo, por si acaso.\"\n    },\n    {\n      \"icon\": \"leaf\",\n      \"color\": \"#15803d\",\n      \"title\": \"Cuídala\",\n      \"text\": \"Mírala, tócala y déjala donde estaba. Es lo que la hace especial.\"\n    }\n  ],\n  \"tips\": [\n    {\n      \"icon\": \"droplet\",\n      \"text\": \"Lleva agua y algo de comer.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"text\": \"Gafas, gorra y protección solar.\"\n    },\n    {\n      \"icon\": \"trash\",\n      \"text\": \"Llévate tu basura y deja las piedras.\"\n    },\n    {\n      \"icon\": \"camera\",\n      \"text\": \"A primera o última hora, luz más suave.\"\n    }\n  ]\n}\n",
+        assets: {
+          "assets/popcorn/sea.jpg": "examples/assets/popcorn/sea.jpg",
+          "assets/popcorn/hand.jpg": "examples/assets/popcorn/hand.jpg",
+          "assets/popcorn/texture.jpg": "examples/assets/popcorn/texture.jpg",
+        },
+        page: {"margin_mm": 0}
+      },
+      poster: {
+        haml: ".bg-slate-900\n  .relative\n    %img(src=\"assets/popcorn/poster-sea.jpg\" alt=\"Olas y arena blanca\" style=\"width:1587px;height:700px;object-fit:cover\")\n    .absolute.bottom-0.left-0.right-0.text-white(style=\"background:rgba(15,23,42,0.5);padding:40px 80px\")\n      %p.font-semibold.tracking-widest.uppercase(style=\"font-size:28px\") {{ kicker }}\n      %h1.font-bold(style=\"font-size:120px;line-height:1.05\") {{ title }}\n  .relative\n    %img(src=\"assets/popcorn/poster-texture.jpg\" alt=\"Granos blancos y cantos negros\" style=\"width:1587px;height:1000px;object-fit:cover\")\n    .absolute.top-0.left-0.right-0.bottom-0.text-white(style=\"background:rgba(15,23,42,0.45);padding:90px 80px\")\n      %p.font-semibold(style=\"font-size:56px;line-height:1.25;width:1000px\") Una playa que parece de mentira\n      %p(style=\"font-size:30px;line-height:1.5;width:900px;margin-top:24px\") {{ intro }}\n  .text-white(style=\"padding:60px 80px\")\n    .grid.grid-cols-3.gap-4\n      - for f in features\n        .p-3\n          .flex(style=\"height:64px;margin-bottom:16px\")\n            %Icon(name=\"{{ f.icon }}\" size=\"64px\" color=\"#ffffff\")\n          %p.font-bold(style=\"font-size:40px\") {{ f.title }}\n          %p(style=\"font-size:24px;line-height:1.45;margin-top:8px;color:#cbd5e1\") {{ f.text }}\n    %p.font-semibold.uppercase.tracking-widest(style=\"font-size:28px;margin-top:60px;color:#5eead4\") Fuerteventura · Canarias\n",
+        json: "{\n  \"title\": \"Playa de las Palomitas\",\n  \"kicker\": \"Fuerteventura · Islas Canarias\",\n  \"intro\": \"Granos blancos y rugosos que parecen palomitas de maíz, mezclados con cantos negros de origen volcánico, frente a un Atlántico de un azul intenso.\",\n  \"features\": [\n    {\n      \"icon\": \"camera\",\n      \"color\": \"#0369a1\",\n      \"title\": \"Para fotografiar\",\n      \"text\": \"El contraste del blanco, el negro y el azul se ve incluso a ras de suelo.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"color\": \"#b45309\",\n      \"title\": \"Luz y viento\",\n      \"text\": \"Playa abierta al mar: protección solar y algo de abrigo, por si acaso.\"\n    },\n    {\n      \"icon\": \"leaf\",\n      \"color\": \"#15803d\",\n      \"title\": \"Cuídala\",\n      \"text\": \"Mírala, tócala y déjala donde estaba. Es lo que la hace especial.\"\n    }\n  ],\n  \"tips\": [\n    {\n      \"icon\": \"droplet\",\n      \"text\": \"Lleva agua y algo de comer.\"\n    },\n    {\n      \"icon\": \"sun\",\n      \"text\": \"Gafas, gorra y protección solar.\"\n    },\n    {\n      \"icon\": \"trash\",\n      \"text\": \"Llévate tu basura y deja las piedras.\"\n    },\n    {\n      \"icon\": \"camera\",\n      \"text\": \"A primera o última hora, luz más suave.\"\n    }\n  ]\n}\n",
+        assets: {
+          "assets/popcorn/poster-sea.jpg": "examples/assets/popcorn/poster-sea.jpg",
+          "assets/popcorn/poster-texture.jpg": "examples/assets/popcorn/poster-texture.jpg",
+        },
+        page: {"size": "420x594", "margin_mm": 0}
+      },
       icons: {
         haml: "%DocumentLayout(size=\"a4\")\n  %Header(title=\"Icons\" subtitle=\"Tabler Icons, any size, colour and stroke\")\n\n  %h3.font-semibold.mt-4 In a letterhead\n  .flex.items-center.space-x-6.mt-2.text-sm\n    .flex.items-center.space-x-2\n      %Icon(name=\"mail\" size=\"18px\" color=\"#0f766e\")\n      %span {{ company.email }}\n    .flex.items-center.space-x-2\n      %Icon(name=\"phone\" size=\"18px\" color=\"#0f766e\")\n      %span {{ company.phone }}\n    .flex.items-center.space-x-2\n      %Icon(name=\"map-pin\" size=\"18px\" color=\"#0f766e\")\n      %span {{ company.address }}\n\n  %h3.font-semibold.mt-6 Size, colour and stroke\n  .flex.items-end.space-x-5.mt-2\n    %Icon(name=\"receipt\" size=\"16px\")\n    %Icon(name=\"receipt\" size=\"24px\" color=\"#0f766e\")\n    %Icon(name=\"receipt\" size=\"32px\" color=\"#4338ca\")\n    %Icon(name=\"receipt\" size=\"48px\" color=\"#b45309\")\n    %Icon(name=\"receipt\" size=\"48px\" color=\"#b91c1c\" stroke=\"1\")\n    %Icon(name=\"receipt\" size=\"48px\" color=\"#0f172a\" stroke=\"1.5\")\n    %Icon(name=\"receipt\" size=\"48px\" color=\"#0f172a\" stroke=\"3\")\n\n  %h3.font-semibold.mt-6 In cards\n  .grid.grid-cols-3.gap-4.mt-2\n    - for f in features\n      .border.rounded-lg.p-4\n        .flex.items-center.mb-2\n          %Icon(name=\"{{ f.icon }}\" size=\"28px\" color=\"{{ f.color }}\")\n        %p.font-semibold {{ f.title }}\n        %p.text-sm.text-slate-500.mt-1 {{ f.text }}\n\n  %h3.font-semibold.mt-6 Status\n  .flex.space-x-4.mt-2\n    - for s in statuses\n      .flex.items-center.space-x-1\n        %Icon(name=\"{{ s.icon }}\" size=\"20px\" color=\"{{ s.color }}\")\n        %span.text-sm.font-semibold {{ s.label }}\n\n  %h3.font-semibold.mt-6 A few of the 193 built in\n  - for row in gallery\n    .grid.grid-cols-6.gap-2.mt-2\n      - for name in row\n        .text-center\n          .flex.justify-center.mb-2\n            %Icon(name=\"{{ name }}\" size=\"28px\" color=\"#334155\")\n          %p.text-xs.text-slate-500 {{ name }}\n",
         json: "{\n  \"company\": {\n    \"name\": \"Northwind Studio\",\n    \"email\": \"hello@northwind.example\",\n    \"phone\": \"+34 600 123 456\",\n    \"address\": \"Calle Mayor 12, 28013 Madrid\",\n    \"web\": \"northwind.example\"\n  },\n  \"features\": [\n    { \"icon\": \"receipt\", \"title\": \"Invoices\", \"text\": \"Clean, numbered documents with totals and tax broken out.\", \"color\": \"#0f766e\" },\n    { \"icon\": \"shield-check\", \"title\": \"Signed\", \"text\": \"Sign the PDF with a certificate and a trusted timestamp.\", \"color\": \"#4338ca\" },\n    { \"icon\": \"qrcode\", \"title\": \"Verifiable\", \"text\": \"A QR that sends the customer to the tax agency's check.\", \"color\": \"#b45309\" }\n  ],\n  \"statuses\": [\n    { \"icon\": \"circle-check\", \"label\": \"Paid\", \"color\": \"#15803d\" },\n    { \"icon\": \"clock\", \"label\": \"Pending\", \"color\": \"#b45309\" },\n    { \"icon\": \"alert-triangle\", \"label\": \"Overdue\", \"color\": \"#b91c1c\" },\n    { \"icon\": \"info-circle\", \"label\": \"Draft\", \"color\": \"#475569\" }\n  ],\n  \"gallery\": [\n    [ \"file-invoice\", \"receipt-tax\", \"credit-card\", \"building-bank\", \"currency-euro\", \"calculator\" ],\n    [ \"mail\", \"phone\", \"map-pin\", \"calendar\", \"clock\", \"user\" ],\n    [ \"truck-delivery\", \"package\", \"shopping-cart\", \"plane\", \"ticket\", \"luggage\" ],\n    [ \"chart-bar\", \"chart-pie\", \"trending-up\", \"target\", \"trophy\", \"rocket\" ]\n  ]\n}\n"
@@ -874,6 +909,8 @@
 
     var currentObjectUrl = null;
     var currentImages = {};
+    var currentPage = null;
+    var assetsReady = Promise.resolve();
     var currentSvgs = {};
     var currentFacturX = null;
     var debounceTimer = null;
@@ -894,6 +931,27 @@
       // post-processing step, not template state, so it's kept separate
       // from the editors above and sent as its own request field.
       currentFacturX = ex.facturX || null;
+      // Page options (size / margin_mm) a template needs, e.g. full-bleed.
+      currentPage = ex.page || null;
+      // Photos are fetched from the repo on demand instead of being inlined
+      // here; generate() waits for them.
+      var assets = ex.assets || {};
+      var keys = Object.keys(assets);
+      currentImages = Object.assign({}, ex.images || {});
+      assetsReady = Promise.all(keys.map(function (k) {
+        return fetch(assets[k]).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + assets[k]);
+          return r.arrayBuffer();
+        }).then(function (buf) {
+          var bytes = new Uint8Array(buf), bin = '';
+          for (var i = 0; i < bytes.length; i += 8192) {
+            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+          }
+          currentImages[k] = btoa(bin);
+        });
+      })).catch(function (err) {
+        showError('Could not load example photos: ' + err.message);
+      });
     }
 
     function setStatus(kind, text) {
@@ -1013,6 +1071,10 @@
     }
 
     function generate() {
+      assetsReady.then(generateNow);
+    }
+
+    function generateNow() {
       if (inFlight) {
         pendingRerun = true;
         return;
@@ -1041,6 +1103,7 @@
         svgs: currentSvgs,
         filename: 'sandbox.pdf'
       };
+      if (currentPage) requestBody.page = currentPage;
       if (currentFacturX) {
         requestBody.factur_x = currentFacturX;
       }
