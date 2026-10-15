@@ -332,11 +332,18 @@ The live demo (`index.html`) loads the same ones in its editor.
 
 ## Known limitations
 
-- **`gap` (flex and grid) has no effect.** Neither `display:flex` nor
-  `display:grid` containers apply their `gap`/`gap-*` utility in the
-  current `azul-layout` engine — items render flush against each other.
-  Use margin on the items instead (`examples/catalog.haml` gives each
-  `%Card` `class="m-2"` rather than `gap-4` on the grid).
+- **`gap` works** in flex rows, flex columns and grids (checked with bordered
+  boxes). Its sibling `space-x-*` / `space-y-*` is *not* implemented: use `gap-*`
+  or margins on the items.
+- **Utilities that resolve to nothing are listed, not silently dropped:** the
+  build prints them, and `--strict` makes them an error. Among the common
+  Tailwind classes the notable gaps are `list-none` / `list-disc` /
+  `list-decimal` (lists get default markers but cannot change them), `float-*`,
+  `columns-*`, `order-*`, `rounded-none`, `shadow-none`, `tabular-nums`,
+  `line-clamp-*`, `underline-offset-*`, `decoration-*`, and arbitrary values that
+  need a function (`bg-[rgb(...)]`, `w-[calc(...)]`, `grid-cols-[...]`).
+  Variants that cannot apply to a PDF (`hover:`, `md:`, `dark:`) are dropped by
+  design.
 - **`.absolute` + `inline-flex` (i.e. `%Badge`).** See the two rules above.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next
