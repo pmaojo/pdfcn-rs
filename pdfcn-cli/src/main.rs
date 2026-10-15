@@ -1,6 +1,7 @@
 mod add;
 mod build;
 mod dev;
+mod icons;
 mod new;
 
 use std::path::PathBuf;
@@ -31,6 +32,11 @@ enum Command {
     },
     /// Compile a template + data file straight to a PDF
     Build(Box<build::BuildArgs>),
+    /// List the icons `%Icon(name="...")` accepts
+    Icons {
+        /// Only names containing this text
+        filter: Option<String>,
+    },
     /// Serve a live preview of the rendered document in a browser
     Dev {
         /// Path to the .haml template
@@ -50,6 +56,10 @@ fn main() -> anyhow::Result<()> {
         Command::New { template, dir } => new::run(&template, dir.as_deref()),
         Command::Add { component } => add::run(&component),
         Command::Build(args) => build::run(*args),
+        Command::Icons { filter } => {
+            icons::list(filter.as_deref());
+            Ok(())
+        }
         Command::Dev {
             template,
             data,

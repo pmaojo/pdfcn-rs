@@ -42,6 +42,10 @@ const VECTOR_SCHEME: &str = "pdfcn-vector:";
 const CHART_SCHEME: &str = "pdfcn-chart:";
 #[cfg(feature = "vector")]
 const BARCODE_SCHEME: &str = "pdfcn-barcode:";
+/// `%Icon`: the placeholder names an icon, colour and stroke width; the SVG is
+/// built here from the icon set (see `pdfcn_components::icon_svg`).
+#[cfg(feature = "vector")]
+const ICON_SCHEME: &str = "pdfcn-icon:";
 /// Payload cap before the QR encoder would need the largest symbol
 /// versions; anything bigger degrades to a broken-image placeholder rather
 /// than risking an oversized encode.
@@ -268,7 +272,8 @@ pub(crate) fn generate_vectors(
             };
             if !(src.starts_with(VECTOR_SCHEME)
                 || src.starts_with(CHART_SCHEME)
-                || src.starts_with(BARCODE_SCHEME))
+                || src.starts_with(BARCODE_SCHEME)
+                || src.starts_with(ICON_SCHEME))
             {
                 continue;
             }
@@ -288,7 +293,7 @@ pub(crate) fn generate_vectors(
         let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
         for (src, (box_w, box_h)) in boxes {
             let short_src = if src.len() > MAX_SAFE_PLACEHOLDER_SRC_LEN {
-                let scheme = [VECTOR_SCHEME, CHART_SCHEME, BARCODE_SCHEME]
+                let scheme = [VECTOR_SCHEME, CHART_SCHEME, BARCODE_SCHEME, ICON_SCHEME]
                     .into_iter()
                     .find(|s| src.starts_with(s))
                     .unwrap_or("");
@@ -304,6 +309,11 @@ pub(crate) fn generate_vectors(
                     if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
                         let svg = svg_assets.get(id)?;
                         return raster::svg_to_png(svg, box_w, box_h);
+                    }
+                    if let Some(payload) = src.strip_prefix(ICON_SCHEME) {
+                        let (name, color, stroke) = pdfcn_components::decode_icon_payload(payload)?;
+                        let svg = pdfcn_components::icon_svg(&name, &color, stroke.as_deref())?;
+                        return raster::svg_to_png(&svg, box_w, box_h);
                     }
                     if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
                         let bytes = hex_decode(spec_hex)?;
@@ -637,6 +647,40 @@ mod tests {
         let html = format!(r#"<img src="{QRCODE_SCHEME}zzzz">"#);
         let mut images = BTreeMap::new();
         prepare_assets(&html, &mut images);
+        assert!(images.is_empty());
+    }
+
+    #[cfg(feature = "vector")]
+    #[test]
+    fn an_icon_placeholder_becomes_a_png_in_its_colour() {
+        let payload: String = "receipt|#ff0000|2"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
+        let mut images = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new());
+        let png = images
+            .get(&format!("pdfcn-icon:{payload}"))
+            .expect("the icon was rasterised");
+        let img = image::load_from_memory(png).unwrap().to_rgba8();
+        // 24 CSS px at 3x print density.
+        assert_eq!((img.width(), img.height()), (72, 72));
+        // Drawn in red, and transparent elsewhere.
+        assert!(img.pixels().any(|p| p[0] > 200 && p[1] < 40 && p[3] > 200));
+        assert!(img.pixels().any(|p| p[3] == 0));
+    }
+
+    #[cfg(feature = "vector")]
+    #[test]
+    fn an_unknown_icon_is_left_unresolved() {
+        let payload: String = "no-such-icon|#000000|"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
+        let mut images = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new());
         assert!(images.is_empty());
     }
 

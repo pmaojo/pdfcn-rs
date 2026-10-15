@@ -170,6 +170,7 @@ pub fn is_marker_class(class: &str) -> bool {
         "barchart",
         "card",
         "document",
+        "icon",
         "qrcode",
         "separator",
         "table-striped",

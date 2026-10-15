@@ -32,7 +32,9 @@ pub use sign::{
 
 // Fiscal QR profiles (`%FiscalQR`): a JSON description of a country's invoice
 // QR, registered at start-up. See pdfcn-components' `fiscal_qr` module.
-pub use pdfcn_components::{fiscal_profile_ids, register_fiscal_profile};
+pub use pdfcn_components::{
+    fiscal_profile_ids, icon_names, register_fiscal_profile, register_icon, tabler_version,
+};
 
 pub use data::{load_data, DataFormat};
 pub use error::CoreError;

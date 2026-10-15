@@ -25,7 +25,7 @@ pub fn qrcode(attrs: &[ResolvedAttr]) -> Markup {
     // silently producing a broken image.
     let Some(value) = attr(attrs, "value").filter(|v| !v.is_empty()) else {
         return html! {
-            div class="pdfcn-invalid-component bg-destructive.text-white.text-xs.font-semibold.rounded.px-2.py-1" {
+            div class="pdfcn-invalid-component bg-destructive text-white text-xs font-semibold rounded px-2 py-1" {
                 "QRCode: a non-empty \"value\" is required"
             }
         };

@@ -1,0 +1,49 @@
+%DocumentLayout(size="a4")
+  %Header(title="Icons" subtitle="Tabler Icons, any size, colour and stroke")
+
+  %h3.font-semibold.mt-4 In a letterhead
+  .flex.items-center.space-x-6.mt-2.text-sm
+    .flex.items-center.space-x-2
+      %Icon(name="mail" size="18px" color="#0f766e")
+      %span {{ company.email }}
+    .flex.items-center.space-x-2
+      %Icon(name="phone" size="18px" color="#0f766e")
+      %span {{ company.phone }}
+    .flex.items-center.space-x-2
+      %Icon(name="map-pin" size="18px" color="#0f766e")
+      %span {{ company.address }}
+
+  %h3.font-semibold.mt-6 Size, colour and stroke
+  .flex.items-end.space-x-5.mt-2
+    %Icon(name="receipt" size="16px")
+    %Icon(name="receipt" size="24px" color="#0f766e")
+    %Icon(name="receipt" size="32px" color="#4338ca")
+    %Icon(name="receipt" size="48px" color="#b45309")
+    %Icon(name="receipt" size="48px" color="#b91c1c" stroke="1")
+    %Icon(name="receipt" size="48px" color="#0f172a" stroke="1.5")
+    %Icon(name="receipt" size="48px" color="#0f172a" stroke="3")
+
+  %h3.font-semibold.mt-6 In cards
+  .grid.grid-cols-3.gap-4.mt-2
+    - for f in features
+      .border.rounded-lg.p-4
+        .flex.items-center.mb-2
+          %Icon(name="{{ f.icon }}" size="28px" color="{{ f.color }}")
+        %p.font-semibold {{ f.title }}
+        %p.text-sm.text-slate-500.mt-1 {{ f.text }}
+
+  %h3.font-semibold.mt-6 Status
+  .flex.space-x-4.mt-2
+    - for s in statuses
+      .flex.items-center.space-x-1
+        %Icon(name="{{ s.icon }}" size="20px" color="{{ s.color }}")
+        %span.text-sm.font-semibold {{ s.label }}
+
+  %h3.font-semibold.mt-6 A few of the 193 built in
+  - for row in gallery
+    .grid.grid-cols-6.gap-2.mt-2
+      - for name in row
+        .text-center
+          .flex.justify-center.mb-2
+            %Icon(name="{{ name }}" size="28px" color="#334155")
+          %p.text-xs.text-slate-500 {{ name }}

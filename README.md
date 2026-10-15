@@ -257,6 +257,37 @@ must outlive the certificate chain), or sign with a key that lives in a smart
 card or HSM. A signature is only as trustworthy as the certificate behind it;
 for legal weight use a qualified certificate.
 
+## Icons: `%Icon`
+
+```haml
+%Icon(name="receipt" size="20px" color="#0f766e" stroke="1.5")
+```
+
+193 [Tabler Icons](https://tabler.io/icons) (MIT) are built in, drawn as
+vectors and rasterised at print density: `pdfcn icons [filter]` lists them.
+`size` is any px length, `color` a plain colour value, `stroke` a width from 0.25
+to 4 (Tabler draws at 2). An unknown name or a bad value is a visible error in the
+document, not a blank space.
+
+Tabler is the pick because its outline set is the largest permissively licensed
+one, on one 24x24 grid with one stroke weight, and because stroke and colour are
+plain SVG attributes. The built-in subset keeps the binary small (about 37 KB);
+the rest of Tabler's ~5,000 icons, or any other set (Lucide, Heroicons, your own),
+is one flag away:
+
+```sh
+pdfcn build doc.haml -d data.json --icons-dir node_modules/@tabler/icons/icons/outline
+```
+
+Each `.svg` in the folder becomes an icon named after the file, replacing a
+built-in one of the same name. `currentColor` in the SVG takes the icon's colour
+and a `stroke-width` on its root takes `stroke`. Files that use scripts, external
+references or `<image>` are skipped. From Rust: `register_icon(name, svg)`.
+`scripts/update-icons.py` regenerates the built-in subset from `scripts/icons.txt`.
+
+The bundled drawings are © Paweł Kuna, MIT: see
+`pdfcn-components/src/icons/LICENSE-tabler-icons`.
+
 ## Invoice QR codes for any country: `%FiscalQR`
 
 Tax authorities each ask for a different QR on invoices. Instead of hard-coding
@@ -327,6 +358,8 @@ The live demo (`index.html`) loads the same ones in its editor.
 | `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
 | `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
 | `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `icons` | `%Icon`: sizes, colours, stroke widths, cards and a gallery of built-in icons |
+| `utilities` | `space-x/y`, `list-none`, columns, float, arbitrary values |
 | `verifactu` | Spanish invoice with the AEAT VERI*FACTU QR |
 | `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
 

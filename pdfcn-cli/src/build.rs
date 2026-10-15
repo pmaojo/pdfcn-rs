@@ -65,6 +65,12 @@ pub struct BuildArgs {
     /// (e.g. `es-verifactu`) replaces it.
     #[arg(long = "fiscal-profile", value_name = "PATH")]
     fiscal_profiles: Vec<PathBuf>,
+    /// Folder of `.svg` files to make available to `%Icon(name="...")`, named
+    /// after the file (`receipt.svg` -> `receipt`). Any icon set works: the rest
+    /// of Tabler, Lucide, Heroicons, your own artwork. Repeat the flag for
+    /// several folders; a name already in use is replaced.
+    #[arg(long = "icons-dir", value_name = "DIR")]
+    icons_dirs: Vec<PathBuf>,
     /// JPEG-family compression quality, 0.0-1.0 (printpdf's own default:
     /// 0.85). Compression is already on; this only tunes it.
     #[arg(long)]
@@ -307,6 +313,9 @@ fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {
+    for dir in &args.icons_dirs {
+        crate::icons::load_dir(dir)?;
+    }
     for path in &args.fiscal_profiles {
         let json = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("--fiscal-profile: cannot read {path:?}: {e}"))?;
