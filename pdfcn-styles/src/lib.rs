@@ -36,6 +36,52 @@ tr, .card { break-inside: avoid; page-break-inside: avoid; }
 const TABLE_STRIPED_RULE: &str =
     ".table-striped tr:nth-child(even){background-color:hsl(210, 40%, 96.1%)}\n";
 
+/// What `[` and `]` become inside a class name once the HTML is final.
+///
+/// The layout engine's CSS parser loses every rule that follows a selector with
+/// a bracket in it, even inside a quoted attribute value (`[class~="w-[10px]"]`
+/// is enough), so an arbitrary-value class like `w-[10px]` or `bg-[#0f766e]`
+/// silently stripped the styling of every class sorted after it. Brackets are
+/// therefore swapped for these markers in the class attributes *and* in the
+/// selectors, which keeps the two in agreement without ever showing the engine
+/// a bracket. Resolution decodes the name first, so `w-[10px]` is still what
+/// gets resolved and reported.
+const BRACKET_OPEN: &str = "_L_";
+const BRACKET_CLOSE: &str = "_R_";
+
+fn encode_class(class: &str) -> String {
+    class.replace('[', BRACKET_OPEN).replace(']', BRACKET_CLOSE)
+}
+
+fn decode_class(class: &str) -> String {
+    class.replace(BRACKET_OPEN, "[").replace(BRACKET_CLOSE, "]")
+}
+
+/// Rewrites the `class="..."` attributes of finished HTML so no class name
+/// contains a bracket (see [`BRACKET_OPEN`]). Call it after every pass that
+/// reads or injects utility classes, right before extracting the classes to
+/// build the stylesheet from. Markup without brackets is returned unchanged.
+pub fn encode_class_brackets(html: &str) -> String {
+    if !html.contains('[') {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len() + html.len() / 16);
+    let mut rest = html;
+    while let Some(pos) = rest.find("class=\"") {
+        let start = pos + "class=\"".len();
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let Some(end) = after.find('"') else {
+            rest = after;
+            break;
+        };
+        out.push_str(&encode_class(&after[..end]));
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Scans `class="..."` attributes in already-rendered HTML and returns the
 /// distinct utility class names referenced, in the order first seen.
 pub fn extract_classes(html: &str) -> BTreeSet<String> {
@@ -74,11 +120,13 @@ pub fn build_stylesheet_with_theme(html: &str, theme: &Theme) -> String {
 pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) -> String {
     let mut css = String::from(PRINT_RULES);
     for class in classes {
-        let Some((pseudo, base)) = split_variant(class) else {
+        // The name may arrive encoded (from finished HTML) or as written.
+        let original = decode_class(class);
+        let Some((pseudo, base)) = split_variant(&original) else {
             continue;
         };
         if let Some(decl) = utilities::resolve_with(base, theme) {
-            let selector = class_selector(class);
+            let selector = class_selector(&encode_class(&original));
             css.push_str(&format!("{selector}{pseudo}{{{decl}}}\n"));
         }
     }
@@ -122,6 +170,7 @@ pub fn is_marker_class(class: &str) -> bool {
         "barchart",
         "card",
         "document",
+        "icon",
         "qrcode",
         "separator",
         "table-striped",
@@ -158,11 +207,14 @@ pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
     let html = rewrite_composites(html, theme);
     extract_classes(&html)
         .into_iter()
+        .map(|class| decode_class(&class))
         .filter(|class| {
             !is_marker_class(class)
-                && split_variant(class)
-                    .and_then(|(_, base)| utilities::resolve_with(base, theme))
-                    .is_none()
+                && split_variant(class).is_none_or(|(_, base)| {
+                    utilities::resolve_with(base, theme).is_none()
+                        && !utilities::is_screen_only(base)
+                        && !utilities::is_sibling_spacing(base)
+                })
         })
         .collect()
 }
@@ -187,9 +239,12 @@ pub fn unresolved_classes(html: &str, theme: &Theme) -> BTreeSet<String> {
 /// entirely and both `lightningcss` (this crate's own minifier) and
 /// `azul-layout` parse it correctly.
 fn class_selector(class: &str) -> String {
-    if class
+    // Anything that is not a plain identifier character needs the attribute
+    // form: the `.`, `:` and `/` of `px-2.5`, `w-1/2`, and the `(`, `%`, `#`
+    // that survive in an encoded arbitrary value (`w-_L_calc(100%-2rem)_R_`).
+    if !class
         .chars()
-        .any(|c| matches!(c, '.' | ':' | '/' | '[' | ']'))
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
     {
         let escaped_value = class.replace('\\', "\\\\").replace('"', "\\\"");
         format!("[class~=\"{escaped_value}\"]")
@@ -331,5 +386,81 @@ mod tests {
         assert!(unresolved.contains("hover:bg-red-500"));
         assert!(!unresolved.contains("p-4"));
         assert!(!unresolved.contains("print:hidden"));
+    }
+
+    #[test]
+    fn spacing_between_siblings_and_screen_only_classes_are_not_reported() {
+        let unresolved = unresolved_classes(
+            r#"<div class="flex space-x-4 cursor-pointer transition-colors"><p class="space-y-2">x</p><i class="blur space-x-banana">y</i></div>"#,
+            &Theme::light(),
+        );
+        assert_eq!(
+            unresolved.into_iter().collect::<Vec<_>>(),
+            vec!["blur".to_string(), "space-x-banana".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_unsupported_variant_is_still_reported() {
+        let unresolved = unresolved_classes(
+            r#"<p class="hover:bg-red-500 cursor-pointer">x</p>"#,
+            &Theme::light(),
+        );
+        assert!(unresolved.contains("hover:bg-red-500"), "{unresolved:?}");
+        assert!(!unresolved.contains("cursor-pointer"));
+    }
+
+    #[test]
+    fn brackets_are_encoded_in_class_attributes_only() {
+        let html = r#"<p class="w-[10px] p-2 bg-[#0f766e]">w-[10px] and [class]</p>"#;
+        let out = encode_class_brackets(html);
+        assert_eq!(
+            out,
+            r#"<p class="w-_L_10px_R_ p-2 bg-_L_#0f766e_R_">w-[10px] and [class]</p>"#
+        );
+        // No brackets, nothing to do.
+        let plain = r#"<p class="p-2">x</p>"#;
+        assert_eq!(encode_class_brackets(plain), plain);
+    }
+
+    #[test]
+    fn selectors_never_contain_a_bracket() {
+        // The engine drops every rule after a selector with a bracket in it.
+        let html = encode_class_brackets(
+            r#"<p class="w-[10px] bg-[#0f766e] w-[calc(100%-2rem)] grid-cols-[1fr_2fr] p-2">x</p>"#,
+        );
+        let css = build_stylesheet(&html);
+        for needle in ["w-[", "bg-[", "grid-cols-[", "calc(100%-2rem)]"] {
+            assert!(!css.contains(needle), "{needle} in {css}");
+        }
+        // The only brackets left are the attribute selectors' own.
+        assert_eq!(
+            css.matches('[').count(),
+            css.matches("[class~=").count(),
+            "{css}"
+        );
+        // ...and each rule is still there, under the encoded name.
+        assert!(css.contains("width:10px"), "{css}");
+        assert!(css.contains("background-color:#0f766e"), "{css}");
+        assert!(css.contains("calc(100% - 2rem)"), "{css}");
+        assert!(css.contains("grid-template-columns:1fr 2fr"), "{css}");
+        assert!(css.contains("padding:0.5rem"), "{css}");
+    }
+
+    #[test]
+    fn a_class_written_with_brackets_gets_the_same_selector_as_its_encoding() {
+        let raw = build_stylesheet(r#"<p class="w-[10px]">x</p>"#);
+        let encoded = build_stylesheet(&encode_class_brackets(r#"<p class="w-[10px]">x</p>"#));
+        assert_eq!(raw, encoded);
+    }
+
+    #[test]
+    fn unresolved_classes_are_reported_as_the_author_wrote_them() {
+        let html = encode_class_brackets(r#"<p class="nope-[3px] w-[10px]">x</p>"#);
+        let unresolved = unresolved_classes(&html, &Theme::light());
+        assert_eq!(
+            unresolved.into_iter().collect::<Vec<_>>(),
+            vec!["nope-[3px]".to_string()]
+        );
     }
 }

@@ -128,6 +128,14 @@ fn arbitrary_value(bracketed: &str) -> Option<String> {
     if inner.is_empty() {
         return None;
     }
+    // `rgb(10,20,30)`, `hsl(210_40%_98%)`, `rgb(0_0_0/50%)`.
+    if let Some(color) = color_function(inner) {
+        return Some(color);
+    }
+    // `calc(100%-2rem)`: lengths combined with + - * /.
+    if let Some(calc) = calc_expression(inner) {
+        return Some(calc);
+    }
     // Hex color: #rgb or #rrggbb.
     if let Some(hex) = inner.strip_prefix('#') {
         return (matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()))
@@ -151,6 +159,114 @@ fn arbitrary_value(bracketed: &str) -> Option<String> {
         let sign = if inner.starts_with('-') { "-" } else { "" };
         format!("{sign}{number}{unit}")
     })
+}
+
+/// `rgb()`/`rgba()`/`hsl()`/`hsla()` with only the characters a colour needs.
+/// Tailwind writes spaces as `_` inside a class name; both are accepted.
+fn color_function(inner: &str) -> Option<String> {
+    let name_end = inner.find('(')?;
+    if !matches!(&inner[..name_end], "rgb" | "rgba" | "hsl" | "hsla") || !inner.ends_with(')') {
+        return None;
+    }
+    let args = &inner[name_end + 1..inner.len() - 1];
+    if args.is_empty()
+        || !args
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '%' | '/' | '_' | ' ' | '-'))
+    {
+        return None;
+    }
+    Some(format!(
+        "{}({})",
+        &inner[..name_end],
+        args.replace('_', " ")
+    ))
+}
+
+/// `grid-cols-[1fr_2fr]`, `grid-cols-[200px_1fr]`, `grid-cols-[repeat(3,1fr)]`:
+/// a track list, with `_` standing for a space. Only the characters a track
+/// list needs are accepted.
+fn arbitrary_tracks(bracketed: &str) -> Option<String> {
+    let inner = bracketed.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty()
+        || !inner.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '%' | ',' | '(' | ')' | '_' | '-')
+        })
+    {
+        return None;
+    }
+    Some(inner.replace('_', " "))
+}
+
+/// Whether a resolved arbitrary value is a colour rather than a length.
+fn is_color_literal(value: &str) -> bool {
+    value.starts_with('#') || value.starts_with("rgb") || value.starts_with("hsl")
+}
+
+/// `calc(...)` over lengths. Operators are put between spaces the way CSS
+/// requires (`calc(100%-2rem)` is written without them in a class name), and
+/// only digits, units and the four operators are allowed.
+fn calc_expression(inner: &str) -> Option<String> {
+    let body = inner.strip_prefix("calc(")?.strip_suffix(')')?;
+    if body.is_empty()
+        || !body.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '%' | '+' | '-' | '*' | '/' | '(' | ')' | '_' | ' ')
+        })
+    {
+        return None;
+    }
+    // Letters are only ever units (or a nested `calc`): no `url(`, `var(`, ...
+    let mut word = String::new();
+    for c in body.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_alphabetic() {
+            word.push(c);
+        } else {
+            if !word.is_empty()
+                && !matches!(word.as_str(), "px" | "rem" | "em" | "vw" | "vh" | "calc")
+            {
+                return None;
+            }
+            word.clear();
+        }
+    }
+    let chars: Vec<char> = body.replace('_', " ").chars().collect();
+    let mut out = String::new();
+    let mut previous: Option<char> = None; // last significant (non-space) char
+    for (i, c) in chars.iter().enumerate() {
+        match c {
+            ' ' => {}
+            '+' | '-' | '*' | '/' => {
+                // A sign is binary only after an operand; `calc(-2rem + 4px)` starts with a unary minus.
+                let after_operand = previous
+                    .is_some_and(|p| p.is_ascii_alphanumeric() || matches!(p, '%' | ')' | '.'));
+                let next_is_operand = chars[i + 1..].iter().find(|c| **c != ' ').is_some();
+                if after_operand && next_is_operand {
+                    out.push(' ');
+                    out.push(*c);
+                    out.push(' ');
+                } else {
+                    out.push(*c);
+                }
+                previous = Some(*c);
+                continue;
+            }
+            _ => {
+                if previous.is_some_and(|p| p.is_ascii_alphanumeric() || matches!(p, '%' | ')'))
+                    && chars[..i].last() == Some(&' ')
+                    && c.is_ascii_alphanumeric()
+                {
+                    // Two operands separated only by whitespace is not a valid expression.
+                    return None;
+                }
+                out.push(*c);
+                previous = Some(*c);
+            }
+        }
+    }
+    let open = out.matches('(').count();
+    let close = out.matches(')').count();
+    (open == close).then(|| format!("calc({out})"))
 }
 
 /// The value for a size-style utility suffix: the spacing scale first,
@@ -186,7 +302,7 @@ fn resolve_color(key: &str, theme: &Theme) -> Option<String> {
         .map(str::to_string)
         .or_else(|| theme.token(key).map(str::to_string))
         .or_else(|| tokens::scale_color(key).map(str::to_string))
-        .or_else(|| arbitrary_value(key).filter(|v| v.starts_with('#')))
+        .or_else(|| arbitrary_value(key).filter(|v| is_color_literal(v)))
 }
 
 /// Margin utilities, including `auto` (`mx-auto` centering) and the leading
@@ -272,6 +388,11 @@ pub(crate) fn color_value(key: &str, theme: &Theme) -> Option<String> {
 /// Hex and `hsl(...)` colors gain an alpha channel; anything else (named
 /// `transparent`) is returned unchanged.
 fn resolve_color_alpha(key: &str, theme: &Theme) -> Option<String> {
+    // A `/` inside brackets belongs to the value (`[rgb(0_0_0/50%)]`); the
+    // opacity suffix comes after them (`[#0f766e]/50`).
+    if key.ends_with(']') {
+        return resolve_color(key, theme);
+    }
     let Some((name, alpha)) = key.rsplit_once('/') else {
         return resolve_color(key, theme);
     };
@@ -294,6 +415,13 @@ fn resolve_color_alpha(key: &str, theme: &Theme) -> Option<String> {
     }
     if let Some(inner) = base.strip_prefix("hsl(").and_then(|r| r.strip_suffix(')')) {
         return Some(format!("hsla({inner}, {a})"));
+    }
+    if let Some(inner) = base.strip_prefix("rgb(").and_then(|r| r.strip_suffix(')')) {
+        // Only the comma form takes a fourth value; a modern `rgb(r g b / a)`
+        // already carries its own alpha and is left alone.
+        if inner.matches(',').count() == 2 {
+            return Some(format!("rgba({inner},{a})"));
+        }
     }
     Some(base)
 }
@@ -395,6 +523,15 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
     // Axis-specific gaps must be checked before the bare `gap-` prefix,
     // which would otherwise swallow them (`gap-x-4` -> scale "x-4") and
     // return None without ever reaching these branches.
+    // Multi-column text: `columns-2` -> `column-count: 2`.
+    if let Some(rest) = class.strip_prefix("columns-") {
+        let n: u32 = rest.parse().ok().filter(|n| (1..=12).contains(n))?;
+        return Some(format!("column-count:{n}"));
+    }
+    // First-line indent, on the spacing scale: `indent-4`.
+    if let Some(rest) = class.strip_prefix("indent-") {
+        return spacing_decls(&["text-indent"], rest);
+    }
     if let Some(rest) = class.strip_prefix("gap-x-") {
         return spacing_decls(&["column-gap"], rest);
     }
@@ -444,7 +581,8 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             "wide" => "0.025em",
             "wider" => "0.05em",
             "widest" => "0.1em",
-            _ => return None,
+            // `tracking-[0.05em]`, `tracking-[1px]`.
+            _ => return arbitrary_value(rest).map(|v| format!("letter-spacing:{v}")),
         };
         return Some(format!("letter-spacing:{value}"));
     }
@@ -658,7 +796,7 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         // Arbitrary values: a hex (`text-[#334155]`) is a color, anything
         // else (`text-[15px]`) is a font size.
         if let Some(value) = arbitrary_value(rest) {
-            return if value.starts_with('#') {
+            return if is_color_literal(&value) {
                 Some(format!("color:{value}"))
             } else {
                 Some(format!("font-size:{value}"))
@@ -701,7 +839,9 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             return Some(format!("border-color:{color}"));
         }
         // `border-[2px]`: an arbitrary length is a border width.
-        if let Some(value) = arbitrary_value(rest).filter(|v| !v.starts_with('#')) {
+        if let Some(value) =
+            arbitrary_value(rest).filter(|v| !is_color_literal(v) && !v.starts_with("calc"))
+        {
             return Some(format!("border-width:{value};border-style:solid"));
         }
         return None;
@@ -720,6 +860,9 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         return Some(format!("box-shadow:{value}"));
     }
     if let Some(rest) = class.strip_prefix("grid-rows-") {
+        if let Some(tracks) = arbitrary_tracks(rest) {
+            return Some(format!("grid-template-rows:{tracks}"));
+        }
         let n: u32 = rest.parse().ok().filter(|n| (1..=12).contains(n))?;
         return Some(format!("grid-template-rows:repeat({n}, minmax(0, 1fr))"));
     }
@@ -734,6 +877,9 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             .map(|n| format!("grid-row:span {n}/span {n}"));
     }
     if let Some(rest) = class.strip_prefix("grid-cols-") {
+        if let Some(tracks) = arbitrary_tracks(rest) {
+            return Some(format!("grid-template-columns:{tracks}"));
+        }
         let n: u32 = rest.parse().ok()?;
         return Some(format!("grid-template-columns:repeat({n}, minmax(0, 1fr))"));
     }
@@ -754,7 +900,16 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
             "sans" => return Some("font-family:'Inter',sans-serif".to_string()),
             "serif" => return Some("font-family:'Source Serif 4',serif".to_string()),
             "mono" => return Some("font-family:'JetBrains Mono',monospace".to_string()),
-            _ => return None,
+            // `font-[600]`: any weight from 1 to 1000.
+            _ => {
+                let n: u32 = rest
+                    .strip_prefix('[')?
+                    .strip_suffix(']')?
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=1000).contains(n))?;
+                return Some(format!("font-weight:{n}"));
+            }
         };
         return Some(format!("font-weight:{weight}"));
     }
@@ -848,10 +1003,89 @@ pub fn resolve_with(class: &str, theme: &Theme) -> Option<String> {
         "break-after-page" => Some("break-after:page"),
         "flex-1" => Some("flex:1 1 0%"),
         "table-bordered" => Some("border-width:2px;border-style:solid"),
+        "float-left" => Some("float:left"),
+        "float-right" => Some("float:right"),
+        "float-none" => Some("float:none"),
+        "box-border" => Some("box-sizing:border-box"),
+        "box-content" => Some("box-sizing:content-box"),
+        "table-fixed" => Some("table-layout:fixed"),
+        "table-auto" => Some("table-layout:auto"),
+        // `list-none` also drops the browser indent, like Tailwind's reset
+        // does; the markers themselves are removed by `gap::rewrite_gaps`,
+        // because the engine ignores `list-style-type: none`.
+        "list-none" => Some("list-style-type:none;padding-left:0"),
+        "list-disc" => Some("list-style-type:disc"),
+        "list-decimal" => Some("list-style-type:decimal"),
+        "list-inside" => Some("list-style-position:inside"),
+        "list-outside" => Some("list-style-position:outside"),
+        "content-normal" => Some("align-content:normal"),
+        "content-start" => Some("align-content:flex-start"),
+        "content-center" => Some("align-content:center"),
+        "content-end" => Some("align-content:flex-end"),
+        "content-between" => Some("align-content:space-between"),
+        "content-around" => Some("align-content:space-around"),
+        "content-evenly" => Some("align-content:space-evenly"),
+        "content-stretch" => Some("align-content:stretch"),
+        "justify-items-start" => Some("justify-items:start"),
+        "justify-items-center" => Some("justify-items:center"),
+        "justify-items-end" => Some("justify-items:end"),
+        "justify-items-stretch" => Some("justify-items:stretch"),
+        // The engine ignores the `place-items` shorthand, so spell out both.
+        "place-items-start" => Some("align-items:start;justify-items:start"),
+        "place-items-center" => Some("align-items:center;justify-items:center"),
+        "place-items-end" => Some("align-items:end;justify-items:end"),
+        "place-items-stretch" => Some("align-items:stretch;justify-items:stretch"),
         "table-compact" => Some("font-size:0.75rem"),
         _ => None,
     };
     literal.map(str::to_string)
+}
+
+/// Classes that only affect how a page behaves on screen (pointer, selection,
+/// transitions, animation). They have no effect in a PDF, and nothing is lost
+/// by ignoring them, so they are accepted silently instead of being reported
+/// as unrecognised -- real Tailwind markup carries plenty of them and
+/// `--strict` should not fail on it.
+pub(crate) fn is_screen_only(class: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "transition",
+        "resize",
+        "outline-none",
+        "appearance-none",
+        "will-change-auto",
+        "group",
+        "peer",
+    ];
+    const PREFIXES: &[&str] = &[
+        "cursor-",
+        "pointer-events-",
+        "select-",
+        "resize-",
+        "transition-",
+        "duration-",
+        "delay-",
+        "ease-",
+        "animate-",
+        "will-change-",
+        "appearance-",
+        "touch-",
+        "scroll-",
+        "snap-",
+        "caret-",
+        "accent-",
+    ];
+    EXACT.contains(&class) || PREFIXES.iter().any(|p| class.starts_with(p))
+}
+
+/// `space-x-4` / `space-y-2`: spacing between siblings. Not a stylesheet rule:
+/// `gap::rewrite_gaps` turns them into margins on the children, so they must
+/// not be reported as unresolved. The scale key has to be valid, though; a typo
+/// (`space-x-banana`) still is.
+pub(crate) fn is_sibling_spacing(class: &str) -> bool {
+    class
+        .strip_prefix("space-x-")
+        .or_else(|| class.strip_prefix("space-y-"))
+        .is_some_and(|key| scale_or_arbitrary(key).is_some())
 }
 
 #[cfg(test)]
@@ -1117,7 +1351,10 @@ mod tests {
             "bg-[url(http://x)]",
             "bg-[#12345]",
             "text-[var(--x)]",
-            "p-[calc(1px+2px)]",
+            // calc() is accepted (the engine evaluates it), but not malformed
+            // or non-length contents.
+            "p-[calc(1px+;color:red)]",
+            "p-[calc(url(x))]",
         ] {
             assert_eq!(resolve(class), None, "{class} must not resolve");
         }
@@ -1344,5 +1581,188 @@ mod tests {
         assert_eq!(resolve("align-sub").as_deref(), Some("vertical-align:sub"));
         // The text size/color branch is unaffected.
         assert_eq!(resolve("text-lg").as_deref(), Some("font-size:1.125rem"));
+    }
+
+    // --- Utilities added after measuring Tailwind coverage against the engine.
+    #[test]
+    fn rounded_none_and_shadow_none_undo_a_decoration() {
+        assert_eq!(resolve("rounded-none").as_deref(), Some("border-radius:0"));
+        assert_eq!(
+            resolve("rounded-t-none").as_deref(),
+            Some("border-top-left-radius:0;border-top-right-radius:0")
+        );
+        assert_eq!(resolve("shadow-none").as_deref(), Some("box-shadow:none"));
+    }
+
+    #[test]
+    fn resolves_float_box_sizing_and_table_layout() {
+        assert_eq!(resolve("float-left").as_deref(), Some("float:left"));
+        assert_eq!(resolve("float-right").as_deref(), Some("float:right"));
+        assert_eq!(
+            resolve("box-border").as_deref(),
+            Some("box-sizing:border-box")
+        );
+        assert_eq!(
+            resolve("table-fixed").as_deref(),
+            Some("table-layout:fixed")
+        );
+    }
+
+    #[test]
+    fn resolves_list_styles() {
+        assert_eq!(
+            resolve("list-decimal").as_deref(),
+            Some("list-style-type:decimal")
+        );
+        assert_eq!(
+            resolve("list-disc").as_deref(),
+            Some("list-style-type:disc")
+        );
+        assert_eq!(
+            resolve("list-inside").as_deref(),
+            Some("list-style-position:inside")
+        );
+        // The indent goes too; the markers are removed by the gap pass.
+        assert_eq!(
+            resolve("list-none").as_deref(),
+            Some("list-style-type:none;padding-left:0")
+        );
+    }
+
+    #[test]
+    fn resolves_content_and_item_alignment() {
+        assert_eq!(
+            resolve("content-between").as_deref(),
+            Some("align-content:space-between")
+        );
+        assert_eq!(
+            resolve("justify-items-center").as_deref(),
+            Some("justify-items:center")
+        );
+        assert_eq!(
+            resolve("place-items-center").as_deref(),
+            Some("align-items:center;justify-items:center")
+        );
+    }
+
+    #[test]
+    fn resolves_columns_and_indent() {
+        assert_eq!(resolve("columns-2").as_deref(), Some("column-count:2"));
+        assert_eq!(resolve("columns-13"), None);
+        assert_eq!(resolve("indent-4").as_deref(), Some("text-indent:1rem"));
+        assert_eq!(resolve("indent-px").as_deref(), Some("text-indent:1px"));
+    }
+
+    #[test]
+    fn resolves_arbitrary_weights_tracking_and_tracks() {
+        assert_eq!(resolve("font-[600]").as_deref(), Some("font-weight:600"));
+        assert_eq!(resolve("font-[0]"), None);
+        assert_eq!(resolve("font-[bold]"), None);
+        assert_eq!(
+            resolve("tracking-[0.05em]").as_deref(),
+            Some("letter-spacing:0.05em")
+        );
+        assert_eq!(
+            resolve("grid-cols-[1fr_2fr]").as_deref(),
+            Some("grid-template-columns:1fr 2fr")
+        );
+        assert_eq!(
+            resolve("grid-cols-[repeat(3,1fr)]").as_deref(),
+            Some("grid-template-columns:repeat(3,1fr)")
+        );
+        assert_eq!(
+            resolve("grid-rows-[auto_1fr]").as_deref(),
+            Some("grid-template-rows:auto 1fr")
+        );
+        // A track list may not smuggle in a second declaration.
+        assert_eq!(resolve("grid-cols-[1fr;color:red]"), None);
+    }
+
+    #[test]
+    fn resolves_arbitrary_color_functions() {
+        assert_eq!(
+            resolve("bg-[rgb(10,20,30)]").as_deref(),
+            Some("background-color:rgb(10,20,30)")
+        );
+        assert_eq!(
+            resolve("text-[hsl(210_40%_98%)]").as_deref(),
+            Some("color:hsl(210 40% 98%)")
+        );
+        assert_eq!(
+            resolve("bg-[rgb(0_0_0/50%)]").as_deref(),
+            Some("background-color:rgb(0 0 0/50%)")
+        );
+        assert_eq!(
+            resolve("border-[rgb(1,2,3)]").as_deref(),
+            Some("border-color:rgb(1,2,3)")
+        );
+        // Not a colour function, and no way to close the declaration early.
+        assert_eq!(resolve("bg-[rgb(1,2,3);color:red]"), None);
+        assert_eq!(resolve("bg-[url(x)]"), None);
+    }
+
+    #[test]
+    fn resolves_calc_in_arbitrary_lengths() {
+        assert_eq!(
+            resolve("w-[calc(100%-2rem)]").as_deref(),
+            Some("width:calc(100% - 2rem)")
+        );
+        assert_eq!(
+            resolve("w-[calc(100%_-_2rem)]").as_deref(),
+            Some("width:calc(100% - 2rem)")
+        );
+        assert_eq!(
+            resolve("h-[calc(-2rem+4px)]").as_deref(),
+            Some("height:calc(-2rem + 4px)")
+        );
+        assert_eq!(
+            resolve("w-[calc(2*3rem)]").as_deref(),
+            Some("width:calc(2 * 3rem)")
+        );
+        assert_eq!(
+            resolve("p-[calc(1rem+2px)]").as_deref(),
+            Some("padding:calc(1rem + 2px)")
+        );
+        // Nothing but a calc expression gets through.
+        assert_eq!(resolve("w-[calc(1px;color:red)]"), None);
+        assert_eq!(resolve("w-[calc(1px)2]"), None);
+        assert_eq!(resolve("w-[calc(1px 2px)]"), None);
+        assert_eq!(resolve("w-[calc((1px)]"), None);
+        assert_eq!(resolve("w-[calc()]"), None);
+    }
+
+    #[test]
+    fn screen_only_classes_are_accepted_and_real_gaps_are_not() {
+        for class in [
+            "cursor-pointer",
+            "select-none",
+            "pointer-events-none",
+            "transition",
+            "transition-colors",
+            "duration-200",
+            "animate-spin",
+            "outline-none",
+        ] {
+            assert!(is_screen_only(class), "{class}");
+            assert_eq!(resolve(class), None, "{class} must not emit CSS");
+        }
+        for class in [
+            "blur",
+            "mix-blend-multiply",
+            "order-1",
+            "overline",
+            "line-clamp-2",
+        ] {
+            assert!(!is_screen_only(class), "{class} still deserves a warning");
+        }
+    }
+
+    #[test]
+    fn sibling_spacing_needs_a_valid_scale_key() {
+        assert!(is_sibling_spacing("space-x-2"));
+        assert!(is_sibling_spacing("space-y-[10px]"));
+        assert!(!is_sibling_spacing("space-x-banana"));
+        assert!(!is_sibling_spacing("space-x-reverse"));
+        assert!(!is_sibling_spacing("space-4"));
     }
 }

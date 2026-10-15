@@ -1,0 +1,43 @@
+{
+  "title": "Playa de las Palomitas",
+  "kicker": "Fuerteventura · Islas Canarias",
+  "intro": "Granos blancos y rugosos que parecen palomitas de maíz, mezclados con cantos negros de origen volcánico, frente a un Atlántico de un azul intenso.",
+  "features": [
+    {
+      "icon": "camera",
+      "color": "#0369a1",
+      "title": "Para fotografiar",
+      "text": "El contraste del blanco, el negro y el azul se ve incluso a ras de suelo."
+    },
+    {
+      "icon": "sun",
+      "color": "#b45309",
+      "title": "Luz y viento",
+      "text": "Playa abierta al mar: protección solar y algo de abrigo, por si acaso."
+    },
+    {
+      "icon": "leaf",
+      "color": "#15803d",
+      "title": "Cuídala",
+      "text": "Mírala, tócala y déjala donde estaba. Es lo que la hace especial."
+    }
+  ],
+  "tips": [
+    {
+      "icon": "droplet",
+      "text": "Lleva agua y algo de comer."
+    },
+    {
+      "icon": "sun",
+      "text": "Gafas, gorra y protección solar."
+    },
+    {
+      "icon": "trash",
+      "text": "Llévate tu basura y deja las piedras."
+    },
+    {
+      "icon": "camera",
+      "text": "A primera o última hora, luz más suave."
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+%DocumentLayout(size="a4")
+  .relative
+    %img(src="assets/popcorn/sea.jpg" alt="Olas y arena blanca" style="width:638px;height:185px;object-fit:cover")
+    .absolute.bottom-0.left-0.right-0.px-6.py-4.text-white(style="background:rgba(15,23,42,0.55)")
+      %p.text-xs.font-semibold.tracking-widest.uppercase {{ kicker }}
+      %h1.text-4xl.font-bold {{ title }}
+
+  .grid.grid-cols-2.gap-6.mt-4
+    .pr-2
+      %h2.text-xl.font-semibold Una playa que parece de mentira
+      %p.mt-2.text-sm.leading-relaxed.text-slate-700 {{ intro }}
+      %p.mt-3.text-sm.leading-relaxed.text-slate-700 De lejos es una playa blanca; de cerca, un mosaico de pequeñas formas redondeadas que invitan a agacharse y mirar.
+      .mt-4.flex.items-center.space-x-2
+        %Icon(name="map-pin" size="18px" color="#0f766e")
+        %span.text-sm.font-semibold Fuerteventura, Canarias
+    %img(src="assets/popcorn/hand.jpg" alt="Una mano con granos blancos y negros" style="width:307px;height:205px;object-fit:cover;border-radius:12px")
+
+  .grid.grid-cols-3.gap-4.mt-4
+    - for f in features
+      .border.rounded-lg.p-3
+        .flex.mb-2
+          %Icon(name="{{ f.icon }}" size="26px" color="{{ f.color }}")
+        %p.font-semibold {{ f.title }}
+        %p.text-xs.text-slate-600.mt-1.leading-relaxed {{ f.text }}
+
+  .relative.mt-4
+    %img(src="assets/popcorn/texture.jpg" alt="Detalle de los granos blancos y los cantos negros" style="width:638px;height:90px;object-fit:cover;border-radius:12px")
+    .absolute.bottom-0.left-0.px-4.py-2.text-white.text-sm.font-semibold(style="background:rgba(15,23,42,0.55);border-radius:0 12px 0 12px") De cerca, cada grano recuerda a una palomita
+
+  %h3.font-semibold.mt-4 Antes de ir
+  .grid.grid-cols-2.gap-2.mt-2
+    - for t in tips
+      .flex.items-center.space-x-2
+        %Icon(name="{{ t.icon }}" size="18px" color="#0f766e")
+        %span.text-sm {{ t.text }}
+  %p.text-xs.text-slate-400.mt-4 Texto de ejemplo para mostrar el diseño de un folleto con fotografías; revisa los datos prácticos antes de publicarlo.

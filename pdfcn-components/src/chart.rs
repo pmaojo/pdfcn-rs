@@ -48,7 +48,7 @@ pub fn bar_chart(attrs: &[ResolvedAttr]) -> Markup {
     let values = parse_values(attr(attrs, "values")).unwrap_or_default();
     if values.is_empty() {
         return html! {
-            div class="pdfcn-invalid-component bg-destructive.text-white.text-xs.font-semibold.rounded.px-2.py-1" {
+            div class="pdfcn-invalid-component bg-destructive text-white text-xs font-semibold rounded px-2 py-1" {
                 "BarChart: \"values\" must be a non-empty JSON array of numbers"
             }
         };

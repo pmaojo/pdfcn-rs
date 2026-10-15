@@ -14,6 +14,7 @@ mod chart;
 mod chart_vector;
 mod fiscal_qr;
 mod form_field;
+mod icons;
 mod nav;
 mod progress;
 mod qrcode;
@@ -26,6 +27,9 @@ use pdfcn_template::ResolvedAttr;
 use serde_json::Value as JsonValue;
 
 pub use fiscal_qr::{fiscal_profile_ids, register_fiscal_profile};
+pub use icons::{
+    decode_payload as decode_icon_payload, icon_names, icon_svg, register_icon, tabler_version,
+};
 
 pub(crate) fn attr<'a>(attrs: &'a [ResolvedAttr], name: &str) -> Option<&'a str> {
     attrs
@@ -42,7 +46,7 @@ pub(crate) fn attr_or<'a>(attrs: &'a [ResolvedAttr], name: &str, default: &'a st
 /// destructive-colored chip that keeps the mistake visible in the output
 /// instead of failing the whole document.
 pub(crate) fn invalid_component() -> String {
-    "pdfcn-invalid-component bg-destructive.text-white.text-xs.font-semibold.rounded.px-2.py-1"
+    "pdfcn-invalid-component bg-destructive text-white text-xs font-semibold rounded px-2 py-1"
         .to_string()
 }
 
@@ -154,6 +158,8 @@ pub fn render(
         "Pagination" => Some(nav::pagination(attrs)),
         "QRCode" => Some(qrcode::qrcode(attrs)),
         "FiscalQR" => Some(fiscal_qr::fiscal_qr(attrs)),
+        #[cfg(feature = "vector")]
+        "Icon" => Some(icons::icon(attrs)),
         "VerifactuQR" => Some(fiscal_qr::verifactu_qr(attrs)),
         "BarChart" => Some(chart::bar_chart(attrs)),
         // Wave 1 vector substrate: %Vector is always registered (it's just a
@@ -172,7 +178,7 @@ pub fn render(
         #[cfg(feature = "vector")]
         "Barcode" => Some(barcode::barcode(attrs)),
         #[cfg(not(feature = "vector"))]
-        "LineChart" | "StackedBarChart" | "PieChart" | "Sparkline" | "Barcode" => {
+        "LineChart" | "StackedBarChart" | "PieChart" | "Sparkline" | "Barcode" | "Icon" => {
             Some(missing_feature_marker())
         }
         "PageFooter" => Some(page_footer(attrs)),

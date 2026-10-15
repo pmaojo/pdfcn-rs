@@ -54,7 +54,7 @@ pub struct RenderOptions {
     /// render nothing.
     pub skip_first_page: bool,
     /// Governs `doc.save`'s image re-encoding. `None` keeps printpdf's own
-    /// default (quality 0.85, a 2MB cap, format chosen automatically) --
+    /// default (quality 0.85, format chosen automatically) and a 64MB cap on an image's decoded size (printpdf's own 2MB cut every photo to about 0.7 megapixels) --
     /// compression is already on by default; this is what makes it
     /// tunable rather than what turns it on.
     pub image_optimization: Option<ImageOptimization>,
@@ -108,12 +108,15 @@ pub enum ImageFormat {
 }
 
 /// Tunes `PdfSaveOptions.image_optimization` (see [`RenderOptions::image_optimization`]).
-/// Every field left `None` keeps printpdf's own default for that setting.
+/// Every field left `None` keeps printpdf's own default for that setting, except
+/// `max_size`, which defaults to `"64MB"` rather than printpdf's `"2MB"`.
 #[derive(Debug, Clone, Default)]
 pub struct ImageOptimization {
     /// 0.0-1.0; meaningful for JPEG-family compression only.
     pub quality: Option<f32>,
-    /// A size budget like `"300kb"` or `"2MB"` -- printpdf parses the unit.
+    /// A budget for an image's *decoded* size (pixels x channels, not the file),
+    /// like `"300kb"` or `"2MB"` -- printpdf parses the unit and shrinks any
+    /// image over it. Defaults to `"64MB"`: a tighter budget cuts large photos.
     pub max_size: Option<String>,
     /// Force-converts to greyscale before compressing.
     pub greyscale: Option<bool>,

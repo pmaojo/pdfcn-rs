@@ -1,0 +1,39 @@
+%DocumentLayout(size="a4")
+  %Header(title="Utilities" subtitle="Spacing, lists, columns, float and arbitrary values")
+
+  %h3.font-semibold.mt-4 Spacing between siblings
+  .flex.space-x-4.mt-2
+    .border.p-2 One
+    .border.p-2 Two
+    .border.p-2 Three
+  .space-y-2.mt-2
+    .border.p-2 Stacked with space-y-2
+    .border.p-2 and no wrapper needed
+
+  %h3.font-semibold.mt-4 Lists
+  .grid.grid-cols-4.gap-4.mt-2
+    %ul.list-none
+      %li No marker
+      %li and no indent
+    %ul.list-disc
+      %li Disc
+      %li markers
+    %ol.list-decimal
+      %li Numbered
+      %li items
+    %ol.list-disc
+      %li Numbered list
+      %li as bullets
+
+  %h3.font-semibold.mt-4 Columns, indent and float
+  %p.columns-2.indent-6.mt-2.text-sm
+    Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute irure dolor.
+  .mt-3.text-sm
+    .float-left.border.p-2.w-24.mr-4 Floated
+    Text wraps around a floated box the way it does in a browser, so a figure can sit beside the paragraph that refers to it. Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+
+  %h3.font-semibold.mt-6 Arbitrary values
+  %div(class="grid grid-cols-[1fr_2fr] gap-4 mt-2")
+    %div(class="p-3 text-white bg-[rgb(15,118,110)] rounded-lg") Teal from rgb()
+    %div(class="p-3 border border-[rgb(15,118,110)] rounded-none shadow-none tracking-[0.05em] font-[600]") Tracked, semibold, square corners
+  %div(class="mt-3 p-2 border w-[calc(100%-2rem)]") Width is calc(100% - 2rem)

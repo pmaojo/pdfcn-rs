@@ -65,12 +65,20 @@ pub struct BuildArgs {
     /// (e.g. `es-verifactu`) replaces it.
     #[arg(long = "fiscal-profile", value_name = "PATH")]
     fiscal_profiles: Vec<PathBuf>,
+    /// Folder of `.svg` files to make available to `%Icon(name="...")`, named
+    /// after the file (`receipt.svg` -> `receipt`). Any icon set works: the rest
+    /// of Tabler, Lucide, Heroicons, your own artwork. Repeat the flag for
+    /// several folders; a name already in use is replaced.
+    #[arg(long = "icons-dir", value_name = "DIR")]
+    icons_dirs: Vec<PathBuf>,
     /// JPEG-family compression quality, 0.0-1.0 (printpdf's own default:
     /// 0.85). Compression is already on; this only tunes it.
     #[arg(long)]
     image_quality: Option<f32>,
-    /// Size budget per embedded image, e.g. "300kb" or "2MB" (printpdf's
-    /// own default: "2MB")
+    /// Budget for an embedded image's decoded size (pixels, not the file), e.g.
+    /// "300kb" or "2MB": larger images are shrunk to fit. Default "64MB"; a small
+    /// budget makes smaller PDFs at the cost of sharpness (printpdf's own
+    /// default of "2MB" cuts a photo to about 0.7 megapixels)
     #[arg(long)]
     image_max_size: Option<String>,
     /// Force every embedded image to greyscale before compressing
@@ -307,6 +315,9 @@ fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {
+    for dir in &args.icons_dirs {
+        crate::icons::load_dir(dir)?;
+    }
     for path in &args.fiscal_profiles {
         let json = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("--fiscal-profile: cannot read {path:?}: {e}"))?;

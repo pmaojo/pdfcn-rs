@@ -42,6 +42,10 @@ const VECTOR_SCHEME: &str = "pdfcn-vector:";
 const CHART_SCHEME: &str = "pdfcn-chart:";
 #[cfg(feature = "vector")]
 const BARCODE_SCHEME: &str = "pdfcn-barcode:";
+/// `%Icon`: the placeholder names an icon, colour and stroke width; the SVG is
+/// built here from the icon set (see `pdfcn_components::icon_svg`).
+#[cfg(feature = "vector")]
+const ICON_SCHEME: &str = "pdfcn-icon:";
 /// Payload cap before the QR encoder would need the largest symbol
 /// versions; anything bigger degrades to a broken-image placeholder rather
 /// than risking an oversized encode.
@@ -268,7 +272,8 @@ pub(crate) fn generate_vectors(
             };
             if !(src.starts_with(VECTOR_SCHEME)
                 || src.starts_with(CHART_SCHEME)
-                || src.starts_with(BARCODE_SCHEME))
+                || src.starts_with(BARCODE_SCHEME)
+                || src.starts_with(ICON_SCHEME))
             {
                 continue;
             }
@@ -288,7 +293,7 @@ pub(crate) fn generate_vectors(
         let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
         for (src, (box_w, box_h)) in boxes {
             let short_src = if src.len() > MAX_SAFE_PLACEHOLDER_SRC_LEN {
-                let scheme = [VECTOR_SCHEME, CHART_SCHEME, BARCODE_SCHEME]
+                let scheme = [VECTOR_SCHEME, CHART_SCHEME, BARCODE_SCHEME, ICON_SCHEME]
                     .into_iter()
                     .find(|s| src.starts_with(s))
                     .unwrap_or("");
@@ -304,6 +309,11 @@ pub(crate) fn generate_vectors(
                     if let Some(id) = src.strip_prefix(VECTOR_SCHEME) {
                         let svg = svg_assets.get(id)?;
                         return raster::svg_to_png(svg, box_w, box_h);
+                    }
+                    if let Some(payload) = src.strip_prefix(ICON_SCHEME) {
+                        let (name, color, stroke) = pdfcn_components::decode_icon_payload(payload)?;
+                        let svg = pdfcn_components::icon_svg(&name, &color, stroke.as_deref())?;
+                        return raster::svg_to_png(&svg, box_w, box_h);
                     }
                     if let Some(spec_hex) = src.strip_prefix(CHART_SCHEME) {
                         let bytes = hex_decode(spec_hex)?;
@@ -417,6 +427,74 @@ fn apply_cover_crops(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Stri
     out
 }
 
+/// Decodes `bytes` and applies the image's EXIF orientation, so what comes out
+/// is the picture as a viewer shows it. A phone held upright writes landscape
+/// pixels plus an orientation tag; everything downstream of here (the layout
+/// engine, printpdf) ignores the tag, so without this step such a photo lands
+/// in the PDF sideways, or squeezed into a portrait box. Returns `None` for
+/// anything undecodable.
+pub(crate) fn decode_oriented(bytes: &[u8]) -> Option<image::DynamicImage> {
+    use image::ImageDecoder;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut decoder = reader.into_decoder().ok()?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder).ok()?;
+    img.apply_orientation(orientation);
+    Some(img)
+}
+
+/// The EXIF orientation recorded in `bytes`, without decoding any pixels.
+fn exif_orientation(bytes: &[u8]) -> image::metadata::Orientation {
+    use image::ImageDecoder;
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut d| d.orientation().ok())
+        .unwrap_or(image::metadata::Orientation::NoTransforms)
+}
+
+/// Pass 0: turns every image whose EXIF orientation is not "as stored" into
+/// the picture as displayed (rotated or mirrored pixels), re-encoded as the
+/// same kind of file. Runs first and on every referenced image, not only on
+/// those another pass would re-encode: an untouched photo would otherwise keep
+/// its sideways pixels. Images without an orientation tag are left byte for
+/// byte as they were.
+fn apply_exif_orientation(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
+    let srcs: BTreeSet<String> = scan_img_tags(html)
+        .iter()
+        .filter_map(|tag| attr_value(&tag.attrs, "src").map(str::to_string))
+        .collect();
+    for src in srcs {
+        let Some(bytes) = images.get(&src) else {
+            continue;
+        };
+        if exif_orientation(bytes) == image::metadata::Orientation::NoTransforms {
+            continue;
+        }
+        let Some(img) = decode_oriented(bytes) else {
+            continue;
+        };
+        let is_jpeg = bytes.starts_with(&[0xFF, 0xD8]);
+        let mut out = Vec::new();
+        let written = if is_jpeg {
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 92)
+                .encode_image(&image::DynamicImage::ImageRgb8(img.into_rgb8()))
+                .is_ok()
+        } else {
+            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .is_ok()
+        };
+        if written {
+            images.insert(src, out);
+        }
+    }
+}
+
 /// Decodes `bytes` (JPEG/PNG/…), center-crops to `aspect` (w/h), and
 /// re-encodes as PNG. Returns None for anything undecodable — the caller
 /// leaves the original in place, degrading to the engine's stretch-fill
@@ -425,7 +503,7 @@ fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
     if !aspect.is_finite() || aspect <= 0.0 {
         return None;
     }
-    let img = image::load_from_memory(bytes).ok()?;
+    let img = decode_oriented(bytes)?;
     let (iw, ih) = (img.width(), img.height());
     if iw == 0 || ih == 0 {
         return None;
@@ -470,32 +548,56 @@ const MAX_IMAGE_DIMENSION_PX: u32 = 4096;
 /// in the source's format (JPEG stays JPEG, everything else PNG), so the
 /// caller's `<img>` markup needs no rewriting. An undecodable source is
 /// left alone, degrading exactly as before.
-fn normalize_resolutions(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
+/// The widest and tallest box a page can offer, in CSS px: a percentage or
+/// `auto` dimension can never exceed it, so it is a safe stand-in for a size
+/// only layout knows.
+pub(crate) type PageBound = (f64, f64);
+
+fn normalize_resolutions(
+    html: &str,
+    images: &mut BTreeMap<String, Vec<u8>>,
+    page: Option<PageBound>,
+) {
     // The widest/tallest box each src paints into governs its limit.
-    let mut limits: BTreeMap<String, (Option<f64>, Option<f64>)> = BTreeMap::new();
+    struct Limit {
+        w: Option<f64>,
+        h: Option<f64>,
+        cover: bool,
+    }
+    let mut limits: BTreeMap<String, Limit> = BTreeMap::new();
     for tag in scan_img_tags(html) {
         let Some(src) = attr_value(&tag.attrs, "src").map(str::to_string) else {
             continue;
         };
-        let (w, h) = attr_value(&tag.attrs, "style")
-            .map(parse_style)
-            .map(|s| (s.width_px, s.height_px))
-            .unwrap_or((None, None));
-        let entry = limits.entry(src).or_insert((None, None));
+        let style = attr_value(&tag.attrs, "style").map(parse_style);
+        let (w, h, cover) = match &style {
+            Some(s) => (
+                s.width_px,
+                s.height_px,
+                s.object_fit.as_deref() == Some("cover"),
+            ),
+            None => (None, None, false),
+        };
+        let entry = limits.entry(src).or_insert(Limit {
+            w: None,
+            h: None,
+            cover: false,
+        });
         // Only a tag that actually declares a dimension raises that
         // dimension's limit; an absent style never shrinks it.
         if let Some(w) = w {
-            entry.0 = Some(entry.0.map_or(w, |prev| prev.max(w)));
+            entry.w = Some(entry.w.map_or(w, |prev| prev.max(w)));
         }
         if let Some(h) = h {
-            entry.1 = Some(entry.1.map_or(h, |prev| prev.max(h)));
+            entry.h = Some(entry.h.map_or(h, |prev| prev.max(h)));
         }
+        entry.cover |= cover;
     }
     let replacements: Vec<(String, Vec<u8>)> = limits
         .into_iter()
-        .filter_map(|(src, (box_w, box_h))| {
+        .filter_map(|(src, limit)| {
             let bytes = images.get(&src)?;
-            let shrunk = downscale_to_limits(bytes, box_w, box_h)?;
+            let shrunk = downscale_to_limits(bytes, limit.w, limit.h, limit.cover, page)?;
             Some((src, shrunk))
         })
         .collect();
@@ -510,18 +612,42 @@ fn downscale_to_limits(
     bytes: &[u8],
     box_w_px: Option<f64>,
     box_h_px: Option<f64>,
+    cover: bool,
+    page: Option<PageBound>,
 ) -> Option<Vec<u8>> {
-    let img = image::load_from_memory(bytes).ok()?;
+    let img = decode_oriented(bytes)?;
     let (iw, ih) = (img.width(), img.height());
     if iw == 0 || ih == 0 {
         return None;
     }
     let mut max_scale = f64::INFINITY;
-    if let Some(w) = box_w_px.filter(|w| *w > 0.0) {
-        max_scale = max_scale.min((w * MAX_PRINT_SCALE) / iw as f64);
-    }
-    if let Some(h) = box_h_px.filter(|h| *h > 0.0) {
-        max_scale = max_scale.min((h * MAX_PRINT_SCALE) / ih as f64);
+    if cover && (box_w_px.is_none() || box_h_px.is_none()) {
+        // `object-fit: cover` fills the box on whichever axis needs the larger
+        // scale, so one known side says nothing about the resolution needed:
+        // a `width:100%; height:300px` banner of a portrait photo is limited
+        // by its width, not by its 300px. Bound the unknown side by the page
+        // (a box cannot be larger) and keep enough pixels for the larger
+        // scale; with no page bound, do not shrink at all.
+        if let Some((page_w, page_h)) = page {
+            let w = box_w_px.unwrap_or(page_w);
+            let h = box_h_px.unwrap_or(page_h);
+            let display_scale = (w / iw as f64).max(h / ih as f64);
+            max_scale = MAX_PRINT_SCALE * display_scale;
+        }
+    } else if cover {
+        // Both sides known: the cover pass already cropped to this aspect,
+        // so both axes agree.
+        let (w, h) = (box_w_px.unwrap_or(0.0), box_h_px.unwrap_or(0.0));
+        if w > 0.0 && h > 0.0 {
+            max_scale = MAX_PRINT_SCALE * (w / iw as f64).max(h / ih as f64);
+        }
+    } else {
+        if let Some(w) = box_w_px.filter(|w| *w > 0.0) {
+            max_scale = max_scale.min((w * MAX_PRINT_SCALE) / iw as f64);
+        }
+        if let Some(h) = box_h_px.filter(|h| *h > 0.0) {
+            max_scale = max_scale.min((h * MAX_PRINT_SCALE) / ih as f64);
+        }
     }
     let cap = MAX_IMAGE_DIMENSION_PX as f64;
     max_scale = max_scale.min(cap / iw as f64).min(cap / ih as f64);
@@ -530,7 +656,7 @@ fn downscale_to_limits(
     }
     let nw = (((iw as f64) * max_scale).round() as u32).max(1);
     let nh = (((ih as f64) * max_scale).round() as u32).max(1);
-    let resized = img.resize(nw, nh, image::imageops::FilterType::Triangle);
+    let resized = img.resize(nw, nh, image::imageops::FilterType::Lanczos3);
     let mut out = Vec::new();
     if bytes.starts_with(&[0xFF, 0xD8]) {
         image::DynamicImage::ImageRgb8(resized.into_rgb8())
@@ -552,7 +678,7 @@ fn downscale_to_limits(
 /// the side channel reaches the substrate.
 #[cfg(test)]
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
-    prepare_assets_with_vectors(html, images, &BTreeMap::new())
+    prepare_assets_with_vectors(html, images, &BTreeMap::new(), None)
 }
 
 /// Like [`prepare_assets`], with the vector substrate's side channel:
@@ -561,7 +687,11 @@ pub(crate) fn prepare_assets_with_vectors(
     html: &str,
     images: &mut BTreeMap<String, Vec<u8>>,
     svg_assets: &BTreeMap<String, String>,
+    page: Option<PageBound>,
 ) -> String {
+    // Orientation first, on the full-resolution bytes: the crops and the
+    // normalisation below must all see the picture the right way up.
+    apply_exif_orientation(html, images);
     // Cover-crop before normalizing: a crop slices from the source's full
     // resolution, so it must run while those bytes are intact --
     // normalizing first would shrink the pool it samples and bake that
@@ -588,7 +718,7 @@ pub(crate) fn prepare_assets_with_vectors(
         .into_iter()
         .filter_map(|base| images.remove(&base).map(|bytes| (base, bytes)))
         .collect();
-    normalize_resolutions(&rewritten, images);
+    normalize_resolutions(&rewritten, images, page);
     for (base, bytes) in parked {
         images.insert(base, bytes);
     }
@@ -637,6 +767,40 @@ mod tests {
         let html = format!(r#"<img src="{QRCODE_SCHEME}zzzz">"#);
         let mut images = BTreeMap::new();
         prepare_assets(&html, &mut images);
+        assert!(images.is_empty());
+    }
+
+    #[cfg(feature = "vector")]
+    #[test]
+    fn an_icon_placeholder_becomes_a_png_in_its_colour() {
+        let payload: String = "receipt|#ff0000|2"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
+        let mut images = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new());
+        let png = images
+            .get(&format!("pdfcn-icon:{payload}"))
+            .expect("the icon was rasterised");
+        let img = image::load_from_memory(png).unwrap().to_rgba8();
+        // 24 CSS px at 3x print density.
+        assert_eq!((img.width(), img.height()), (72, 72));
+        // Drawn in red, and transparent elsewhere.
+        assert!(img.pixels().any(|p| p[0] > 200 && p[1] < 40 && p[3] > 200));
+        assert!(img.pixels().any(|p| p[3] == 0));
+    }
+
+    #[cfg(feature = "vector")]
+    #[test]
+    fn an_unknown_icon_is_left_unresolved() {
+        let payload: String = "no-such-icon|#000000|"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
+        let mut images = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new());
         assert!(images.is_empty());
     }
 
@@ -763,20 +927,46 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (300, 150));
     }
 
-    /// `%Card`'s cover image only ever declares a height in `style=""` --
-    /// its width is `w-full`, a class, unknowable pre-layout. Height alone
-    /// must still bound the embedded resolution rather than falling through
-    /// to the boxless `MAX_IMAGE_DIMENSION_PX` cap (4096px): a 4000x3000
-    /// product photo in a 192px-tall card slot should ship around
-    /// 768x576 (192 * MAX_PRINT_SCALE), not 4096px wide.
+    /// A box with only a height (its width is `w-full`, a class, unknowable
+    /// pre-layout) and no `object-fit`: the height alone still bounds the
+    /// embedded resolution rather than falling through to the boxless
+    /// `MAX_IMAGE_DIMENSION_PX` cap. A 4000x3000 photo in a 192px-tall slot
+    /// ships around 768x576 (192 * MAX_PRINT_SCALE), not 4096px wide.
     #[test]
     fn a_height_only_box_still_bounds_the_embedded_resolution() {
         let src = "photo.png";
         let mut images = BTreeMap::from([(src.to_string(), png_bytes(4000, 3000, [1, 2, 3]))]);
-        let html = format!(r#"<img src="{src}" style="height:192px;object-fit:cover">"#);
+        let html = format!(r#"<img src="{src}" style="height:192px">"#);
         prepare_assets(&html, &mut images);
         let decoded = image::load_from_memory(&images[src]).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (768, 576));
+    }
+
+    /// The same box with `object-fit: cover` is a different matter: cover fills
+    /// the box on whichever axis needs the larger scale, so the height says
+    /// nothing about the pixels needed. A `width:100%; height:300px` banner of a
+    /// portrait photo used to be cut to 675px wide (about 100 ppi across a
+    /// page); it must keep enough for the widest box the page offers.
+    #[test]
+    fn a_cover_banner_with_an_unknown_width_keeps_the_pixels_the_page_width_needs() {
+        let src = "photo.png";
+        let mut images = BTreeMap::from([(src.to_string(), png_bytes(3060, 4080, [1, 2, 3]))]);
+        let html = format!(r#"<img src="{src}" style="width:100%;height:300px;object-fit:cover">"#);
+        prepare_assets_with_vectors(&html, &mut images, &BTreeMap::new(), Some((700.0, 1000.0)));
+        let decoded = image::load_from_memory(&images[src]).unwrap();
+        // 700 CSS px across the page at 3x.
+        assert_eq!(decoded.width(), 2100);
+        assert_eq!(decoded.height(), 2800);
+    }
+
+    #[test]
+    fn a_cover_image_with_an_unknown_side_and_no_page_bound_is_not_shrunk() {
+        let src = "photo.png";
+        let original = png_bytes(3060, 4080, [1, 2, 3]);
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let html = format!(r#"<img src="{src}" style="height:192px;object-fit:cover">"#);
+        prepare_assets(&html, &mut images);
+        assert_eq!(images[src], original);
     }
 
     #[test]
@@ -833,6 +1023,118 @@ mod tests {
         let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
         let html = format!(r#"<img src="{src}" style="width:100px">"#);
         prepare_assets(&html, &mut images);
+        assert_eq!(images[src], original);
+    }
+
+    /// A JPEG whose EXIF says "rotate 90 degrees clockwise to display" (a phone
+    /// held upright): landscape pixels, orientation 6.
+    fn jpeg_with_orientation(width: u32, height: u32, orientation: u16) -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(width, height, image::Rgb([200, 30, 30]));
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image::DynamicImage::ImageRgb8(img))
+            .unwrap();
+        // APP1 "Exif" with one IFD0 entry: Orientation (0x0112), SHORT, 1 value.
+        let mut tiff = vec![b'I', b'I', 0x2A, 0, 8, 0, 0, 0, 1, 0];
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&orientation.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    #[test]
+    fn the_test_helper_really_writes_an_orientation_tag() {
+        let bytes = jpeg_with_orientation(40, 20, 6);
+        assert_eq!(
+            exif_orientation(&bytes),
+            image::metadata::Orientation::Rotate90
+        );
+        let plain = jpeg_with_orientation(40, 20, 1);
+        assert_eq!(
+            exif_orientation(&plain),
+            image::metadata::Orientation::NoTransforms
+        );
+    }
+
+    /// The phone-photo bug: landscape pixels plus orientation 6 went into the
+    /// PDF as landscape pixels, squeezed into a portrait box.
+    #[test]
+    fn a_photo_with_an_orientation_tag_is_rotated_to_how_it_is_displayed() {
+        let src = "phone.jpg";
+        let mut images = BTreeMap::from([(src.to_string(), jpeg_with_orientation(80, 60, 6))]);
+        let html = format!(r#"<img src="{src}" style="width:30px;height:40px">"#);
+        prepare_assets(&html, &mut images);
+        let decoded = image::load_from_memory(&images[src]).unwrap();
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (60, 80),
+            "now portrait"
+        );
+        assert_eq!(
+            exif_orientation(&images[src]),
+            image::metadata::Orientation::NoTransforms,
+            "and not rotated a second time by a viewer"
+        );
+        assert!(images[src].starts_with(&[0xFF, 0xD8]), "still a JPEG");
+    }
+
+    #[test]
+    fn every_orientation_swaps_or_keeps_the_dimensions_as_it_should() {
+        for (tag, swaps) in [
+            (1, false),
+            (2, false),
+            (3, false),
+            (4, false),
+            (5, true),
+            (6, true),
+            (7, true),
+            (8, true),
+        ] {
+            let mut images =
+                BTreeMap::from([("a.jpg".to_string(), jpeg_with_orientation(80, 60, tag))]);
+            prepare_assets(r#"<img src="a.jpg" style="width:80px">"#, &mut images);
+            let d = image::load_from_memory(&images["a.jpg"]).unwrap();
+            let expected = if swaps { (60, 80) } else { (80, 60) };
+            assert_eq!((d.width(), d.height()), expected, "orientation {tag}");
+        }
+    }
+
+    #[test]
+    fn an_orientation_is_applied_before_the_cover_crop() {
+        // Landscape pixels, displayed portrait: a portrait cover box must crop
+        // the *displayed* picture, giving a portrait crop.
+        let src = "phone.jpg";
+        let mut images = BTreeMap::from([(src.to_string(), jpeg_with_orientation(400, 300, 6))]);
+        let html =
+            format!(r#"<img src="{src}" style="width:100px;height:100px;object-fit:cover">"#);
+        let out = prepare_assets(&html, &mut images);
+        let key = out
+            .split("src=\"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .unwrap();
+        let d = image::load_from_memory(&images[key]).unwrap();
+        assert_eq!(d.width(), d.height(), "square crop of the rotated picture");
+        assert!(d.width() <= 300, "from the 300px short side, not 400");
+    }
+
+    #[test]
+    fn an_image_without_an_orientation_tag_is_left_byte_for_byte() {
+        let src = "plain.jpg";
+        let original = jpeg_with_orientation(80, 60, 1);
+        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        prepare_assets(
+            &format!(r#"<img src="{src}" style="width:80px;height:60px">"#),
+            &mut images,
+        );
         assert_eq!(images[src], original);
     }
 }

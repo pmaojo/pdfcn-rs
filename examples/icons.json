@@ -1,0 +1,26 @@
+{
+  "company": {
+    "name": "Northwind Studio",
+    "email": "hello@northwind.example",
+    "phone": "+34 600 123 456",
+    "address": "Calle Mayor 12, 28013 Madrid",
+    "web": "northwind.example"
+  },
+  "features": [
+    { "icon": "receipt", "title": "Invoices", "text": "Clean, numbered documents with totals and tax broken out.", "color": "#0f766e" },
+    { "icon": "shield-check", "title": "Signed", "text": "Sign the PDF with a certificate and a trusted timestamp.", "color": "#4338ca" },
+    { "icon": "qrcode", "title": "Verifiable", "text": "A QR that sends the customer to the tax agency's check.", "color": "#b45309" }
+  ],
+  "statuses": [
+    { "icon": "circle-check", "label": "Paid", "color": "#15803d" },
+    { "icon": "clock", "label": "Pending", "color": "#b45309" },
+    { "icon": "alert-triangle", "label": "Overdue", "color": "#b91c1c" },
+    { "icon": "info-circle", "label": "Draft", "color": "#475569" }
+  ],
+  "gallery": [
+    [ "file-invoice", "receipt-tax", "credit-card", "building-bank", "currency-euro", "calculator" ],
+    [ "mail", "phone", "map-pin", "calendar", "clock", "user" ],
+    [ "truck-delivery", "package", "shopping-cart", "plane", "ticket", "luggage" ],
+    [ "chart-bar", "chart-pie", "trending-up", "target", "trophy", "rocket" ]
+  ]
+}

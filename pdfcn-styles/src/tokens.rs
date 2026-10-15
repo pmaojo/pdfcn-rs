@@ -242,6 +242,8 @@ pub fn scale_color(name: &str) -> Option<&'static str> {
 /// fine for every other property (padding, margin, font-size, ...) this
 /// project uses it for.
 const RADIUS: &[(&str, &str)] = &[
+    // `rounded-none` undoes an inherited or earlier radius.
+    ("none", "0"),
     ("sm", "2px"),
     ("md", "6px"),
     ("lg", "8px"),
@@ -269,6 +271,8 @@ pub fn radius(name: &str) -> Option<&'static str> {
 /// tighter than Tailwind's (a smaller offset and blur): painted as stacked
 /// translucent rects, a full-size shadow reads as a wide gray band.
 const SHADOW: &[(&str, &str)] = &[
+    // `shadow-none` undoes a shadow set by another class.
+    ("none", "none"),
     ("sm", "0 1px 2px 0 rgba(0,0,0,0.05)"),
     ("md", "0 2px 4px -1px rgba(0,0,0,0.09)"),
     ("lg", "0 4px 8px -3px rgba(0,0,0,0.10)"),

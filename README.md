@@ -125,6 +125,30 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
+### Preparing photos: `pdfcn images`
+
+Straight from a phone, a photo is 3-5 MB, carries EXIF (often **GPS
+coordinates**) and is rotated by an EXIF flag instead of in its pixels.
+pdfcn already handles the rendering side: it applies EXIF orientation,
+center-crops `object-fit:cover` boxes, downsamples to ~3x the box size
+(Lanczos3, 4096 px cap) and re-encodes, which drops EXIF/GPS/ICC from the
+PDF. The embedded-image budget defaults to 64 MB of *decoded* pixels (set
+`--image-max-size` to change it).
+
+To keep the repository small and builds fast, prepare originals once:
+
+```sh
+pdfcn images photos/*.jpg --out examples/assets/ --max-edge 1800 --quality 82
+# sea.jpg: 3060x4080 -> 1350x1800, 4.0 MB -> 527 KB  [removed EXIF, GPS location]
+```
+
+Rotation is baked in, metadata removed, long edge capped. It never
+overwrites its inputs. `examples/brochure.haml` uses three prepared photos.
+
+**`object-fit:cover` needs a pixel box** (`width:638px;height:185px`).
+With a percentage width the engine stretches the picture instead of
+cropping it; the A4 content width at the default margin is 638 px.
+
 ## Hyperlinks
 
 `%a(href="https://…")`, `mailto:`/`tel:` and in-document jumps (`%a(href="#sec")` to `%h2#sec`)
@@ -257,6 +281,37 @@ must outlive the certificate chain), or sign with a key that lives in a smart
 card or HSM. A signature is only as trustworthy as the certificate behind it;
 for legal weight use a qualified certificate.
 
+## Icons: `%Icon`
+
+```haml
+%Icon(name="receipt" size="20px" color="#0f766e" stroke="1.5")
+```
+
+193 [Tabler Icons](https://tabler.io/icons) (MIT) are built in, drawn as
+vectors and rasterised at print density: `pdfcn icons [filter]` lists them.
+`size` is any px length, `color` a plain colour value, `stroke` a width from 0.25
+to 4 (Tabler draws at 2). An unknown name or a bad value is a visible error in the
+document, not a blank space.
+
+Tabler is the pick because its outline set is the largest permissively licensed
+one, on one 24x24 grid with one stroke weight, and because stroke and colour are
+plain SVG attributes. The built-in subset keeps the binary small (about 37 KB);
+the rest of Tabler's ~5,000 icons, or any other set (Lucide, Heroicons, your own),
+is one flag away:
+
+```sh
+pdfcn build doc.haml -d data.json --icons-dir node_modules/@tabler/icons/icons/outline
+```
+
+Each `.svg` in the folder becomes an icon named after the file, replacing a
+built-in one of the same name. `currentColor` in the SVG takes the icon's colour
+and a `stroke-width` on its root takes `stroke`. Files that use scripts, external
+references or `<image>` are skipped. From Rust: `register_icon(name, svg)`.
+`scripts/update-icons.py` regenerates the built-in subset from `scripts/icons.txt`.
+
+The bundled drawings are © Paweł Kuna, MIT: see
+`pdfcn-components/src/icons/LICENSE-tabler-icons`.
+
 ## Invoice QR codes for any country: `%FiscalQR`
 
 Tax authorities each ask for a different QR on invoices. Instead of hard-coding
@@ -327,23 +382,34 @@ The live demo (`index.html`) loads the same ones in its editor.
 | `pricing` | three plan cards, featured card with `ring-4` and gradient header, dashed CTA |
 | `certificate` | serif type, double border, gradient background, circular seal, rotated stamp |
 | `ticket` | gradient boarding-pass header, QR code, dashed tear-off line |
+| `icons` | `%Icon`: sizes, colours, stroke widths, cards and a gallery of built-in icons |
+| `utilities` | `space-x/y`, `list-none`, columns, float, arbitrary values |
 | `verifactu` | Spanish invoice with the AEAT VERI*FACTU QR |
 | `invoice`, `catalog`, `showcase`, `charts` | tables and signature, `object-fit` images, a long mixed document, vector charts and barcodes |
 
 ## Known limitations
 
-- **`gap` works** in flex rows, flex columns and grids (checked with bordered
-  boxes). Its sibling `space-x-*` / `space-y-*` is *not* implemented: use `gap-*`
-  or margins on the items.
+- **`gap` and `space-x-*` / `space-y-*` work** (flex rows, flex columns, grids;
+  `space-y-*` also on a plain block container). They are applied as margins on
+  the children, so a child that already sets its own margin keeps it.
+- **Arbitrary values** (`w-[220px]`, `bg-[#0f766e]`, `bg-[rgb(15,118,110)]`,
+  `w-[calc(100%-2rem)]`, `grid-cols-[1fr_2fr]`, `font-[600]`, `tracking-[0.05em]`)
+  go in a `class="..."` attribute, **not** in the `.dotted` shorthand, which stops
+  at the `[`: write `%div(class="w-[220px] p-2")`, not `.w-[220px].p-2`.
+- **`list-none`** removes the markers and the indent; `list-disc`,
+  `list-decimal`, `list-inside` and `list-outside` work on `ul` and `ol`.
 - **Utilities that resolve to nothing are listed, not silently dropped:** the
-  build prints them, and `--strict` makes them an error. Among the common
-  Tailwind classes the notable gaps are `list-none` / `list-disc` /
-  `list-decimal` (lists get default markers but cannot change them), `float-*`,
-  `columns-*`, `order-*`, `rounded-none`, `shadow-none`, `tabular-nums`,
-  `line-clamp-*`, `underline-offset-*`, `decoration-*`, and arbitrary values that
-  need a function (`bg-[rgb(...)]`, `w-[calc(...)]`, `grid-cols-[...]`).
-  Variants that cannot apply to a PDF (`hover:`, `md:`, `dark:`) are dropped by
-  design.
+  build prints them, and `--strict` makes them an error. Classes that only matter
+  on screen (`cursor-*`, `select-*`, `pointer-events-*`, `transition-*`,
+  `animate-*`...) are accepted without a warning. Common Tailwind classes that are
+  still not rendered, because the layout engine ignores the CSS they would need:
+  `order-*`, `overline`, `underline-offset-*`, `decoration-*`, `tabular-nums`,
+  `line-clamp-*`, `blur`/`backdrop-blur`, `mix-blend-*`, `shadow-inner` and
+  `sr-only`. Variants that cannot apply to a PDF (`hover:`, `md:`, `dark:`) are
+  dropped by design.
+- **A percentage width inside a grid cell** is computed against a larger box than
+  the cell (`w-full` and `w-[calc(100%-2rem)]` can overflow it); give grid items
+  an explicit width, or avoid `%` there.
 - **`.absolute` + `inline-flex` (i.e. `%Badge`).** See the two rules above.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next

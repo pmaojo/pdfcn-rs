@@ -55,6 +55,9 @@ const EXAMPLES: &[&str] = &[
     "codes",
     "links",
     "verifactu",
+    "utilities",
+    "icons",
+    "brochure",
 ];
 
 fn repo_root() -> PathBuf {
