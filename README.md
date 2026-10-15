@@ -125,6 +125,30 @@ solver, not obvious from the CSS alone:
 
 Both are demonstrated in `examples/catalog.haml`.
 
+### Preparing photos: `pdfcn images`
+
+Straight from a phone, a photo is 3-5 MB, carries EXIF (often **GPS
+coordinates**) and is rotated by an EXIF flag instead of in its pixels.
+pdfcn already handles the rendering side: it applies EXIF orientation,
+center-crops `object-fit:cover` boxes, downsamples to ~3x the box size
+(Lanczos3, 4096 px cap) and re-encodes, which drops EXIF/GPS/ICC from the
+PDF. The embedded-image budget defaults to 64 MB of *decoded* pixels (set
+`--image-max-size` to change it).
+
+To keep the repository small and builds fast, prepare originals once:
+
+```sh
+pdfcn images photos/*.jpg --out examples/assets/ --max-edge 1800 --quality 82
+# sea.jpg: 3060x4080 -> 1350x1800, 4.0 MB -> 527 KB  [removed EXIF, GPS location]
+```
+
+Rotation is baked in, metadata removed, long edge capped. It never
+overwrites its inputs. `examples/brochure.haml` uses three prepared photos.
+
+**`object-fit:cover` needs a pixel box** (`width:638px;height:185px`).
+With a percentage width the engine stretches the picture instead of
+cropping it; the A4 content width at the default margin is 638 px.
+
 ## Hyperlinks
 
 `%a(href="https://…")`, `mailto:`/`tel:` and in-document jumps (`%a(href="#sec")` to `%h2#sec`)

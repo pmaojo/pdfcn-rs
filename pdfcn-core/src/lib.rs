@@ -5,6 +5,7 @@ mod html_render;
 mod links;
 mod options;
 mod page;
+mod prepare;
 // The Wave 1 vector substrate (Ola 1.2/1.3): SVG rasterization and the
 // chart/barcode SVG generators. Behind the `vector` cargo feature, on by
 // default (see Cargo.toml) -- `--no-default-features` compiles it out
@@ -44,6 +45,7 @@ pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOption
 pub use page::{Orientation, PageConfig, PageSize};
 pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
+pub use prepare::{prepare_image, PrepareFormat, PrepareOptions, Prepared};
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -415,10 +417,23 @@ pub fn render_pdf_with_assets(
     // placeholders get real bytes and object-fit:cover images get cropped
     // before the layout engine ever sees them.
     let mut prepared_images = images.clone();
-    let html = assets::prepare_assets_with_vectors(html, &mut prepared_images, &options.svg_assets);
+    let (width_mm, height_mm) = options.page.page_size_mm();
+    // What a percentage-sized image can at most occupy: the page minus margins,
+    // in CSS px (96 per inch).
+    let margin_mm = options.page.margin_mm;
+    let px_per_mm = 96.0 / 25.4;
+    let page_bound = (
+        f64::from((width_mm - 2.0 * margin_mm).max(1.0)) * px_per_mm,
+        f64::from((height_mm - 2.0 * margin_mm).max(1.0)) * px_per_mm,
+    );
+    let html = assets::prepare_assets_with_vectors(
+        html,
+        &mut prepared_images,
+        &options.svg_assets,
+        Some(page_bound),
+    );
     let html = html.as_str();
 
-    let (width_mm, height_mm) = options.page.page_size_mm();
     // header_text/footer_text/show_page_numbers/skip_first_page are wired
     // through exactly as printpdf's own API declares them, but currently
     // render nothing -- see `RenderOptions::header_text`'s doc comment for
@@ -539,18 +554,36 @@ pub fn render_pdf_with_assets(
     Ok(doc.save(&save_options, &mut save_warnings))
 }
 
+/// The per-image budget, in *uncompressed* bytes, above which printpdf shrinks
+/// an image when it saves the document.
+///
+/// printpdf's own default is 2MB. That is the size of the decoded pixels, not of
+/// the file: an RGB picture of 724x965 already reaches it, so every photograph
+/// in a document was cut to about 0.7 megapixels no matter how large it is
+/// drawn (a full-width photo came out at roughly 110 ppi), by a
+/// nearest-neighbour resample at that. pdfcn's own asset pass has already limited
+/// each image to what its box can use (about 300 ppi) and to 4096 pixels a side,
+/// which is 48MB decoded at the very most, so this budget only has to stay out of
+/// the way. The file stays small because photographs are still written as JPEG.
+/// A caller who wants the old, tighter budget sets `max_size` (`--image-max-size`).
+const DEFAULT_MAX_IMAGE_BYTES: &str = "64MB";
+
 /// Maps pdfcn's own [`ImageOptimization`] to printpdf's
 /// `ImageOptimizationOptions`/`ImageCompression`. Always returns a concrete
 /// value, falling back to printpdf's own per-field defaults (quality 0.85,
-/// a 2MB cap, format auto -- compression that's already on) for whichever
-/// fields the caller left unset, `opts: None` included: passing `None`
-/// straight through to `PdfSaveOptions.image_optimization` would disable
-/// image re-encoding entirely rather than leave it at its default, which is
-/// exactly the regression a golden-snapshot diff caught while wiring this.
+/// format auto -- compression that's already on) for whichever fields the
+/// caller left unset, `opts: None` included -- except the size budget, see
+/// [`DEFAULT_MAX_IMAGE_BYTES`]. Passing `None` straight through to
+/// `PdfSaveOptions.image_optimization` would disable image re-encoding entirely
+/// rather than leave it at its default, which is exactly the regression a
+/// golden-snapshot diff caught while wiring this.
 fn to_printpdf_image_optimization(
     opts: Option<&ImageOptimization>,
 ) -> printpdf::ImageOptimizationOptions {
-    let defaults = printpdf::ImageOptimizationOptions::default();
+    let defaults = printpdf::ImageOptimizationOptions {
+        max_image_size: Some(DEFAULT_MAX_IMAGE_BYTES.to_string()),
+        ..printpdf::ImageOptimizationOptions::default()
+    };
     let Some(opts) = opts else { return defaults };
     printpdf::ImageOptimizationOptions {
         quality: opts.quality.or(defaults.quality),
@@ -783,9 +816,25 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn image_optimization_none_keeps_printpdfs_own_default() {
+    fn image_optimization_none_keeps_printpdfs_own_defaults_except_the_size_budget() {
         let mapped = to_printpdf_image_optimization(None);
-        assert_eq!(mapped, printpdf::ImageOptimizationOptions::default());
+        let printpdf_default = printpdf::ImageOptimizationOptions::default();
+        assert_eq!(mapped.quality, printpdf_default.quality);
+        assert_eq!(mapped.format, printpdf_default.format);
+        assert_eq!(mapped.auto_optimize, printpdf_default.auto_optimize);
+        // printpdf's 2MB of decoded pixels would cut every photo to ~0.7 MP.
+        assert_eq!(mapped.max_image_size.as_deref(), Some("64MB"));
+        assert_ne!(mapped.max_image_size, printpdf_default.max_image_size);
+    }
+
+    #[test]
+    fn an_explicit_size_budget_still_wins() {
+        let opts = ImageOptimization {
+            max_size: Some("300kb".into()),
+            ..ImageOptimization::default()
+        };
+        let mapped = to_printpdf_image_optimization(Some(&opts));
+        assert_eq!(mapped.max_image_size.as_deref(), Some("300kb"));
     }
 
     #[test]
@@ -797,7 +846,7 @@ mod tests {
         let mapped = to_printpdf_image_optimization(Some(&opts));
         let defaults = printpdf::ImageOptimizationOptions::default();
         assert_eq!(mapped.quality, Some(0.5));
-        assert_eq!(mapped.max_image_size, defaults.max_image_size);
+        assert_eq!(mapped.max_image_size.as_deref(), Some("64MB"));
         assert_eq!(mapped.auto_optimize, defaults.auto_optimize);
     }
 

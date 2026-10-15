@@ -75,8 +75,10 @@ pub struct BuildArgs {
     /// 0.85). Compression is already on; this only tunes it.
     #[arg(long)]
     image_quality: Option<f32>,
-    /// Size budget per embedded image, e.g. "300kb" or "2MB" (printpdf's
-    /// own default: "2MB")
+    /// Budget for an embedded image's decoded size (pixels, not the file), e.g.
+    /// "300kb" or "2MB": larger images are shrunk to fit. Default "64MB"; a small
+    /// budget makes smaller PDFs at the cost of sharpness (printpdf's own
+    /// default of "2MB" cuts a photo to about 0.7 megapixels)
     #[arg(long)]
     image_max_size: Option<String>,
     /// Force every embedded image to greyscale before compressing
