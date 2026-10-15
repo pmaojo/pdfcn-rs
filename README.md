@@ -332,18 +332,27 @@ The live demo (`index.html`) loads the same ones in its editor.
 
 ## Known limitations
 
-- **`gap` works** in flex rows, flex columns and grids (checked with bordered
-  boxes). Its sibling `space-x-*` / `space-y-*` is *not* implemented: use `gap-*`
-  or margins on the items.
+- **`gap` and `space-x-*` / `space-y-*` work** (flex rows, flex columns, grids;
+  `space-y-*` also on a plain block container). They are applied as margins on
+  the children, so a child that already sets its own margin keeps it.
+- **Arbitrary values** (`w-[220px]`, `bg-[#0f766e]`, `bg-[rgb(15,118,110)]`,
+  `w-[calc(100%-2rem)]`, `grid-cols-[1fr_2fr]`, `font-[600]`, `tracking-[0.05em]`)
+  go in a `class="..."` attribute, **not** in the `.dotted` shorthand, which stops
+  at the `[`: write `%div(class="w-[220px] p-2")`, not `.w-[220px].p-2`.
+- **`list-none`** removes the markers and the indent; `list-disc`,
+  `list-decimal`, `list-inside` and `list-outside` work on `ul` and `ol`.
 - **Utilities that resolve to nothing are listed, not silently dropped:** the
-  build prints them, and `--strict` makes them an error. Among the common
-  Tailwind classes the notable gaps are `list-none` / `list-disc` /
-  `list-decimal` (lists get default markers but cannot change them), `float-*`,
-  `columns-*`, `order-*`, `rounded-none`, `shadow-none`, `tabular-nums`,
-  `line-clamp-*`, `underline-offset-*`, `decoration-*`, and arbitrary values that
-  need a function (`bg-[rgb(...)]`, `w-[calc(...)]`, `grid-cols-[...]`).
-  Variants that cannot apply to a PDF (`hover:`, `md:`, `dark:`) are dropped by
-  design.
+  build prints them, and `--strict` makes them an error. Classes that only matter
+  on screen (`cursor-*`, `select-*`, `pointer-events-*`, `transition-*`,
+  `animate-*`...) are accepted without a warning. Common Tailwind classes that are
+  still not rendered, because the layout engine ignores the CSS they would need:
+  `order-*`, `overline`, `underline-offset-*`, `decoration-*`, `tabular-nums`,
+  `line-clamp-*`, `blur`/`backdrop-blur`, `mix-blend-*`, `shadow-inner` and
+  `sr-only`. Variants that cannot apply to a PDF (`hover:`, `md:`, `dark:`) are
+  dropped by design.
+- **A percentage width inside a grid cell** is computed against a larger box than
+  the cell (`w-full` and `w-[calc(100%-2rem)]` can overflow it); give grid items
+  an explicit width, or avoid `%` there.
 - **`.absolute` + `inline-flex` (i.e. `%Badge`).** See the two rules above.
 - **A `%Grid` row that fragments across a page boundary renders with a
   hugely inflated height** instead of the row cleanly moving to the next

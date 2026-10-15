@@ -366,6 +366,9 @@ pub fn render_html_with_theme(
         &pdfcn_styles::rewrite_text_decorations(&pdfcn_styles::rewrite_gaps(&body.into_string())),
         theme,
     );
+    // Last step, after every pass that reads utility classes: brackets in a
+    // class name would make the engine drop the rules after their selector.
+    let body_html = pdfcn_styles::encode_class_brackets(&body_html);
     let classes = pdfcn_styles::extract_classes(&body_html);
     let stylesheet = cached_stylesheet(&classes, theme);
     Ok(html_render::wrap_document_str(&body_html, &stylesheet))

@@ -227,6 +227,10 @@ struct ChildSpacing {
     cols: usize,
     /// Whether this container is a grid (column-position math applies).
     is_grid: bool,
+    /// `list-none`: the engine ignores `list-style-type: none`, but a list
+    /// item whose `display` is not `list-item` draws no marker, so each child
+    /// gets `block`.
+    list_none: bool,
 }
 
 impl ChildSpacing {
@@ -246,6 +250,13 @@ impl ChildSpacing {
     /// children (which each own their line) has no visible effect either,
     /// so requiring a row here matches reality rather than limiting it.
     fn from_classes(classes: &[&str]) -> Self {
+        Self {
+            list_none: classes.contains(&"list-none"),
+            ..Self::spacing_from_classes(classes)
+        }
+    }
+
+    fn spacing_from_classes(classes: &[&str]) -> Self {
         let mut gap = None;
         let mut gap_x = None;
         let mut gap_y = None;
@@ -288,6 +299,7 @@ impl ChildSpacing {
                     v: Some(k),
                     cols: 1,
                     is_grid: false,
+                    list_none: false,
                 },
                 None => Self::default(),
             };
@@ -298,6 +310,7 @@ impl ChildSpacing {
                 v: gap_y.or(gap),
                 cols,
                 is_grid: true,
+                list_none: false,
             }
         } else if is_col {
             Self {
@@ -305,6 +318,7 @@ impl ChildSpacing {
                 v: gap_y.or(gap).or(space_y),
                 cols: 1,
                 is_grid: false,
+                list_none: false,
             }
         } else {
             Self {
@@ -312,6 +326,7 @@ impl ChildSpacing {
                 v: None,
                 cols: 1,
                 is_grid: false,
+                list_none: false,
             }
         }
     }
@@ -324,6 +339,22 @@ impl ChildSpacing {
     /// card discount ribbon.
     fn classes_for(&self, i: usize, n: usize, child_classes: &[&str]) -> Vec<String> {
         let mut out = Vec::new();
+        if self.list_none
+            && !child_classes.iter().any(|c| {
+                matches!(
+                    *c,
+                    "block"
+                        | "flex"
+                        | "grid"
+                        | "inline"
+                        | "inline-block"
+                        | "inline-flex"
+                        | "hidden"
+                ) || c.starts_with("table")
+            })
+        {
+            out.push("block".to_string());
+        }
         if n <= 1
             || child_classes
                 .iter()
@@ -436,7 +467,7 @@ fn emit_element(s: &str, e: &Element, inject: &[String], inner_html: &str, out: 
 }
 
 /// Rewrites every flex/grid `gap-*` container (and every `space-x-*`/
-/// `space-y-*` container, grid or not) in rendered HTML so its direct
+/// `space-y-*` container, grid or not, and every `list-none` list) in rendered HTML so its direct
 /// element children carry equivalent `mr-*`/`mb-*` margin utilities — making
 /// `gap` (and `space-x`/`space-y`) work despite the layout engine ignoring
 /// the CSS declarations they'd otherwise resolve to. Markup using neither
@@ -446,7 +477,7 @@ pub fn rewrite_gaps(html: &str) -> String {
     // using neither utility (the common case) can skip the scan-and-rebuild
     // entirely. A false positive (the literal text "gap-"/"space-" in prose)
     // just falls through to the normal lossless rewrite.
-    if !html.contains("gap-") && !html.contains("space-") {
+    if !html.contains("gap-") && !html.contains("space-") && !html.contains("list-none") {
         return html.to_string();
     }
     rewrite_scope(html, &ChildSpacing::default())
@@ -654,5 +685,39 @@ mod tests {
         assert!(out.contains(r#"<div class="card m-2">A</div>"#), "{out}");
         // ...but break-inside-avoid stays put and nothing else changes.
         assert!(out.contains("break-inside-avoid"), "{out}");
+    }
+
+    #[test]
+    fn list_none_makes_every_item_a_block_so_no_marker_is_drawn() {
+        let out = rewrite_gaps(r#"<ul class="list-none"><li>a</li><li>b</li></ul>"#);
+        assert_eq!(
+            out,
+            r#"<ul class="list-none"><li class="block">a</li><li class="block">b</li></ul>"#
+        );
+        // A single item too: this is not spacing between siblings.
+        let one = rewrite_gaps(r#"<ol class="list-none"><li>a</li></ol>"#);
+        assert!(one.contains(r#"<li class="block">"#), "{one}");
+    }
+
+    #[test]
+    fn list_none_leaves_an_item_that_sets_its_own_display() {
+        let out = rewrite_gaps(
+            r#"<ul class="list-none"><li class="flex">a</li><li class="p-2">b</li></ul>"#,
+        );
+        assert!(out.contains(r#"<li class="flex">a</li>"#), "{out}");
+        assert!(out.contains(r#"<li class="p-2 block">b</li>"#), "{out}");
+    }
+
+    #[test]
+    fn list_none_combines_with_space_y() {
+        let out = rewrite_gaps(r#"<ul class="list-none space-y-2"><li>a</li><li>b</li></ul>"#);
+        assert!(out.contains(r#"<li class="block mb-2">a</li>"#), "{out}");
+        assert!(out.contains(r#"<li class="block">b</li>"#), "{out}");
+    }
+
+    #[test]
+    fn other_lists_are_untouched() {
+        let html = r#"<ul class="list-disc"><li>a</li></ul>"#;
+        assert_eq!(rewrite_gaps(html), html);
     }
 }
