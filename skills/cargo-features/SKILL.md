@@ -1,26 +1,26 @@
 ---
 name: cargo-features
-description: Build and use pdfcn-rs's vector (Charts v2, %Barcode, %Vector) and factur-x (EN 16931 invoice embedding) Cargo features, both on by default — CLI flags, function signatures, how to opt out with --no-default-features, and why they're feature-gated at all. Use when building the CLI, adding a chart/barcode to a template, or embedding a Factur-X invoice.
+description: Build and use pdfcn-rs's Cargo features — vector (Charts v2, %Barcode, %Vector, %Icon, QR as PDF vectors), factur-x (EN 16931 invoice embedding), jpeg-passthrough (photos embedded as-is) and cache (content-hash caches), all on by default — plus the PDFCN_THREADS / PDFCN_CACHE_MB environment variables, CLI flags, how to opt out with --no-default-features, and why they're feature-gated at all. Use when building the CLI, adding a chart/barcode to a template, embedding a Factur-X invoice, or tuning a long-lived process.
 ---
 
-# pdfcn-rs Cargo features: vector and factur-x
+# pdfcn-rs Cargo features: vector, factur-x, jpeg-passthrough, cache
 
 pdfcn-rs ships as the serverless `pdfcn-vercel` function, and CI enforces
-a binary-size tripwire on it (currently ~18.4MB against a 60MB
-tripwire — plenty of headroom). Two capabilities live behind named Cargo
-features rather than always-on code, but both ship **on by default**
-since neither is heavy (~1.8MB combined): a deployment that wants the
-smallest possible binary opts back out explicitly:
+a binary-size tripwire on it (~27MB with `opt-level = 3`, against a 60MB
+tripwire). Four capabilities live behind named Cargo features rather than
+always-on code, but all ship **on by default** since none is heavy: a
+deployment that wants the smallest possible binary opts back out
+explicitly:
 
 ```sh
-cargo build -p pdfcn-cli --no-default-features   # drops both vector and factur-x
+cargo build -p pdfcn-cli --no-default-features   # drops all four
 cargo test -p pdfcn-cli --no-default-features    # test this combination too
 ```
 
 Use `-p pdfcn-cli`, not `--workspace`, for the opt-out: the deployed
 `pdfcn-vercel` function and the `pdfcn-node` napi bindings each request
-`vector`/`factur-x` unconditionally on their own dependency edge (no
-opt-out for those two, by design), so a `--workspace --no-default-features`
+every feature unconditionally on their own dependency edge (no opt-out
+for those two, by design), so a `--workspace --no-default-features`
 build still ends up compiling `pdfcn-core` with both features anyway --
 Cargo unifies a shared dependency's features across every workspace
 member being built together.
@@ -43,9 +43,12 @@ surprise.
 
 ## `vector` — Charts v2, %Barcode, %Vector
 
-SVG generated in-process, rasterized to PNG at ~300dpi via `resvg` just
-before layout. See `docs/spikes/001-vector-vs-raster.md` for why
-rasterized (not vectorial via `svg2pdf`) was chosen.
+SVG generated in-process (or supplied, for `%Vector`), converted to PDF
+vectors with `svg2pdf` before layout; the layout engine places each one by
+size alone and the Form XObject replaces that slot after saving
+(`docs/spikes/004-vector-form-xobjects.md`, `006-zero-copy-and-placeholders.md`).
+Only an SVG that cannot be converted is rasterized to a ~300dpi PNG with
+`resvg`, as a fallback.
 
 ```haml
 %LineChart(values={{ monthly_revenue }} xlabels={{ months }} w="480px" h="200px")
@@ -70,6 +73,34 @@ pdfcn build charts.haml -d charts.json -o out.pdf --svg logo=logo.svg
 DataMatrix/PDF417 are deliberately NOT implemented: a subtly wrong ECC
 symbol scans sometimes, which is worse than an explicit "unsupported
 scheme" marker.
+
+## `jpeg-passthrough` — photos embedded as they are
+
+A baseline/progressive 8-bit JPEG goes into the PDF as its own file
+(`/DCTDecode`), never decoded or re-encoded: laid out by its header's size,
+spliced in after saving. CMYK, 12-bit, arithmetic-coded or EXIF-rotated
+files, and any image option asking for a re-encode (`--image-quality`,
+`--image-max-size`, greyscale, lossless), keep printpdf's own path
+(`docs/spikes/005-image-fast-path.md`).
+
+## `cache` — content-hash caches for warm processes
+
+Parsed templates, built stylesheets, converted SVGs and prepared (cropped,
+rotated, shrunk) photos are kept per process, keyed by a hash of what went
+in; each cache has a byte budget with LRU eviction. A changed input is a
+different key, so nothing is ever stale. Helps `pdfcn dev`, servers and
+batches; a one-shot `pdfcn build` pays one hash per input
+(`docs/spikes/008-parallel-and-caches.md`).
+
+## Environment variables (no feature needed)
+
+- `PDFCN_THREADS=N` — threads for per-image work in one render (header
+  reads, crops, SVG conversion). Default: the machine's parallelism. The
+  output is byte-identical whatever the value. Library callers that already
+  spread documents over threads wrap each render in
+  `pdfcn_core::with_threads(1, || ...)` (the batch endpoint does).
+- `PDFCN_CACHE_MB=N` — budget of each `cache` cache, in MB (default 64;
+  `0` disables caching).
 
 ## `factur-x` — EN 16931/CII invoice embedding
 

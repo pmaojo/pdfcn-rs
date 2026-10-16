@@ -72,12 +72,15 @@ pub(crate) fn take<'a>(
     images: &mut Images<'a>,
     placeholders: &mut BTreeMap<String, (u32, u32)>,
 ) -> BTreeMap<String, Jpeg<'a>> {
-    let eligible: Vec<(String, JpegInfo)> = images
+    let entries: Vec<(&String, &Cow<'a, [u8]>)> = images.iter().collect();
+    // Reading a header is independent per photo: on several threads.
+    let infos = crate::parallel::map(&entries, |(_, bytes)| {
+        sniff(bytes).filter(|_| !has_orientation(bytes))
+    });
+    let eligible: Vec<(String, JpegInfo)> = entries
         .iter()
-        .filter_map(|(src, bytes)| {
-            let info = sniff(bytes)?;
-            (!has_orientation(bytes)).then(|| (src.clone(), info))
-        })
+        .zip(infos)
+        .filter_map(|((src, _), info)| Some(((*src).clone(), info?)))
         .collect();
     let mut taken = BTreeMap::new();
     for (src, info) in eligible {

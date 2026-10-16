@@ -28,6 +28,7 @@ use lopdf::{dictionary, Document, Object, Stream};
 use crate::assets::{Images, VectorSource};
 
 /// An SVG converted by svg2pdf, checked to have everything [`import`] reads.
+#[derive(Clone)]
 pub(crate) struct Form {
     doc: Document,
 }
@@ -35,38 +36,97 @@ pub(crate) struct Form {
 /// Converts every vector source before layout. Returns the Forms by
 /// placeholder src; each converted placeholder without a PNG of its own is
 /// recorded in `placeholders` at the size its PNG would have had, and each one
-/// that failed to convert is rasterized into `images` instead.
+/// that failed to convert is rasterized into `images` instead. The SVGs are
+/// parsed and converted on several threads (`parallel`); the results are
+/// recorded in `src` order, so the outcome does not depend on the threads.
 pub(crate) fn prepare(
     sources: &BTreeMap<String, VectorSource>,
     images: &mut Images<'_>,
     placeholders: &mut BTreeMap<String, (u32, u32)>,
 ) -> BTreeMap<String, Form> {
+    let jobs: Vec<(&String, &VectorSource, bool)> = sources
+        .iter()
+        .map(|(src, source)| (src, source, images.contains_key(src)))
+        .collect();
+    let outcomes = crate::parallel::map(&jobs, |(_, source, has_png)| resolve(source, *has_png));
     let mut forms = BTreeMap::new();
-    for (src, source) in sources {
-        let Some(tree) = crate::raster::parse_svg(&source.svg) else {
-            continue;
-        };
-        let form = convert(&tree);
-        if let Some((w, h)) = source.raster_box {
-            if images.contains_key(src) {
-                // Supplied by the caller under the placeholder's own src.
-            } else if form.is_some() {
-                let Some((_, pw, ph)) = crate::raster::raster_size(&tree, w, h) else {
-                    continue;
-                };
-                placeholders.insert(src.clone(), (pw, ph));
-            } else {
-                if let Some(png) = crate::raster::tree_to_png(&tree, w, h) {
-                    images.insert(src.clone(), png.into());
-                }
-                continue;
-            }
+    for ((src, _, _), outcome) in jobs.into_iter().zip(outcomes) {
+        if let Some(size) = outcome.size {
+            placeholders.insert(src.clone(), size);
         }
-        if let Some(form) = form {
+        if let Some(png) = outcome.png {
+            images.insert(src.clone(), png.into());
+        }
+        if let Some(form) = outcome.form {
             forms.insert(src.clone(), form);
         }
     }
     forms
+}
+
+/// What [`prepare`] records for one source.
+#[derive(Clone)]
+struct Outcome {
+    form: Option<Form>,
+    size: Option<(u32, u32)>,
+    png: Option<Vec<u8>>,
+}
+
+/// Converted sources, by SVG text, box and `has_png` (see `cache`): a warm
+/// process converts a logo once, not once per document.
+#[cfg(feature = "cache")]
+static OUTCOMES: crate::cache::Shared<Outcome> = crate::cache::Shared::new();
+
+/// [`convert_one`], through the cache when the `cache` feature is on.
+fn resolve(source: &VectorSource, has_png: bool) -> Outcome {
+    #[cfg(feature = "cache")]
+    {
+        let raster_box = source
+            .raster_box
+            .map(|(w, h)| (w.map(f64::to_bits), h.map(f64::to_bits)));
+        let key = crate::cache::key((&source.svg, raster_box, has_png), source.svg.len());
+        let outcome = OUTCOMES.get_or_compute(
+            key,
+            || convert_one(source, has_png),
+            // The converted document is a few times the SVG's text.
+            |o| source.svg.len().saturating_mul(4) + o.png.as_ref().map_or(0, Vec::len),
+        );
+        Outcome::clone(&outcome)
+    }
+    #[cfg(not(feature = "cache"))]
+    convert_one(source, has_png)
+}
+
+/// One source on its own: the Form, and either the size to lay it out at
+/// or (it did not convert) its PNG. `has_png`: the caller supplied an image
+/// under the placeholder's own src, which is kept as it is.
+fn convert_one(source: &VectorSource, has_png: bool) -> Outcome {
+    let none = Outcome {
+        form: None,
+        size: None,
+        png: None,
+    };
+    let Some(tree) = crate::raster::parse_svg(&source.svg) else {
+        return none;
+    };
+    let form = convert(&tree);
+    let Some((w, h)) = source.raster_box.filter(|_| !has_png) else {
+        return Outcome { form, ..none };
+    };
+    if form.is_some() {
+        let Some((_, pw, ph)) = crate::raster::raster_size(&tree, w, h) else {
+            return none;
+        };
+        return Outcome {
+            form,
+            size: Some((pw, ph)),
+            png: None,
+        };
+    }
+    Outcome {
+        png: crate::raster::tree_to_png(&tree, w, h),
+        ..none
+    }
 }
 
 /// svg2pdf's one-page document for `tree`, if it has a page with a usable

@@ -51,7 +51,7 @@ path = "src/lib.rs"
 # pull vector/factur-x in even if some other crate's build asked for
 # `--no-default-features` -- this deployed function wants them
 # unconditionally, not by accident of unification.
-pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x", "jpeg-passthrough"] }
+pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x", "jpeg-passthrough", "cache"] }
 pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
 http = { version = "1", default-features = false }
