@@ -128,13 +128,8 @@ pub(crate) fn dct_stream(jpeg: Jpeg<'_>) -> Stream {
 /// the tag); this is the belt to that pass's braces, since a PDF viewer never
 /// reads the tag.
 fn has_orientation(bytes: &[u8]) -> bool {
-    use image::ImageDecoder;
-    image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_decoder().ok())
-        .and_then(|mut d| d.orientation().ok())
-        .is_some_and(|o| o != image::metadata::Orientation::NoTransforms)
+    crate::jpeg_header::read(bytes)
+        .is_some_and(|h| h.orientation() != image::metadata::Orientation::NoTransforms)
 }
 
 /// Reads a JPEG's frame header: `Some` only for an 8-bit, 1- or 3-component,

@@ -117,6 +117,9 @@ resvg = { version = "0.45", default-features = false, features = ["text"] }
 # No defaults (`chrono`, `jiff`, `rayon`, `time`): printpdf asks for none of
 # them and nothing here uses them (docs/spikes/009).
 lopdf = { version = "0.44", default-features = false }
+# Already in the tree through lopdf (same version): pdfcn-core compresses the
+# streams of converted SVGs itself, with one reused compressor (spike 010).
+flate2 = "1.1"
 # SVG -> PDF vector graphics for the `vector` feature: every SVG placeholder
 # lands in the PDF as a Form XObject instead of a PNG (see
 # docs/spikes/004-vector-form-xobjects.md). 0.13 is the release built on the
@@ -163,15 +166,17 @@ panic = "abort"
 strip = true
 
 # Forks carrying fixes that are proposed upstream (see docs/spikes/003-style-coverage.md):
-#  * printpdf: paint `box-shadow` + deterministic resource names (pmaojo/printpdf, branch pdfcn)
-#  * azul: keep `opacity` across page breaks + feature gating (pmaojo/azul, branch pdfcn)
+#  * printpdf: paint `box-shadow` + deterministic resource names; builtin fonts kept
+#    uncompressed, their coverage read once per process (pmaojo/printpdf, branch pdfcn)
+#  * azul: keep `opacity` across page breaks + feature gating; read a face's style
+#    from head/OS/2 instead of re-parsing the whole font (pmaojo/azul, branch pdfcn)
 # Pinned by commit so builds are reproducible; the three azul crates must come
 # from the same revision. Drop each entry once the fix is released upstream.
 [patch.crates-io]
-printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "59f591eb4b2fcf40f5786c3773b00c1739de2029" }
-azul-layout = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }
-azul-core = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }
-azul-css = { git = "https://github.com/pmaojo/azul", rev = "0818e7bb0df5754567e02dc0d8bad0529b0c2b19" }
+printpdf = { git = "https://github.com/pmaojo/printpdf", rev = "797d515ace48771125f8844293c94f7d5e54151d" }
+azul-layout = { git = "https://github.com/pmaojo/azul", rev = "cf361ea8d3ad01a2720ebf1fbcb79c54f90f87c3" }
+azul-core = { git = "https://github.com/pmaojo/azul", rev = "cf361ea8d3ad01a2720ebf1fbcb79c54f90f87c3" }
+azul-css = { git = "https://github.com/pmaojo/azul", rev = "cf361ea8d3ad01a2720ebf1fbcb79c54f90f87c3" }
 
 # `cargo build --profile profiling -p pdfcn-cli`: the release build with line
 # tables and symbols kept, for callgrind/massif (scripts/bench/README.md).

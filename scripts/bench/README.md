@@ -81,6 +81,17 @@ Instrucciones por función (inclusivas), estables entre ejecuciones a
 diferencia del tiempo. Es como se atribuyó el coste en los spikes 005 y en la
 fase E (cuánto queda dentro de `azul-*`).
 
+Reparto por crate, contando cada instrucción una vez (coste propio):
+
+```sh
+callgrind_annotate --auto=no --threshold=99.9 /tmp/c.out > /tmp/c.txt
+python3 -I scripts/bench/callgrind_crates.py /tmp/c.txt
+```
+
+Lo que cae en libc (`memcpy`, `memset`, `malloc`) se atribuye a quien lo
+llama con `callgrind_annotate --inclusive=yes --tree=caller`; así se
+encontraron las fugas del spike 010.
+
 ## 5. Micro-mediciones de una sola pieza
 
 Cuando una pieza se puede aislar (la evaluación de plantillas, por ejemplo),

@@ -5,6 +5,7 @@ mod data;
 mod error;
 mod fs;
 mod html_render;
+mod jpeg_header;
 mod links;
 mod options;
 mod page;

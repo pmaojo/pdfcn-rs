@@ -131,21 +131,71 @@ fn convert_one(source: &VectorSource, has_png: bool) -> Outcome {
 
 /// svg2pdf's one-page document for `tree`, if it has a page with a usable
 /// media box, resources and content.
+///
+/// svg2pdf writes it uncompressed and [`deflate_streams`] compresses it here,
+/// once: this runs on the SVG's own thread (`prepare`), and [`import`] then
+/// moves the compressed content as it is. Letting svg2pdf compress meant a
+/// fresh compressor per stream, an inflate to read the page's content back and
+/// a second deflate at level 9 on import -- 9 % of a 100-SVG catalog
+/// (docs/spikes/010).
 fn convert(tree: &resvg::usvg::Tree) -> Option<Form> {
     let options = svg2pdf::ConversionOptions {
         // Text becomes outlines: no per-SVG font subset to embed, and the
         // labels look exactly as the PNG showed them.
         embed_text: false,
+        compress: false,
         ..Default::default()
     };
     let bytes = svg2pdf::to_pdf(tree, options, svg2pdf::PageOptions::default()).ok()?;
-    let doc = Document::load_mem(&bytes).ok()?;
+    let mut doc = Document::load_mem(&bytes).ok()?;
     page_parts(&doc)?;
+    deflate_streams(&mut doc);
     Some(Form { doc })
 }
 
-/// The first page's media box, resources and content stream.
-fn page_parts(doc: &Document) -> Option<([f32; 4], Object, Vec<u8>)> {
+/// Flate-compresses every stream of `doc` that has no filter yet, keeping
+/// the raw bytes where compression would not pay -- as
+/// `lopdf::Stream::compress` decides, at the default level. One compressor
+/// per thread, reset between streams: a new one zeroes some 300 KB of state,
+/// which per SVG was 4 % of a 100-SVG catalog.
+fn deflate_streams(doc: &mut Document) {
+    use std::cell::RefCell;
+    use std::io::Write;
+    type Encoder = flate2::write::ZlibEncoder<Vec<u8>>;
+    fn fresh() -> Encoder {
+        Encoder::new(Vec::new(), flate2::Compression::default())
+    }
+    thread_local! {
+        static ENCODER: RefCell<Encoder> = RefCell::new(fresh());
+    }
+    ENCODER.with_borrow_mut(|encoder| {
+        for object in doc.objects.values_mut() {
+            let Object::Stream(stream) = object else {
+                continue;
+            };
+            if !stream.allows_compression || stream.dict.has(b"Filter") {
+                continue;
+            }
+            let compressed = encoder
+                .write_all(&stream.content)
+                .and_then(|()| encoder.reset(Vec::new()));
+            match compressed {
+                Ok(compressed) if compressed.len() + 19 < stream.content.len() => {
+                    stream.dict.set("Filter", "FlateDecode");
+                    stream.set_content(compressed);
+                }
+                Ok(_) => {}
+                // Best effort: an uncompressed stream is still valid. A failed
+                // write leaves the encoder mid-stream, so start a fresh one.
+                Err(_) => *encoder = fresh(),
+            }
+        }
+    });
+}
+
+/// The first page's media box, resources and content stream (the stream
+/// object itself, filters and all, so nothing is decoded to read it).
+fn page_parts(doc: &Document) -> Option<([f32; 4], Object, Stream)> {
     let page_id = *doc.get_pages().get(&1)?;
     let page = doc.get_dictionary(page_id).ok()?;
     let media_box = page.get(b"MediaBox").ok()?.as_array().ok()?;
@@ -160,7 +210,13 @@ fn page_parts(doc: &Document) -> Option<([f32; 4], Object, Vec<u8>)> {
         return None;
     }
     let resources = page.get(b"Resources").ok()?.clone();
-    Some(([x0, y0, x1, y1], resources, doc.get_page_content(page_id)))
+    let content = match page.get(b"Contents").ok()? {
+        // What svg2pdf writes: one content stream.
+        Object::Reference(id) => doc.get_object(*id).ok()?.as_stream().ok()?.clone(),
+        // Anything else (an array of streams): joined, decoded.
+        _ => Stream::new(dictionary! {}, doc.get_page_content(page_id)),
+    };
+    Some(([x0, y0, x1, y1], resources, content))
 }
 
 /// Imports `form`'s objects into `doc` and returns a Form XObject drawing it
@@ -175,21 +231,27 @@ pub(crate) fn import(doc: &mut Document, form: Form) -> Option<Stream> {
     doc.max_id = doc.max_id.max(svg_doc.max_id);
     doc.objects.append(&mut svg_doc.objects);
 
-    let mut stream = Stream::new(
-        dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Form",
-            "BBox" => vec![x0.into(), y0.into(), x1.into(), y1.into()],
-            "Matrix" => vec![
-                (1.0 / w).into(), 0.into(), 0.into(), (1.0 / h).into(),
-                (-x0 / w).into(), (-y0 / h).into(),
-            ],
-            "Resources" => resources,
-        },
-        content,
-    );
-    // Best effort: an uncompressed content stream is still valid.
-    let _ = stream.compress();
+    let mut dict = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Form",
+        "BBox" => vec![x0.into(), y0.into(), x1.into(), y1.into()],
+        "Matrix" => vec![
+            (1.0 / w).into(), 0.into(), 0.into(), (1.0 / h).into(),
+            (-x0 / w).into(), (-y0 / h).into(),
+        ],
+        "Resources" => resources,
+    };
+    // The content keeps its encoding: same bytes, same filter.
+    for key in [&b"Filter"[..], b"DecodeParms"] {
+        if let Ok(value) = content.dict.get(key) {
+            dict.set(key, value.clone());
+        }
+    }
+    let mut stream = Stream::new(dict, content.content);
+    if !stream.dict.has(b"Filter") {
+        // Best effort: an uncompressed content stream is still valid.
+        let _ = stream.compress();
+    }
     Some(stream)
 }
 
