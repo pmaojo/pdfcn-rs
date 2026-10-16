@@ -34,7 +34,9 @@ Qué hace, exactamente:
   Es lo que mide `/usr/bin/time -v` («Maximum resident set size»), sin
   necesitarlo instalado.
 
-Reglas para comparar: mismo contenedor, mismo número de núcleos (`nproc`),
+Reglas para comparar: cuando dos medianas se solapan (este contenedor oscila
+±25 % entre tandas), decide el conteo de instrucciones de callgrind (sección
+4), que es idéntico entre ejecuciones. Además: mismo contenedor, mismo número de núcleos (`nproc`),
 nada más compilando a la vez, mismo `-n`. Para comparar dos versiones,
 guarda el binario de antes (`cp target/release/pdfcn target/baseline/`) y
 ejecuta las dos en la misma sesión. Diferencias por debajo de ~10 % en los
