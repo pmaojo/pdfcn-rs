@@ -42,7 +42,6 @@ clap = { workspace = true }
 notify = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
-serde_json = { workspace = true }
 anyhow = { workspace = true }
 # Blocking client, opt-in only (the `build --fetch-remote-images` flag):
 # outbound network access belongs to this developer-facing CLI, never to

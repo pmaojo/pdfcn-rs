@@ -56,7 +56,6 @@ pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
 http = { version = "1", default-features = false }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -95,20 +94,29 @@ serde_json = "1"
 serde_yaml = "0.9"
 minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
 maud = "0.26"
-lightningcss = "1.0.0-alpha.60"
+# Only parse + minify + print are used: its defaults (`bundler` with dashmap
+# and rayon, `nodejs`, `sourcemap` with rkyv and old hashbrown/ahash) are not
+# (docs/spikes/009).
+lightningcss = { version = "1.0.0-alpha.60", default-features = false }
 printpdf = { version = "0.12", default-features = false, features = ["html", "png", "jpeg"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # SVG -> raster rendering for the opt-in `vector` substrate (see
 # pdfcn-core's `vector` cargo feature). Never in the default build: the
 # Vercel function must stay byte-for-byte at its current size.
-resvg = "0.45"
+# `text` only: pdfcn registers its own embedded fonts (no `system-fonts`,
+# `memmap-fonts`), and this raster is only the fallback for an SVG svg2pdf
+# cannot convert, so `raster-images` (a second gif/zune-jpeg/webp stack) is
+# not worth carrying (docs/spikes/009).
+resvg = { version = "0.45", default-features = false, features = ["text"] }
 # Low-level PDF object surgery for the opt-in `factur-x` substrate (see
 # pdfcn-core's `factur-x` cargo feature): printpdf has no embedded-file/
 # attachment support at all, so the Factur-X XML gets spliced in as a
 # post-processing pass over printpdf's own output. Pinned to the same
 # 0.44 printpdf already resolves transitively, so this adds no new crate
 # to the dependency tree, only a direct edge to one already being built.
-lopdf = "0.44"
+# No defaults (`chrono`, `jiff`, `rayon`, `time`): printpdf asks for none of
+# them and nothing here uses them (docs/spikes/009).
+lopdf = { version = "0.44", default-features = false }
 # SVG -> PDF vector graphics for the `vector` feature: every SVG placeholder
 # lands in the PDF as a Form XObject instead of a PNG (see
 # docs/spikes/004-vector-form-xobjects.md). 0.13 is the release built on the
@@ -125,7 +133,6 @@ spki = "0.7"
 pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 rsa = { version = "0.9", features = ["sha2"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-ecdsa = { version = "0.16", features = ["der", "signing"] }
 sha2 = "0.10"
 signature = "2"
 p12-keystore = "0.1"
@@ -140,7 +147,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net"] }
 anyhow = "1"
 vercel_runtime = "2"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["full"] }
 base64 = "0.22"
 napi = { version = "2", default-features = false, features = ["napi4"] }
 napi-derive = "2"
