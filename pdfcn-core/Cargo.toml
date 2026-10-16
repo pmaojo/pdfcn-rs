@@ -84,6 +84,9 @@ cmpv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Test-only: the previous stylesheet minifier, kept to prove the current one
+# draws the same (tests/css_equivalence.rs). Never in a built binary.
+lightningcss = { workspace = true }
 
 # `harness = false` hands argument parsing to criterion. `test = false` keeps
 # `cargo test` from also running the bench binary in its one-iteration test

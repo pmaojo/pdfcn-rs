@@ -22,7 +22,7 @@ process spawning — built to run inside a Vercel Function / AWS Lambda.
 | `pdfcn-formats` | HTML, Markdown, JSON/YAML block-tree and Typst/LaTeX-subset front-ends, all lowering to the same AST |
 | `pdfcn-template` | `{{ interpolation }}`, `- for`, `- if`, `- include` (`minijinja` as an expression engine) |
 | `pdfcn-components` | `%InvoiceTable`, `%Badge`, `%Card`, ... registry, expanding to `maud` markup |
-| `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
+| `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (own minifier, no dependencies) |
 | `pdfcn-core` | Orchestrates the pipeline; HTML → PDF via `printpdf`'s pure-Rust HTML/CSS layout engine |
 | `pdfcn-cli` | `pdfcn new / add / build / dev` |
 | `api/generate-pdf.rs` | `vercel_runtime` handler for `/api/generate-pdf`, auto-built by Vercel's built-in Rust runtime |
