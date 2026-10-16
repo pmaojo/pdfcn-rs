@@ -570,13 +570,7 @@ pub(crate) fn decode_oriented(bytes: &[u8]) -> Option<image::DynamicImage> {
 
 /// The EXIF orientation recorded in `bytes`, without decoding any pixels.
 fn exif_orientation(bytes: &[u8]) -> image::metadata::Orientation {
-    use image::ImageDecoder;
-    image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_decoder().ok())
-        .and_then(|mut d| d.orientation().ok())
-        .unwrap_or(image::metadata::Orientation::NoTransforms)
+    crate::jpeg_header::orientation(bytes)
 }
 
 /// Pass 0: turns every image whose EXIF orientation is not "as stored" into
@@ -766,15 +760,9 @@ const MIN_WORTHWHILE_SHRINK: f64 = 0.5;
 /// applied), read from the header alone: no pixel is decoded.
 pub(crate) fn oriented_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     use image::metadata::Orientation;
-    use image::ImageDecoder;
-    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()?
-        .into_decoder()
-        .ok()?;
-    let (w, h) = decoder.dimensions();
+    let ((w, h), orientation) = crate::jpeg_header::dimensions_and_orientation(bytes)?;
     let swapped = matches!(
-        decoder.orientation().unwrap_or(Orientation::NoTransforms),
+        orientation,
         Orientation::Rotate90
             | Orientation::Rotate270
             | Orientation::Rotate90FlipH
