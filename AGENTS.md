@@ -17,7 +17,8 @@ cargo fmt --all --check
 
 `vector` (Charts v2/`%Barcode`/`%Vector`), `factur-x` (invoice
 embedding), `jpeg-passthrough` (photos embedded as-is) and `cache`
-(content-hash caches) are on by default -- but still real Cargo features (see
+(content-hash caches) are on by default, and `hyphenation` (CSS
+`hyphens: auto`, ~3 MB of dictionaries) is off -- but all are real Cargo features (see
 "Cargo features" below), so also test with them explicitly off, since a
 change gated behind `#[cfg(feature = "...")]` is only proven correct in
 both states:

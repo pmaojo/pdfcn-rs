@@ -24,6 +24,8 @@ factur-x = ["pdfcn-core/factur-x"]
 jpeg-passthrough = ["pdfcn-core/jpeg-passthrough"]
 # Content-hash caches for warm processes (`pdfcn dev`); see pdfcn-core.
 cache = ["pdfcn-core/cache"]
+# CSS `hyphens: auto` (~3 MB of dictionaries); off by default, see pdfcn-core.
+hyphenation = ["pdfcn-core/hyphenation"]
 # PAdES signing of the output (`pdfcn build --sign-p12 ...`). Opt-in: it pulls
 # in the RustCrypto stack, which the default binary does not carry.
 sign = ["pdfcn-core/sign"]

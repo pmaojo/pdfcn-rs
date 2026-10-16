@@ -92,6 +92,15 @@ different key, so nothing is ever stale. Helps `pdfcn dev`, servers and
 batches; a one-shot `pdfcn build` pays one hash per input
 (`docs/spikes/008-parallel-and-caches.md`).
 
+## `hyphenation` — CSS `hyphens: auto` (off by default)
+
+Automatic hyphenation with the dictionaries of ~70 languages embedded
+(~3 MB). No utility class or example uses it, so the default build and the
+serverless function leave it out; `hyphens: auto` in author CSS is then laid
+out unhyphenated, never an error. Turn it on with `cargo build -p pdfcn-cli
+--features hyphenation` (or `features = ["hyphenation"]` on the
+`pdfcn-core` dependency).
+
 ## Environment variables (no feature needed)
 
 - `PDFCN_THREADS=N` — threads for per-image work in one render (header

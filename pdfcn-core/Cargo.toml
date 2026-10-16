@@ -44,6 +44,13 @@ jpeg-passthrough = ["dep:lopdf"]
 # `--no-default-features` renders everything from scratch every time.
 cache = []
 
+# CSS `hyphens: auto`: automatic hyphenation with the dictionaries of ~70
+# languages embedded (~3 MB). Off by default -- no utility or example uses it,
+# and the serverless binary carries it otherwise; without it, `hyphens: auto`
+# text is laid out unhyphenated, never an error (docs/spikes/009). Enable it
+# for documents whose author CSS hyphenates.
+hyphenation = ["printpdf/text_layout_hyphenation"]
+
 # PAdES (ETSI.CAdES.detached) signing of a finished PDF with an X.509
 # certificate: RSA or ECDSA P-256, from PEM or PKCS#12. Opt-in, not in
 # `default`, so the default build and the Vercel function do not grow.

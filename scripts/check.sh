@@ -29,6 +29,7 @@ run cargo test -p pdfcn-core --no-default-features --no-fail-fast
 run cargo test -p pdfcn-cli --no-default-features --no-fail-fast
 run cargo clippy --workspace --all-targets -- -D warnings
 run cargo clippy -p pdfcn-core -p pdfcn-components --all-targets --no-default-features -- -D warnings
+run cargo clippy -p pdfcn-core --all-targets --features hyphenation,sign -- -D warnings
 run cargo fmt --all --check
 if [ "${1:-}" = "--size" ]; then
   # Never with --workspace: resolver 2 would unify features across packages.
