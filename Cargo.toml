@@ -56,7 +56,6 @@ pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
 http = { version = "1", default-features = false }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -134,7 +133,6 @@ spki = "0.7"
 pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 rsa = { version = "0.9", features = ["sha2"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-ecdsa = { version = "0.16", features = ["der", "signing"] }
 sha2 = "0.10"
 signature = "2"
 p12-keystore = "0.1"
@@ -149,7 +147,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net"] }
 anyhow = "1"
 vercel_runtime = "2"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["full"] }
 base64 = "0.22"
 napi = { version = "2", default-features = false, features = ["napi4"] }
 napi-derive = "2"

@@ -2527,7 +2527,6 @@ dependencies = [
  "notify",
  "pdfcn-core",
  "reqwest",
- "serde_json",
  "tokio",
 ]
 
@@ -2549,7 +2548,6 @@ dependencies = [
  "const-oid 0.9.6",
  "criterion",
  "der",
- "ecdsa",
  "image",
  "lopdf",
  "maud",
@@ -2565,7 +2563,6 @@ dependencies = [
  "qrcodegen",
  "resvg",
  "rsa",
- "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
@@ -2631,7 +2628,6 @@ dependencies = [
  "base64",
  "http",
  "http-body-util",
- "hyper",
  "lopdf",
  "pdfcn-core",
  "pdfcn-parser",
