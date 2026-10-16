@@ -97,3 +97,46 @@ fn a_block_link_covers_its_whole_box() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].1.rect.width.0 > 300.0, "{:?}", found[0].1.rect);
 }
+
+/// Fifty links over several pages, all found by the one layout that draws
+/// the document: every external link once per line it occupies, every jump
+/// on the page of its own target.
+#[test]
+fn fifty_links_are_all_found_in_one_layout() {
+    let mut template = String::from("%DocumentLayout(size=\"a4\")\n");
+    for i in 0..25 {
+        template.push_str(&format!(
+            "  %p\n    %a(href=\"https://example.com/{i}\") Site {i}\n"
+        ));
+        template.push_str(&format!("  %p\n    %a(href=\"#s{i}\") Section {i}\n"));
+    }
+    for i in 0..25 {
+        template.push_str(&format!(
+            "  %h2(id=\"s{i}\") Section {i}\n  %p {}\n",
+            "Lorem ipsum dolor sit amet. ".repeat(40)
+        ));
+    }
+    let found = links(&template);
+    let uris: Vec<&String> = found
+        .iter()
+        .filter_map(|(_, l)| match &l.actions {
+            Actions::Uri(u) => Some(u),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(uris.len(), 25, "{uris:?}");
+    let jump_pages: Vec<usize> = found
+        .iter()
+        .filter_map(|(_, l)| match &l.actions {
+            Actions::Goto(printpdf::Destination::Xyz { page, .. }) => Some(*page),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(jump_pages.len(), 25);
+    // The targets spread over several pages, in document order.
+    assert!(
+        jump_pages.windows(2).all(|w| w[0] <= w[1]),
+        "{jump_pages:?}"
+    );
+    assert!(jump_pages.last() > jump_pages.first(), "{jump_pages:?}");
+}

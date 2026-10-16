@@ -1,41 +1,46 @@
 //! Hyperlinks and in-document links (`<a href="https://…">`, `<a href="#id">`).
 //!
-//! The layout engine has no notion of link rectangles, so they are found by a
-//! cheap two-pass trick that needs nothing from the engine: pass 1 renders a
-//! copy of the document in which every link (and every `id` a link points at)
-//! gets a unique, otherwise-unused background color; the filled rectangles
-//! those colors leave in the page operations are exactly the boxes the links
-//! occupy, wrapped lines and page breaks included. Pass 2 is the real
-//! document, to which the matching `Link` annotations are added. The two
-//! passes lay out identically because only a background color differs.
+//! Each link (and each element a `#id` link points at) gets a tracking class
+//! and `cursor:pointer`, neither of which changes a single painted pixel. The
+//! layout engine then reports, in the same pass that lays out the document,
+//! every hit-test area it produced for a tracked element or for anything
+//! inside it: the glyph runs of its text, wrapped lines and page breaks
+//! included, and -- because `cursor` makes it interactive -- its border box
+//! when it is a block (printpdf's `track_class_prefix`, docs/spikes/007). The
+//! matching `Link` annotations are added to that same document: one layout,
+//! not the two the old marker-colour probe render needed.
 //!
 //! Supported targets: `http(s):`, `mailto:`, `tel:` (URI actions) and `#id`
 //! (jump to the element with that `id`, wherever it ended up). Anything else
 //! (`javascript:`, relative paths, unknown ids) is left as plain text.
 //!
-//! Limits: a link rectangle is taken from the box's paint position, so a link
-//! inside a CSS-transformed element is placed untransformed; a link whose
-//! content is itself a block should use `display:block` (class `block`).
+//! Limits: a link rectangle is taken from layout, untransformed, so a link
+//! inside a CSS-transformed element is placed untransformed; the rectangle of
+//! an inline link covers its glyphs, not its padding.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use printpdf::{Actions, Color, Destination, LinkAnnotation, Op, PdfDocument, Pt, Rect};
+use printpdf::html::{TrackedBox, TrackedBoxes};
+use printpdf::{Actions, Destination, LinkAnnotation, Op, PdfDocument, Pt, Rect};
 
-/// Marker colors: red channel 254 for links, 253 for jump targets; the
-/// 16-bit index travels in green/blue.
-const LINK_RED: u8 = 254;
-const TARGET_RED: u8 = 253;
+/// The class prefix the layout engine is asked to track. `a` + index marks a
+/// link, `t` + index a jump target; no stylesheet rule names either.
+pub(crate) const TRACK_PREFIX: &str = "pdfcn-track-";
+
+fn link_class(index: usize) -> String {
+    format!("{TRACK_PREFIX}a{index}")
+}
+
+fn target_class(index: usize) -> String {
+    format!("{TRACK_PREFIX}t{index}")
+}
 
 /// What the pre-pass found in the HTML.
 pub(crate) struct LinkPlan {
-    /// The document with marker backgrounds injected (render this for pass 1).
+    /// The document with tracking classes injected: render this one.
     pub marked_html: String,
     links: Vec<String>,
     targets: Vec<String>,
-}
-
-fn marker(red: u8, index: usize) -> String {
-    format!("rgb({red},{},{})", (index >> 8) & 0xff, index & 0xff)
 }
 
 /// Schemes a link may use; everything else is dropped rather than embedded.
@@ -129,39 +134,51 @@ fn attr_value(tag: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Rewrites a start tag so its `style` carries `background-color:<color>`.
-fn with_background(tag: &str, color: &str) -> String {
-    let decl = format!("background-color:{color}");
-    if let Some(pos) = tag.to_ascii_lowercase().find("style=") {
-        let after = pos + "style=".len();
+/// Rewrites a start tag to carry `class` (added to an existing `class`
+/// attribute) and `cursor:pointer` (added to an existing `style`): the
+/// cursor makes a block interactive, so layout reports its border box.
+fn with_tracking(tag: &str, class: &str) -> String {
+    let tag = with_attr_value(tag, "class", class, ' ');
+    with_attr_value(&tag, "style", "cursor:pointer", ';')
+}
+
+/// Appends `value` to attribute `name` (after `sep`), or adds the attribute.
+fn with_attr_value(tag: &str, name: &str, value: &str, sep: char) -> String {
+    let lower = tag.to_ascii_lowercase();
+    let needle = format!("{name}=");
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(&needle) {
+        let pos = from + rel;
+        let after = pos + needle.len();
+        let starts_attr = pos > 0 && lower.as_bytes()[pos - 1].is_ascii_whitespace();
         if let Some(q) = tag[after..]
             .chars()
             .next()
             .filter(|c| *c == '"' || *c == '\'')
         {
-            if let Some(close) = tag[after + 1..].find(q) {
-                let at = after + 1 + close;
-                return format!("{};{decl}{}", &tag[..at], &tag[at..]);
+            if starts_attr {
+                if let Some(close) = tag[after + 1..].find(q) {
+                    let at = after + 1 + close;
+                    let existing = tag[after + 1..at].trim_end();
+                    let joined = if existing.is_empty() {
+                        value.to_string()
+                    } else if existing.ends_with(sep) {
+                        format!("{existing}{value}")
+                    } else {
+                        format!("{existing}{sep}{value}")
+                    };
+                    return format!("{}{joined}{}", &tag[..after + 1], &tag[at..]);
+                }
             }
         }
+        from = after;
     }
     let body = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
     let self_closing = tag.trim_end_matches('>').ends_with('/');
     format!(
-        "{body} style=\"{decl}\"{}>",
+        "{body} {name}=\"{value}\"{}>",
         if self_closing { " /" } else { "" }
     )
-}
-
-fn is_inline_tag(name: &str) -> bool {
-    const INLINE: [&str; 13] = [
-        "span", "b", "strong", "i", "em", "u", "s", "small", "sub", "sup", "code", "mark", "abbr",
-    ];
-    INLINE.iter().any(|t| name.eq_ignore_ascii_case(t))
-}
-
-fn inside_link(spans: &[(usize, usize)], at: usize) -> bool {
-    spans.iter().any(|&(s, e)| at > s && at < e)
 }
 
 /// Scans `html` for links; `None` when there is nothing to link.
@@ -187,9 +204,6 @@ pub(crate) fn plan(html: &str) -> Option<LinkPlan> {
         } else if !allowed_uri(&href) {
             continue;
         }
-        if links.len() >= 0xfff0 {
-            break;
-        }
         link_tag.insert(tag.start, links.len());
         links.push(href);
     }
@@ -212,44 +226,18 @@ pub(crate) fn plan(html: &str) -> Option<LinkPlan> {
         }
     }
 
-    // Rebuild the document with markers injected, back to front so earlier
-    // offsets stay valid. A tag that is both a link and a target keeps the
-    // link marker (its position is then the link's own).
+    // Rebuild the document with tracking injected, back to front so earlier
+    // offsets stay valid. A tag that is both a link and a target is tracked
+    // as the link (its position is then the link's own). The text inside a
+    // link needs nothing: layout attributes it to its nearest tracked
+    // ancestor.
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
-    let link_spans: Vec<(usize, usize)> = link_tag
-        .keys()
-        .map(|&start| {
-            let end = html[start..]
-                .to_ascii_lowercase()
-                .find("</a")
-                .map_or(start, |c| start + c);
-            (start, end)
-        })
-        .collect();
     for tag in scan_tags(html, |_| true) {
         let text = &html[tag.start..tag.end];
         if let Some(&i) = link_tag.get(&tag.start) {
-            let color = marker(LINK_RED, i + 1);
-            edits.push((tag.start, tag.end, with_background(text, &color)));
-            // A background is not inherited: text wrapped in an inline child
-            // (`<a><span class="underline">…`) paints that child's own box,
-            // so the marker goes on those children too.
-            let close = html[tag.end..]
-                .to_ascii_lowercase()
-                .find("</a")
-                .unwrap_or(0);
-            for child in scan_tags(&html[tag.end..tag.end + close], is_inline_tag) {
-                let (cs, ce) = (tag.end + child.start, tag.end + child.end);
-                edits.push((cs, ce, with_background(&html[cs..ce], &color)));
-            }
-        } else if inside_link(&link_spans, tag.start) {
-            // handled with its anchor above
+            edits.push((tag.start, tag.end, with_tracking(text, &link_class(i))));
         } else if let Some(&i) = target_tag.get(&tag.start) {
-            edits.push((
-                tag.start,
-                tag.end,
-                with_background(text, &marker(TARGET_RED, i + 1)),
-            ));
+            edits.push((tag.start, tag.end, with_tracking(text, &target_class(i))));
         }
     }
     let mut marked_html = html.to_string();
@@ -271,7 +259,7 @@ fn decode_entities(s: &str) -> String {
         .replace("&gt;", ">")
 }
 
-/// A box found in the probe render: 1-based page and PDF-space rectangle.
+/// A box layout gave a tracked element: 1-based page and PDF-space rectangle.
 #[derive(Clone, Copy)]
 struct Found {
     page: usize,
@@ -281,69 +269,17 @@ struct Found {
     y1: f32,
 }
 
-fn decode(col: &Color) -> Option<(u8, usize)> {
-    let Color::Rgb(c) = col else { return None };
-    let ch = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-    let (r, g, b) = (ch(c.r), ch(c.g), ch(c.b));
-    if r != LINK_RED && r != TARGET_RED {
-        return None;
-    }
-    Some((r, ((g as usize) << 8) | b as usize))
-}
-
-/// Collects the marker-filled rectangles in `probe`, by marker.
-fn collect(probe: &PdfDocument) -> BTreeMap<(u8, usize), Vec<Found>> {
-    let mut found: BTreeMap<(u8, usize), Vec<Found>> = BTreeMap::new();
-    for (page_index, page) in probe.pages.iter().enumerate() {
-        let mut fill: Option<Color> = None;
-        let mut stack: Vec<Option<Color>> = Vec::new();
-        for op in &page.ops {
-            match op {
-                Op::SaveGraphicsState => stack.push(fill.clone()),
-                Op::RestoreGraphicsState => {
-                    if let Some(prev) = stack.pop() {
-                        fill = prev;
-                    }
-                }
-                Op::SetFillColor { col } => fill = Some(col.clone()),
-                Op::DrawRectangle { rectangle } => {
-                    if let Some(key) = fill.as_ref().and_then(decode) {
-                        found.entry(key).or_default().push(Found {
-                            page: page_index + 1,
-                            x0: rectangle.x.0,
-                            y0: rectangle.y.0,
-                            x1: rectangle.x.0 + rectangle.width.0,
-                            y1: rectangle.y.0 + rectangle.height.0,
-                        });
-                    }
-                }
-                Op::DrawPolygon { polygon } => {
-                    let Some(key) = fill.as_ref().and_then(decode) else {
-                        continue;
-                    };
-                    let mut bb: Option<(f32, f32, f32, f32)> = None;
-                    for p in polygon.rings.iter().flat_map(|r| r.points.iter()) {
-                        let (x, y) = (p.p.x.0, p.p.y.0);
-                        bb = Some(match bb {
-                            None => (x, y, x, y),
-                            Some((a, b, c, d)) => (a.min(x), b.min(y), c.max(x), d.max(y)),
-                        });
-                    }
-                    if let Some((x0, y0, x1, y1)) = bb {
-                        found.entry(key).or_default().push(Found {
-                            page: page_index + 1,
-                            x0,
-                            y0,
-                            x1,
-                            y1,
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    found
+fn found(boxes: &[TrackedBox]) -> Vec<Found> {
+    boxes
+        .iter()
+        .map(|b| Found {
+            page: b.page + 1,
+            x0: b.x,
+            y0: b.y,
+            x1: b.x + b.width,
+            y1: b.y + b.height,
+        })
+        .collect()
 }
 
 /// Merges boxes of one link that overlap (a run's background and its
@@ -379,12 +315,11 @@ fn merge_boxes(boxes: &[Found]) -> Vec<Found> {
     out
 }
 
-/// Adds the link annotations to the real document, using the boxes found in
-/// the probe render. Links that could not be located are skipped.
-pub(crate) fn apply(plan: &LinkPlan, probe: &PdfDocument, doc: &mut PdfDocument) {
-    let found = collect(probe);
+/// Adds the link annotations to `doc`, using the boxes its own layout
+/// reported. Links that could not be located are skipped.
+pub(crate) fn apply(plan: &LinkPlan, boxes: &TrackedBoxes, doc: &mut PdfDocument) {
     for (i, href) in plan.links.iter().enumerate() {
-        let Some(rects) = found.get(&(LINK_RED, i + 1)) else {
+        let Some(rects) = boxes.get(&link_class(i)).map(|b| found(b)) else {
             continue;
         };
         let actions = if let Some(id) = href.strip_prefix('#') {
@@ -392,7 +327,10 @@ pub(crate) fn apply(plan: &LinkPlan, probe: &PdfDocument, doc: &mut PdfDocument)
                 continue;
             };
             // The target's first box (document order) is where the jump lands.
-            let Some(first) = found.get(&(TARGET_RED, ti + 1)).and_then(|v| v.first()) else {
+            let Some(first) = boxes
+                .get(&target_class(ti))
+                .and_then(|b| found(b).first().copied())
+            else {
                 continue;
             };
             Actions::Goto(Destination::Xyz {
@@ -404,7 +342,7 @@ pub(crate) fn apply(plan: &LinkPlan, probe: &PdfDocument, doc: &mut PdfDocument)
         } else {
             Actions::Uri(href.clone())
         };
-        for r in &merge_boxes(rects) {
+        for r in &merge_boxes(&rects) {
             if r.x1 <= r.x0 || r.y1 <= r.y0 {
                 continue;
             }
@@ -437,40 +375,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_marks_links_and_referenced_targets_only() {
+    fn plan_tracks_links_and_referenced_targets_only() {
         let html = r##"<body><a href="https://x.dev/a?b=1&amp;c=2" class="u">go</a>
 <a href="#sec">jump</a><h2 id="sec">S</h2><p id="other">o</p>
 <a href="javascript:alert(1)">bad</a><a name="n">no href</a></body>"##;
         let plan = plan(html).unwrap();
         assert_eq!(plan.links, vec!["https://x.dev/a?b=1&c=2", "#sec"]);
         assert_eq!(plan.targets, vec!["sec"]);
-        assert!(plan.marked_html.contains(&marker(LINK_RED, 1)));
-        assert!(plan.marked_html.contains(&marker(LINK_RED, 2)));
-        assert!(plan.marked_html.contains(&marker(TARGET_RED, 1)));
-        assert!(!plan.marked_html.contains("javascript:alert(1)\" style"));
+        assert!(plan
+            .marked_html
+            .contains(r#"class="u pdfcn-track-a0" style="cursor:pointer">go"#));
+        assert!(plan.marked_html.contains(&link_class(1)));
+        assert!(plan
+            .marked_html
+            .contains(r#"<h2 id="sec" class="pdfcn-track-t0" style="cursor:pointer">"#));
+        assert!(!plan.marked_html.contains("javascript:alert(1)\" class"));
         // `other` is not referenced, so it stays untouched.
         assert!(plan.marked_html.contains(r#"<p id="other">"#));
     }
 
     #[test]
-    fn existing_style_is_extended_not_duplicated() {
-        let tag = r#"<a href="https://x.dev" style="color:red">"#;
-        let out = with_background(tag, "rgb(254,0,1)");
+    fn existing_class_and_style_are_extended_not_duplicated() {
+        let tag = r#"<a href="https://x.dev" class="a b" style="color:red">"#;
         assert_eq!(
-            out,
-            r#"<a href="https://x.dev" style="color:red;background-color:rgb(254,0,1)">"#
+            with_tracking(tag, "pdfcn-track-a0"),
+            r#"<a href="https://x.dev" class="a b pdfcn-track-a0" style="color:red;cursor:pointer">"#
         );
-        let bare = with_background(r#"<a href="https://x.dev">"#, "rgb(254,0,1)");
         assert_eq!(
-            bare,
-            r#"<a href="https://x.dev" style="background-color:rgb(254,0,1)">"#
+            with_tracking(r#"<a href="https://x.dev">"#, "pdfcn-track-a0"),
+            r#"<a href="https://x.dev" class="pdfcn-track-a0" style="cursor:pointer">"#
+        );
+        // `data-class=` is not `class=`; a trailing `;` is not doubled.
+        assert_eq!(
+            with_tracking(r#"<a data-class="x" style="color:red;">"#, "k"),
+            r#"<a data-class="x" style="color:red;cursor:pointer" class="k">"#
         );
     }
 
     #[test]
-    fn no_links_means_no_second_pass() {
+    fn no_links_means_nothing_to_track() {
         assert!(plan("<p>hello</p>").is_none());
         assert!(plan(r#"<a href="ftp://x">x</a>"#).is_none());
+    }
+
+    /// The tracking class and `cursor:pointer` change nothing the layout
+    /// engine draws: the marked document's pages are the original's, op for
+    /// op, and the boxes come along for free.
+    #[test]
+    fn tracking_draws_exactly_what_the_document_draws() {
+        use printpdf::html::{add_xml_to_document, add_xml_to_document_tracked, XmlRenderOptions};
+        let html = r##"<html><body>
+<p>See <a href="https://x.dev" style="color:blue">the site</a> or <a href="#s">below</a>.</p>
+<a href="https://x.dev/card" style="display:block;padding:12px;background-color:#eee">A card</a>
+<h2 id="s">Section</h2></body></html>"##;
+        let plan = plan(html).expect("links");
+        let mut options = XmlRenderOptions::default();
+        let mut plain = PdfDocument::new("plain");
+        add_xml_to_document(&mut plain, html, &options).expect("renders");
+        options.track_class_prefix = Some(TRACK_PREFIX.to_string());
+        let mut marked = PdfDocument::new("marked");
+        let boxes =
+            add_xml_to_document_tracked(&mut marked, &plan.marked_html, &options).expect("renders");
+        assert_eq!(plain.pages.len(), marked.pages.len());
+        for (a, b) in plain.pages.iter().zip(&marked.pages) {
+            assert_eq!(a.ops, b.ops);
+        }
+        for class in [link_class(0), link_class(1), link_class(2), target_class(0)] {
+            assert!(boxes.contains_key(&class), "{class} not found in {boxes:?}");
+        }
     }
 
     #[test]
@@ -478,20 +450,5 @@ mod tests {
         let html = r#"<a title="a>b" href="https://x.dev">t</a>"#;
         let plan = plan(html).unwrap();
         assert_eq!(plan.links, vec!["https://x.dev"]);
-    }
-
-    #[test]
-    fn marker_colors_round_trip() {
-        for idx in [1usize, 255, 256, 4097, 0xfff0] {
-            let m = marker(LINK_RED, idx);
-            let nums: Vec<usize> = m
-                .trim_start_matches("rgb(")
-                .trim_end_matches(')')
-                .split(',')
-                .map(|n| n.parse().unwrap())
-                .collect();
-            assert_eq!(nums[0], 254);
-            assert_eq!((nums[1] << 8) | nums[2], idx);
-        }
     }
 }

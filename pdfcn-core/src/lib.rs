@@ -64,7 +64,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use printpdf::html::rust_fontconfig::{FcFontCache, FcParseFontBytes};
-use printpdf::html::{add_xml_to_document, PageMargins, SharedFontPool, XmlRenderOptions};
+use printpdf::html::{add_xml_to_document_tracked, PageMargins, SharedFontPool, XmlRenderOptions};
 use printpdf::{PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
 
@@ -522,8 +522,8 @@ pub fn render_pdf_with_assets(
     //
     // Built here rather than through `PdfDocument::from_html_with_cache`,
     // which copies every image and font into an `XmlRenderOptions` of its
-    // own: this one owns them already, and `add_xml_to_document` only reads
-    // it -- so the probe render for links reuses it too.
+    // own: this one owns them already, and `add_xml_to_document_tracked`
+    // only reads it.
     let mut xml_options = XmlRenderOptions {
         page_width: printpdf::Mm(width_mm),
         page_height: printpdf::Mm(height_mm),
@@ -587,17 +587,22 @@ pub fn render_pdf_with_assets(
         .map(|(src, bytes)| (src, bytes.into_owned()))
         .collect();
 
+    // Hyperlinks: the links (and their jump targets) carry a tracking class,
+    // and the one layout of the document reports where each landed; the
+    // annotations go onto that same document. See `links`.
+    let link_plan = links::plan(html);
+    if link_plan.is_some() {
+        xml_options.track_class_prefix = Some(links::TRACK_PREFIX.to_string());
+    }
+    let html = link_plan
+        .as_ref()
+        .map_or(html, |plan| plan.marked_html.as_str());
     let mut doc = PdfDocument::new("PDF Document");
     // A failed layout leaves the document without pages, exactly as
     // `from_html_with_cache` (which this replaces) does.
-    let _ = add_xml_to_document(&mut doc, html, &xml_options);
-
-    // Hyperlinks: find where each link box landed with a marker-colored probe
-    // render, then annotate the real document. See `links`.
-    if let Some(plan) = links::plan(html) {
-        let mut probe = PdfDocument::new("PDF Document");
-        let _ = add_xml_to_document(&mut probe, &plan.marked_html, &xml_options);
-        links::apply(&plan, &probe, &mut doc);
+    let tracked = add_xml_to_document_tracked(&mut doc, html, &xml_options).unwrap_or_default();
+    if let Some(plan) = &link_plan {
+        links::apply(plan, &tracked, &mut doc);
     }
 
     // Set directly on the saved document rather than via printpdf's own

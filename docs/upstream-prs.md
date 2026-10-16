@@ -15,6 +15,7 @@ by commit; drop an entry from `[patch.crates-io]` once its fix is released.
 | `fix/text-shadow` | Paint `text-shadow` (the bridge ignored `PushTextShadow`/`PopTextShadow`). | `tests/html_text_shadow.rs` |
 | `fix/transform` | Apply CSS `transform` from `PushReferenceFrame` as a PDF `cm` (conjugated by the layout -> PDF mapping). | `reference_frame_tests` (3, point-by-point) |
 | `fix/image-placeholders` | `XmlRenderOptions::image_placeholders` (id -> px size): lay an `<img>` out by size alone, with a 1-px stand-in XObject that declares that size (same `cm`). For callers that write the image stream after saving (JPEG passthrough, SVG Forms); see docs/spikes/006. | `tests/html_image_placeholders.rs` |
+| `fix/tracked-boxes` | `XmlRenderOptions::track_class_prefix` + `add_xml_to_document_tracked`: report each hit-test area (text runs, interactive border boxes) of elements carrying a class prefix, per page, in pt -- found in the same pass as the pages, so callers needing positions (links, a TOC) skip a second layout; see docs/spikes/007. | `tests/html_tracked_boxes.rs` |
 | `fix/img-intrinsic-size` | Pass azul an `ImageCache` naming each embedded image's decoded size (layout only sees a tagged 0x0 placeholder for `<img>`). Needed by azul's object-fit. | `bridge::tests::image_cache_names_each_images_decoded_size` |
 
 Note for the maintainer: an earlier attempt gave `<img>` `width`/`height`
