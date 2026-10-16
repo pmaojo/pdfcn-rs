@@ -16,7 +16,8 @@ cargo fmt --all --check
 ```
 
 `vector` (Charts v2/`%Barcode`/`%Vector`), `factur-x` (invoice
-embedding) and `jpeg-passthrough` (photos embedded as-is) are on by default -- but still real Cargo features (see
+embedding), `jpeg-passthrough` (photos embedded as-is) and `cache`
+(content-hash caches) are on by default -- but still real Cargo features (see
 "Cargo features" below), so also test with them explicitly off, since a
 change gated behind `#[cfg(feature = "...")]` is only proven correct in
 both states:
@@ -28,6 +29,11 @@ cargo test --workspace                           # both features regardless of t
                                                   # so a workspace-wide --no-default-features
                                                   # wouldn't actually disable them there
 ```
+
+`scripts/check.sh` runs all of the above (with `--no-fail-fast`, so one
+failing test binary never hides the next); `scripts/check.sh --size` adds
+the release binary's size and crate count. How speed and memory are
+measured, and the reproducible benchmarks: `scripts/bench/README.md`.
 
 The serverless binary (`pdfcn-vercel`, the root package under `api/`) has
 a hard size gate in CI. Never build it with `--workspace` (resolver="2"
@@ -46,7 +52,7 @@ cargo tree --edges features -p pdfcn-vercel   # resvg/lopdf are expected now
 | `pdfcn-template` | `{{ interpolation }}`, `- for`, `- if`, `- include` (`minijinja`) |
 | `pdfcn-components` | `%InvoiceTable`, `%Badge`, `%Card`, `%LineChart`, `%Barcode`, ... registry |
 | `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
-| `pdfcn-core` | Orchestrates the pipeline; HTML → PDF; the Cargo features (`vector`, `factur-x`, `jpeg-passthrough`, all on by default) live here |
+| `pdfcn-core` | Orchestrates the pipeline; HTML → PDF; the Cargo features (`vector`, `factur-x`, `jpeg-passthrough`, `cache`, all on by default) live here |
 | `pdfcn-cli` | `pdfcn new / add / build / dev` |
 | `api/generate-pdf.rs`, `api/generate-pdf-batch.rs` | Vercel Function handlers |
 | `pdfcn-node` | `napi-rs` bindings for Next.js |

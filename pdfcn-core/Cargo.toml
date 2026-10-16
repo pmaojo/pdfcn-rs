@@ -8,7 +8,7 @@ rust-version.workspace = true
 description = "Orchestrates parsing, template evaluation, component expansion, styling and PDF rendering"
 
 [features]
-default = ["vector", "factur-x", "jpeg-passthrough"]
+default = ["vector", "factur-x", "jpeg-passthrough", "cache"]
 
 # The Wave 1 vector substrate (Ola 1.2/1.3): `%Vector`, Charts v2 and
 # `%Barcode` all emit SVG placeholders that this crate rasterizes to PNG
@@ -35,6 +35,14 @@ factur-x = ["dep:lopdf"]
 # most of the cost of an image-heavy render. `--no-default-features` falls back
 # to printpdf's own decode + re-encode.
 jpeg-passthrough = ["dep:lopdf"]
+
+# Process-wide caches keyed by a hash of their input: parsed templates, built
+# stylesheets, converted SVGs and prepared (cropped, rotated, shrunk) photos,
+# each with a byte budget and LRU eviction (`PDFCN_CACHE_MB`, docs/spikes/008).
+# On by default: standard library only, no crate added, and a warm process
+# (`pdfcn dev`, a server, a batch) skips work it has already done.
+# `--no-default-features` renders everything from scratch every time.
+cache = []
 
 # PAdES (ETSI.CAdES.detached) signing of a finished PDF with an X.509
 # certificate: RSA or ECDSA P-256, from PEM or PKCS#12. Opt-in, not in

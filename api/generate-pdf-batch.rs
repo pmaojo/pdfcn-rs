@@ -429,7 +429,11 @@ async fn handle_body(body: &str) -> Result<Response<Vec<u8>>, Error> {
                             page,
                             ..shared_options.clone()
                         };
-                        match render_pdf_with_assets(&html, &fonts, &images, &options) {
+                        // rayon already spreads the documents over the cores:
+                        // each one does its own per-image work on this thread.
+                        match pdfcn_core::with_threads(1, || {
+                            render_pdf_with_assets(&html, &fonts, &images, &options)
+                        }) {
                             Ok(bytes) => {
                                 let filename = match filename {
                                     Some(name) => name,

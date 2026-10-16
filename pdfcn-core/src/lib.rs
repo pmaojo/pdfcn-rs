@@ -1,10 +1,13 @@
 mod assets;
+#[cfg(feature = "cache")]
+mod cache;
 mod data;
 mod error;
 mod html_render;
 mod links;
 mod options;
 mod page;
+mod parallel;
 mod prepare;
 // The Wave 1 vector substrate (Ola 1.2/1.3): SVG rasterization and the
 // chart/barcode SVG generators. Behind the `vector` cargo feature, on by
@@ -51,15 +54,14 @@ pub use error::CoreError;
 pub use factur_x::{embed_invoice as embed_factur_x_invoice, FacturXError, FacturXProfile};
 pub use options::{DocumentMetadata, ImageFormat, ImageOptimization, RenderOptions};
 pub use page::{Orientation, PageConfig, PageSize};
+pub use parallel::{threads, with_threads, THREADS_ENV};
 pub use pdfcn_formats::Format;
 pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 pub use prepare::{prepare_image, PrepareFormat, PrepareOptions, Prepared};
 
 use std::borrow::Cow;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -273,98 +275,55 @@ pub fn theme_from_json(value: &JsonValue) -> Result<Theme, String> {
     Ok(theme)
 }
 
-/// Bounded process-wide cache of parsed template ASTs, keyed by a hash of
-/// the source. Server-side callers rendering many documents from one
-/// template (a batch endpoint, a monthly-statements loop) pay the lex/parse
-/// cost once instead of per document; one-off renders pay one extra hash.
-/// Entries are evicted FIFO past [`PARSE_CACHE_CAP`] so memory stays
-/// bounded regardless of how many distinct templates a long-lived process
-/// sees. Only successful parses are cached -- a malformed template keeps
-/// failing identically.
-const PARSE_CACHE_CAP: usize = 128;
-type ParseCache = Mutex<(HashMap<u64, Arc<pdfcn_formats::Parsed>>, VecDeque<u64>)>;
-static PARSE_CACHE: OnceLock<ParseCache> = OnceLock::new();
-
-/// Returns a process-wide-shared handle to the parsed AST: a hit is one
-/// atomic refcount bump, not a deep clone of the whole tree, regardless of
-/// how large the template is. `pdfcn_template::evaluate` only ever needs
+/// Parsed template ASTs, keyed by the source text and its format (see
+/// `cache`). Server-side callers rendering many documents from one template
+/// (a batch endpoint, a monthly-statements loop) and `pdfcn dev` pay the
+/// lex/parse cost once; a hit is one refcount bump, not a deep clone of the
+/// tree. Only successful parses are cached -- a malformed template keeps
+/// failing identically. `pdfcn_template::evaluate` only ever needs
 /// `&Document`, and `&Arc<Document>` derefs to that for free.
+#[cfg(feature = "cache")]
+static PARSE_CACHE: cache::Shared<pdfcn_formats::Parsed> = cache::Shared::new();
+
 fn cached_parse(
     source: &str,
     format: Option<Format>,
 ) -> Result<Arc<pdfcn_formats::Parsed>, CoreError> {
-    let mut hasher = DefaultHasher::new();
-    // The same text can mean different things in different formats.
-    format.map(|f| f as u8).hash(&mut hasher);
-    source.hash(&mut hasher);
-    let key = hasher.finish();
-    if let Some(cache) = PARSE_CACHE.get() {
-        if let Ok(guard) = cache.lock() {
-            if let Some(doc) = guard.0.get(&key) {
-                return Ok(Arc::clone(doc));
-            }
+    #[cfg(feature = "cache")]
+    {
+        // The same text can mean different things in different formats.
+        let key = cache::key((format.map(|f| f as u8), source), source.len());
+        if let Some(hit) = PARSE_CACHE.get(key) {
+            return Ok(hit);
         }
+        let parsed = pdfcn_formats::parse(source, format)?;
+        // An AST is a few times the size of its source.
+        Ok(PARSE_CACHE.insert(key, parsed, source.len().saturating_mul(4)))
     }
-    let doc = Arc::new(pdfcn_formats::parse(source, format)?);
-    let cache = PARSE_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
-    if let Ok(mut guard) = cache.lock() {
-        if !guard.0.contains_key(&key) {
-            while guard.0.len() >= PARSE_CACHE_CAP {
-                match guard.1.pop_front() {
-                    Some(oldest) => {
-                        guard.0.remove(&oldest);
-                    }
-                    None => break,
-                }
-            }
-            guard.0.insert(key, Arc::clone(&doc));
-            guard.1.push_back(key);
-        }
-    }
-    Ok(doc)
+    #[cfg(not(feature = "cache"))]
+    Ok(Arc::new(pdfcn_formats::parse(source, format)?))
 }
 
-/// Bounded process-wide cache of built stylesheets, keyed by the distinct
-/// utility classes a document uses plus its theme -- not by the document's
-/// literal HTML. A "one template, many rows" batch (the shape
-/// `render_files_with_remote_images`'s callers and the batch endpoint both
-/// have) almost always resolves to the same class set across every row
-/// even though the text content differs per row, so this is the case that
-/// actually recurs; caching on the literal HTML string would only ever hit
-/// when two renders are byte-for-byte identical.
-const STYLESHEET_CACHE_CAP: usize = 128;
-type StylesheetCache = Mutex<(HashMap<u64, Arc<String>>, VecDeque<u64>)>;
-static STYLESHEET_CACHE: OnceLock<StylesheetCache> = OnceLock::new();
+/// Built stylesheets, keyed by the distinct utility classes a document uses
+/// plus its theme -- not by the document's literal HTML. A "one template,
+/// many rows" batch almost always resolves to the same class set across every
+/// row even though the text differs per row, so this is the case that
+/// actually recurs.
+#[cfg(feature = "cache")]
+static STYLESHEET_CACHE: cache::Shared<String> = cache::Shared::new();
 
 fn cached_stylesheet(classes: &BTreeSet<String>, theme: &Theme) -> Arc<String> {
-    let mut hasher = DefaultHasher::new();
-    classes.hash(&mut hasher);
-    theme.hash(&mut hasher);
-    let key = hasher.finish();
-    if let Some(cache) = STYLESHEET_CACHE.get() {
-        if let Ok(guard) = cache.lock() {
-            if let Some(css) = guard.0.get(&key) {
-                return Arc::clone(css);
-            }
-        }
+    let build = || pdfcn_styles::build_stylesheet_from_classes(classes, theme);
+    #[cfg(feature = "cache")]
+    {
+        STYLESHEET_CACHE.get_or_compute(
+            cache::key((classes, theme), classes.len()),
+            build,
+            String::len,
+        )
     }
-    let css = Arc::new(pdfcn_styles::build_stylesheet_from_classes(classes, theme));
-    let cache = STYLESHEET_CACHE.get_or_init(|| Mutex::new((HashMap::new(), VecDeque::new())));
-    if let Ok(mut guard) = cache.lock() {
-        if !guard.0.contains_key(&key) {
-            while guard.0.len() >= STYLESHEET_CACHE_CAP {
-                match guard.1.pop_front() {
-                    Some(oldest) => {
-                        guard.0.remove(&oldest);
-                    }
-                    None => break,
-                }
-            }
-            guard.0.insert(key, Arc::clone(&css));
-            guard.1.push_back(key);
-        }
-    }
-    css
+    #[cfg(not(feature = "cache"))]
+    Arc::new(build())
 }
 
 /// Runs the full FR-1/FR-2/FR-3 pipeline: parses `source`, evaluates it
@@ -1221,6 +1180,7 @@ mod tests {
         assert_eq!(first.document, second.document);
         // A cache hit shares the same allocation rather than deep-cloning
         // the AST -- the whole point of caching it.
+        #[cfg(feature = "cache")]
         assert!(Arc::ptr_eq(&first, &second));
         // And the cached AST still evaluates correctly.
         let resolved =
@@ -1250,8 +1210,9 @@ mod tests {
             .collect();
         let theme = Theme::light();
         let first = cached_stylesheet(&classes, &theme);
-        let second = cached_stylesheet(&classes, &theme);
-        assert!(Arc::ptr_eq(&first, &second));
+        // Shared, not rebuilt, when the cache is on.
+        #[cfg(feature = "cache")]
+        assert!(Arc::ptr_eq(&first, &cached_stylesheet(&classes, &theme)));
         assert_eq!(
             *first,
             pdfcn_styles::build_stylesheet_from_classes(&classes, &theme)

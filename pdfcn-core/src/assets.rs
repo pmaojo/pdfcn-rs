@@ -73,6 +73,33 @@ const QR_QUIET_ZONE: i32 = 4;
 /// Output pixels per QR module.
 const QR_MODULE_SCALE: i32 = 8;
 
+/// Photos already cropped, turned upright or shrunk, by the operation, its
+/// parameters and the input bytes (see `cache`). Looked up only once the
+/// header says there is work to do, so a photo that needs none never pays
+/// for hashing its bytes.
+#[cfg(feature = "cache")]
+static PREPARED: crate::cache::Shared<Option<Vec<u8>>> = crate::cache::Shared::new();
+
+/// `work()`, or what it produced last time for the same `op`, `params` and
+/// `bytes`.
+fn prepared(
+    op: &str,
+    params: impl std::hash::Hash,
+    bytes: &[u8],
+    work: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    #[cfg(feature = "cache")]
+    {
+        let key = crate::cache::key((op, params, bytes), bytes.len());
+        Option::clone(&PREPARED.get_or_compute(key, work, |out| out.as_ref().map_or(64, Vec::len)))
+    }
+    #[cfg(not(feature = "cache"))]
+    {
+        let _ = (op, params, bytes);
+        work()
+    }
+}
+
 /// One `<img ...>` occurrence: the tag's span and its attribute text.
 pub(crate) struct ImgTag {
     span: Range<usize>,
@@ -445,8 +472,8 @@ pub(crate) fn generate_vectors(
 /// the markup asks for `object-fit: cover` with a px box, rewriting the
 /// `src` to the cropped variant. Returns the rewritten HTML.
 fn apply_cover_crops(html: &str, images: &mut Images<'_>) -> String {
-    let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
-    let mut cropped: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    // First the tags that ask for a crop: (src, crop key, aspect, tag).
+    let mut wanted: Vec<(String, String, f64, ImgTag)> = Vec::new();
     for tag in scan_img_tags(html) {
         let Some(src) = attr_value(&tag.attrs, "src").map(str::to_string) else {
             continue;
@@ -471,15 +498,35 @@ fn apply_cover_crops(html: &str, images: &mut Images<'_>) -> String {
         {
             continue;
         }
-        let Some(source_bytes) = images.get(&src) else {
+        if !images.contains_key(&src) {
             continue;
-        };
+        }
         let key = format!("{src}#pdfcn-cover-{width}x{height}");
+        wanted.push((src, key, width / height, tag));
+    }
+    // Then each distinct crop once, on several threads.
+    let mut jobs: Vec<(&str, &[u8], f64)> = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (src, key, aspect, _) in &wanted {
+        if images.contains_key(key) || !seen.insert(key.as_str()) {
+            continue;
+        }
+        if let Some(bytes) = images.get(src) {
+            jobs.push((key.as_str(), &**bytes, *aspect));
+        }
+    }
+    let crops = crate::parallel::map(&jobs, |(_, bytes, aspect)| {
+        center_crop_to_aspect(bytes, *aspect)
+    });
+    let cropped: BTreeMap<String, Vec<u8>> = jobs
+        .iter()
+        .zip(crops)
+        .filter_map(|((key, _, _), bytes)| Some((key.to_string(), bytes?)))
+        .collect();
+    let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
+    for (src, key, _, tag) in wanted {
         if !cropped.contains_key(&key) && !images.contains_key(&key) {
-            let Some(bytes) = center_crop_to_aspect(source_bytes, width / height) else {
-                continue;
-            };
-            cropped.insert(key.clone(), bytes);
+            continue;
         }
         // The attr value's span inside the full tag: find it again in the
         // tag text to rewrite just the src.
@@ -543,28 +590,42 @@ fn apply_exif_orientation(html: &str, images: &mut Images<'_>) {
         .iter()
         .filter_map(|tag| attr_value(&tag.attrs, "src").map(str::to_string))
         .collect();
-    for src in srcs {
-        let Some(bytes) = images.get(&src) else {
-            continue;
-        };
-        if exif_orientation(bytes) == image::metadata::Orientation::NoTransforms {
-            continue;
-        }
-        let Some(img) = decode_oriented(bytes) else {
-            continue;
-        };
-        let is_jpeg = bytes.starts_with(&[0xFF, 0xD8]);
+    let jobs: Vec<(String, &[u8])> = srcs
+        .into_iter()
+        .filter_map(|src| {
+            let bytes: &[u8] = images.get(&src)?;
+            Some((src, bytes))
+        })
+        .collect();
+    // Independent per photo: on several threads, recorded in `src` order.
+    let upright = crate::parallel::map(&jobs, |(_, bytes)| upright(bytes));
+    let rotated: Vec<(String, Vec<u8>)> = jobs
+        .into_iter()
+        .zip(upright)
+        .filter_map(|((src, _), out)| Some((src, out?)))
+        .collect();
+    for (src, out) in rotated {
+        images.insert(src, out.into());
+    }
+}
+
+/// `bytes` re-encoded as displayed, or `None` when it has no orientation to
+/// apply (or cannot be decoded or encoded).
+fn upright(bytes: &[u8]) -> Option<Vec<u8>> {
+    if exif_orientation(bytes) == image::metadata::Orientation::NoTransforms {
+        return None;
+    }
+    prepared("upright", (), bytes, || {
+        let img = decode_oriented(bytes)?;
         let mut out = Vec::new();
-        let written = if is_jpeg {
-            encode_jpeg(&img, &mut out).is_some()
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            encode_jpeg(&img, &mut out)?;
         } else {
             img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-                .is_ok()
-        };
-        if written {
-            images.insert(src, out.into());
+                .ok()?;
         }
-    }
+        Some(out)
+    })
 }
 
 /// Decodes `bytes` (JPEG/PNG/…), center-crops to `aspect` (w/h), and
@@ -587,27 +648,29 @@ fn center_crop_to_aspect(bytes: &[u8], aspect: f64) -> Option<Vec<u8>> {
         // Already the right shape: re-encoding would only lose quality.
         return None;
     }
-    let img = decode_oriented(bytes)?;
-    let (iw, ih) = (img.width(), img.height());
-    let (cw, ch) = if source_aspect > aspect {
-        let cw = ((ih as f64 * aspect).round() as u32).clamp(1, iw);
-        (cw, ih)
-    } else {
-        let ch = ((iw as f64 / aspect).round() as u32).clamp(1, ih);
-        (iw, ch)
-    };
-    let x = (iw - cw) / 2;
-    let y = (ih - ch) / 2;
-    let cropped = img.crop_imm(x, y, cw, ch);
-    let mut out = Vec::new();
-    if bytes.starts_with(&[0xFF, 0xD8]) {
-        encode_jpeg(&cropped, &mut out)?;
-    } else {
-        cropped
-            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-            .ok()?;
-    }
-    Some(out)
+    prepared("cover", aspect.to_bits(), bytes, || {
+        let img = decode_oriented(bytes)?;
+        let (iw, ih) = (img.width(), img.height());
+        let (cw, ch) = if source_aspect > aspect {
+            let cw = ((ih as f64 * aspect).round() as u32).clamp(1, iw);
+            (cw, ih)
+        } else {
+            let ch = ((iw as f64 / aspect).round() as u32).clamp(1, ih);
+            (iw, ch)
+        };
+        let x = (iw - cw) / 2;
+        let y = (ih - ch) / 2;
+        let cropped = img.crop_imm(x, y, cw, ch);
+        let mut out = Vec::new();
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            encode_jpeg(&cropped, &mut out)?;
+        } else {
+            cropped
+                .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .ok()?;
+        }
+        Some(out)
+    })
 }
 
 /// How many device pixels of source resolution one CSS px of layout box
@@ -670,13 +733,21 @@ fn normalize_resolutions(html: &str, images: &mut Images<'_>, page: Option<PageB
         }
         entry.cover |= cover;
     }
-    let replacements: Vec<(String, Vec<u8>)> = limits
+    let jobs: Vec<(String, Limit, &[u8])> = limits
         .into_iter()
         .filter_map(|(src, limit)| {
-            let bytes = images.get(&src)?;
-            let shrunk = downscale_to_limits(bytes, limit.w, limit.h, limit.cover, page)?;
-            Some((src, shrunk))
+            let bytes: &[u8] = images.get(&src)?;
+            Some((src, limit, bytes))
         })
+        .collect();
+    // Independent per image: on several threads, recorded in `src` order.
+    let shrunk = crate::parallel::map(&jobs, |(_, limit, bytes)| {
+        downscale_to_limits(bytes, limit.w, limit.h, limit.cover, page)
+    });
+    let replacements: Vec<(String, Vec<u8>)> = jobs
+        .into_iter()
+        .zip(shrunk)
+        .filter_map(|((src, _, _), bytes)| Some((src, bytes?)))
         .collect();
     for (src, bytes) in replacements {
         images.insert(src, bytes.into());
@@ -766,19 +837,21 @@ fn downscale_to_limits(
     }
     let nw = (((iw as f64) * max_scale).round() as u32).max(1);
     let nh = (((ih as f64) * max_scale).round() as u32).max(1);
-    let img = decode_oriented(bytes)?;
-    // Area averaging: at a 2x-or-more reduction it is as sharp as Lanczos3
-    // and a fraction of its cost (Lanczos3 was half of an image-heavy render).
-    let resized = img.thumbnail_exact(nw, nh);
-    let mut out = Vec::new();
-    if bytes.starts_with(&[0xFF, 0xD8]) {
-        encode_jpeg(&resized, &mut out)?;
-    } else {
-        resized
-            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-            .ok()?;
-    }
-    Some(out)
+    prepared("shrink", (nw, nh), bytes, || {
+        let img = decode_oriented(bytes)?;
+        // Area averaging: at a 2x-or-more reduction it is as sharp as Lanczos3
+        // and a fraction of its cost (Lanczos3 was half of an image-heavy render).
+        let resized = img.thumbnail_exact(nw, nh);
+        let mut out = Vec::new();
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            encode_jpeg(&resized, &mut out)?;
+        } else {
+            resized
+                .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .ok()?;
+        }
+        Some(out)
+    })
 }
 
 /// JPEG quality for every photo this module re-encodes. High enough that the
