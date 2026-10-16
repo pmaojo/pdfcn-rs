@@ -1,10 +1,10 @@
 //! Real vectors for SVG placeholders, behind the `vector` cargo feature.
 //!
-//! The layout engine places every SVG placeholder (`%Vector`, Charts v2,
-//! `%Barcode`, `%Icon`) as a PNG, because printpdf's HTML bridge has no route
-//! for vector content (docs/spikes/001). Once the document is saved, this pass
-//! swaps each of those image XObjects for a Form XObject drawing the same SVG
-//! as PDF vectors (docs/spikes/004):
+//! printpdf's HTML bridge has no route for vector content (docs/spikes/001),
+//! so every SVG placeholder (`%Vector`, Charts v2, `%Barcode`, `%Icon`, QR
+//! codes) is laid out as an image and, once the document is saved, that image
+//! XObject is swapped for a Form XObject drawing the SVG as PDF vectors
+//! (docs/spikes/004):
 //!
 //! - printpdf names every `<img>` XObject from its src
 //!   (`printpdf::html::bridge::image_xobject_id`), so the placeholder's own
@@ -14,68 +14,82 @@
 //!   same box -- so replacing the object *in place*, same object number, leaves
 //!   every resource dictionary and every `Do` untouched.
 //!
-//! Never makes a document worse: an SVG that fails to convert keeps its PNG,
-//! and a document lopdf can't load or save comes back byte-for-byte unchanged.
+//! [`prepare`] runs before layout: it converts each SVG with svg2pdf, and a
+//! placeholder that converts is laid out by size alone (printpdf's
+//! `image_placeholders`, docs/spikes/006) -- no PNG is rendered, encoded,
+//! decoded or written for it. Only an SVG that cannot become a vector is
+//! rasterized, so it still lands as the PNG it always was. [`import`] puts a
+//! converted Form into the saved document (see `pdf_xobjects::finish`).
 
 use std::collections::BTreeMap;
 
 use lopdf::{dictionary, Document, Object, Stream};
 
-use crate::pdf_xobjects::{image_xobjects, xobject_name};
+use crate::assets::{Images, VectorSource};
 
-/// Replaces the PNG of every placeholder in `sources` (placeholder src -> SVG
-/// text) with vector content. Returns `pdf` unchanged when there is nothing
-/// to replace or the document can't be processed.
-pub(crate) fn vectorize(pdf: Vec<u8>, sources: &BTreeMap<String, String>) -> Vec<u8> {
-    if sources.is_empty() {
-        return pdf;
-    }
-    let Ok(mut doc) = Document::load_mem(&pdf) else {
-        return pdf;
-    };
-    let targets = image_xobjects(&doc);
-    let mut replaced = 0usize;
-    for (src, svg) in sources {
-        let Some(&image_id) = targets.get(&xobject_name(src)) else {
-            continue;
-        };
-        if let Some(form) = svg_form(&mut doc, svg) {
-            doc.objects.insert(image_id, Object::Stream(form));
-            replaced += 1;
-        }
-    }
-    if replaced == 0 {
-        return pdf;
-    }
-    // svg2pdf's own catalog, page tree and page came along with the imported
-    // objects; nothing references them now.
-    doc.prune_objects();
-    let mut out = Vec::with_capacity(pdf.len());
-    match doc.save_to(&mut out) {
-        Ok(()) => out,
-        Err(_) => pdf,
-    }
+/// An SVG converted by svg2pdf, checked to have everything [`import`] reads.
+pub(crate) struct Form {
+    doc: Document,
 }
 
-/// Converts `svg` with svg2pdf, imports the result's objects into `doc`, and
-/// returns a Form XObject drawing it onto the unit square. `None` on any
-/// failure, leaving `doc` free of half-imported state that matters (anything
-/// imported but unreferenced is pruned before saving).
-fn svg_form(doc: &mut Document, svg: &str) -> Option<Stream> {
-    let tree = crate::raster::parse_svg(svg)?;
+/// Converts every vector source before layout. Returns the Forms by
+/// placeholder src; each converted placeholder without a PNG of its own is
+/// recorded in `placeholders` at the size its PNG would have had, and each one
+/// that failed to convert is rasterized into `images` instead.
+pub(crate) fn prepare(
+    sources: &BTreeMap<String, VectorSource>,
+    images: &mut Images<'_>,
+    placeholders: &mut BTreeMap<String, (u32, u32)>,
+) -> BTreeMap<String, Form> {
+    let mut forms = BTreeMap::new();
+    for (src, source) in sources {
+        let Some(tree) = crate::raster::parse_svg(&source.svg) else {
+            continue;
+        };
+        let form = convert(&tree);
+        if let Some((w, h)) = source.raster_box {
+            if images.contains_key(src) {
+                // Supplied by the caller under the placeholder's own src.
+            } else if form.is_some() {
+                let Some((_, pw, ph)) = crate::raster::raster_size(&tree, w, h) else {
+                    continue;
+                };
+                placeholders.insert(src.clone(), (pw, ph));
+            } else {
+                if let Some(png) = crate::raster::tree_to_png(&tree, w, h) {
+                    images.insert(src.clone(), png.into());
+                }
+                continue;
+            }
+        }
+        if let Some(form) = form {
+            forms.insert(src.clone(), form);
+        }
+    }
+    forms
+}
+
+/// svg2pdf's one-page document for `tree`, if it has a page with a usable
+/// media box, resources and content.
+fn convert(tree: &resvg::usvg::Tree) -> Option<Form> {
     let options = svg2pdf::ConversionOptions {
         // Text becomes outlines: no per-SVG font subset to embed, and the
         // labels look exactly as the PNG showed them.
         embed_text: false,
         ..Default::default()
     };
-    let bytes = svg2pdf::to_pdf(&tree, options, svg2pdf::PageOptions::default()).ok()?;
-    let mut svg_doc = Document::load_mem(&bytes).ok()?;
-    svg_doc.renumber_objects_with(doc.max_id + 1);
-    let page_id = *svg_doc.get_pages().get(&1)?;
-    let page = svg_doc.get_dictionary(page_id).ok()?;
+    let bytes = svg2pdf::to_pdf(tree, options, svg2pdf::PageOptions::default()).ok()?;
+    let doc = Document::load_mem(&bytes).ok()?;
+    page_parts(&doc)?;
+    Some(Form { doc })
+}
+
+/// The first page's media box, resources and content stream.
+fn page_parts(doc: &Document) -> Option<([f32; 4], Object, Vec<u8>)> {
+    let page_id = *doc.get_pages().get(&1)?;
+    let page = doc.get_dictionary(page_id).ok()?;
     let media_box = page.get(b"MediaBox").ok()?.as_array().ok()?;
-    let [x0, y0, x1, y1] = media_box
+    let [x0, y0, x1, y1]: [f32; 4] = media_box
         .iter()
         .map(|n| n.as_float().ok())
         .collect::<Option<Vec<f32>>>()?
@@ -86,12 +100,22 @@ fn svg_form(doc: &mut Document, svg: &str) -> Option<Stream> {
         return None;
     }
     let resources = page.get(b"Resources").ok()?.clone();
-    let content = svg_doc.get_page_content(page_id);
+    Some(([x0, y0, x1, y1], resources, doc.get_page_content(page_id)))
+}
+
+/// Imports `form`'s objects into `doc` and returns a Form XObject drawing it
+/// onto the unit square. `None` leaves `doc` free of half-imported state that
+/// matters (anything imported but unreferenced is pruned before saving).
+pub(crate) fn import(doc: &mut Document, form: Form) -> Option<Stream> {
+    let mut svg_doc = form.doc;
+    svg_doc.renumber_objects_with(doc.max_id + 1);
+    let ([x0, y0, x1, y1], resources, content) = page_parts(&svg_doc)?;
+    let (w, h) = (x1 - x0, y1 - y0);
 
     doc.max_id = doc.max_id.max(svg_doc.max_id);
     doc.objects.append(&mut svg_doc.objects);
 
-    let mut form = Stream::new(
+    let mut stream = Stream::new(
         dictionary! {
             "Type" => "XObject",
             "Subtype" => "Form",
@@ -105,13 +129,14 @@ fn svg_form(doc: &mut Document, svg: &str) -> Option<Stream> {
         content,
     );
     // Best effort: an uncompressed content stream is still valid.
-    let _ = form.compress();
-    Some(form)
+    let _ = stream.compress();
+    Some(stream)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pdf_xobjects::{image_xobjects, xobject_name};
 
     const LOGO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60"><rect x="4" y="4" width="112" height="52" rx="8" fill="#2563eb"/><text x="60" y="37" font-size="20" fill="#fff" text-anchor="middle">pdfcn</text></svg>"##;
 
@@ -170,42 +195,76 @@ mod tests {
     }
 
     #[test]
-    fn a_source_that_cannot_be_converted_keeps_its_png_and_the_document() {
-        // A PDF whose placeholder is still the PNG (supplied directly, so the
-        // render itself has no SVG source to swap in)...
-        let png = crate::raster::svg_to_png(LOGO, Some(120.0), Some(60.0)).expect("png");
-        let mut images = BTreeMap::new();
-        images.insert("pdfcn-vector:logo".to_string(), png);
-        let pdf = crate::render_pdf_with_assets(
-            r#"<html><body><img src="pdfcn-vector:logo" style="width:120px;height:60px"></body></html>"#,
-            &BTreeMap::new(),
-            &images,
-            &crate::RenderOptions::default(),
-        )
-        .expect("renders");
-        // ...then a source the pass cannot read: nothing changes.
-        let mut sources = BTreeMap::new();
-        sources.insert("pdfcn-vector:logo".to_string(), "<not svg".to_string());
-        let out = vectorize(pdf.clone(), &sources);
-        assert_eq!(out, pdf);
-        let doc = Document::load_mem(&out).unwrap();
-        assert_eq!(
-            xobject(&doc)
-                .dict
-                .get(b"Subtype")
-                .unwrap()
-                .as_name()
-                .unwrap(),
-            b"Image"
-        );
+    fn a_vector_placeholder_is_laid_out_by_size_and_never_rasterized() {
+        let sources = BTreeMap::from([(
+            "pdfcn-vector:logo".to_string(),
+            VectorSource {
+                svg: LOGO.to_string(),
+                raster_box: Some((Some(120.0), Some(60.0))),
+            },
+        )]);
+        let mut images = Images::new();
+        let mut placeholders = BTreeMap::new();
+        let forms = prepare(&sources, &mut images, &mut placeholders);
+        assert!(forms.contains_key("pdfcn-vector:logo"));
+        assert!(images.is_empty());
+        // The size its PNG would have had: the box at 3x.
+        assert_eq!(placeholders["pdfcn-vector:logo"], (360, 180));
     }
 
     #[test]
-    fn nothing_to_replace_returns_the_input_untouched() {
-        let pdf = b"not even a pdf".to_vec();
-        assert_eq!(vectorize(pdf.clone(), &BTreeMap::new()), pdf);
-        let mut sources = BTreeMap::new();
-        sources.insert("pdfcn-vector:x".to_string(), "<svg/>".to_string());
-        assert_eq!(vectorize(pdf.clone(), &sources), pdf);
+    fn an_svg_that_cannot_be_converted_falls_back_to_its_png() {
+        // svg2pdf rejects nothing usvg parses, so stand in for a failure with
+        // a document that parses but has nothing to draw at a usable size.
+        let empty = r#"<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"></svg>"#;
+        let sources = BTreeMap::from([(
+            "pdfcn-vector:x".to_string(),
+            VectorSource {
+                svg: empty.to_string(),
+                raster_box: Some((Some(10.0), Some(10.0))),
+            },
+        )]);
+        let mut images = Images::new();
+        let mut placeholders = BTreeMap::new();
+        let forms = prepare(&sources, &mut images, &mut placeholders);
+        // Whatever svg2pdf made of it, the placeholder is never left with
+        // neither a Form nor an image of some kind to lay out.
+        assert!(
+            forms.contains_key("pdfcn-vector:x") == placeholders.contains_key("pdfcn-vector:x")
+        );
+        assert!(!(forms.contains_key("pdfcn-vector:x") && images.contains_key("pdfcn-vector:x")));
+    }
+
+    #[test]
+    fn a_source_that_does_not_parse_is_left_unresolved() {
+        let sources = BTreeMap::from([(
+            "pdfcn-vector:x".to_string(),
+            VectorSource {
+                svg: "<not svg".to_string(),
+                raster_box: Some((None, None)),
+            },
+        )]);
+        let mut images = Images::new();
+        let mut placeholders = BTreeMap::new();
+        assert!(prepare(&sources, &mut images, &mut placeholders).is_empty());
+        assert!(images.is_empty() && placeholders.is_empty());
+    }
+
+    #[test]
+    fn a_caller_supplied_png_under_the_placeholder_src_is_kept() {
+        let png = crate::raster::svg_to_png(LOGO, Some(120.0), Some(60.0)).expect("png");
+        let mut images = Images::from([("pdfcn-vector:logo".to_string(), png.clone().into())]);
+        let sources = BTreeMap::from([(
+            "pdfcn-vector:logo".to_string(),
+            VectorSource {
+                svg: LOGO.to_string(),
+                raster_box: Some((Some(120.0), Some(60.0))),
+            },
+        )]);
+        let mut placeholders = BTreeMap::new();
+        let forms = prepare(&sources, &mut images, &mut placeholders);
+        assert!(forms.contains_key("pdfcn-vector:logo"));
+        assert!(placeholders.is_empty());
+        assert_eq!(images["pdfcn-vector:logo"], png);
     }
 }

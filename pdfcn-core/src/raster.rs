@@ -67,12 +67,24 @@ pub(crate) fn parse_svg(svg: &str) -> Option<Tree> {
 /// preserved (uniform scale, min of the two axes). Returns `None` for SVG
 /// that fails to parse or any render/encode failure -- the caller degrades
 /// exactly like an unresolved image, never panics.
+#[cfg(test)]
 pub(crate) fn svg_to_png(
     svg: &str,
     box_w_px: Option<f64>,
     box_h_px: Option<f64>,
 ) -> Option<Vec<u8>> {
-    let tree = parse_svg(svg)?;
+    tree_to_png(&parse_svg(svg)?, box_w_px, box_h_px)
+}
+
+/// The scale and pixel size [`tree_to_png`] renders `tree` at for a box of
+/// `box_w_px` x `box_h_px` (see [`svg_to_png`]). Also the size a vector
+/// placeholder is laid out at, so a placeholder that has to fall back to its
+/// PNG takes exactly the box the vector would have.
+pub(crate) fn raster_size(
+    tree: &Tree,
+    box_w_px: Option<f64>,
+    box_h_px: Option<f64>,
+) -> Option<(f64, u32, u32)> {
     let viewport = tree.size();
     let (iw, ih) = (f64::from(viewport.width()), f64::from(viewport.height()));
     if !(iw.is_finite() && ih.is_finite() && iw > 0.0 && ih > 0.0) {
@@ -93,10 +105,19 @@ pub(crate) fn svg_to_png(
     }
     let out_w = ((iw * scale).round() as u32).clamp(1, MAX_DIMENSION_PX as u32);
     let out_h = ((ih * scale).round() as u32).clamp(1, MAX_DIMENSION_PX as u32);
+    Some((scale, out_w, out_h))
+}
 
+/// Renders a parsed SVG to PNG bytes at [`raster_size`].
+pub(crate) fn tree_to_png(
+    tree: &Tree,
+    box_w_px: Option<f64>,
+    box_h_px: Option<f64>,
+) -> Option<Vec<u8>> {
+    let (scale, out_w, out_h) = raster_size(tree, box_w_px, box_h_px)?;
     let mut pixmap = Pixmap::new(out_w, out_h)?;
     resvg::render(
-        &tree,
+        tree,
         Transform::from_scale(scale as f32, scale as f32),
         &mut pixmap.as_mut(),
     );

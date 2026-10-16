@@ -28,8 +28,25 @@
 //! Like `img_srcs`, the scanner relies on our own `maud` output being
 //! well-formed: double-quoted attributes, no `<`/`>` inside values.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+
+/// The images of one render, by `src`. An entry borrows the caller's bytes
+/// until a pass replaces it (a crop, a rotation, a QR code it generated), so
+/// an image nobody changes is never copied on its way to the layout engine.
+pub(crate) type Images<'a> = BTreeMap<String, Cow<'a, [u8]>>;
+
+/// The SVG behind a placeholder `src`, for the vector pass. `raster_box` is
+/// the layout box (px, either side may be unknown) to rasterize it at if it
+/// cannot become a vector; `None` when the placeholder already has its PNG
+/// in [`Images`] (a QR code).
+// Filled only by the `vector` passes; without them the map stays empty.
+#[cfg_attr(not(feature = "vector"), allow(dead_code))]
+pub(crate) struct VectorSource {
+    pub(crate) svg: String,
+    pub(crate) raster_box: Option<(Option<f64>, Option<f64>)>,
+}
 
 const QRCODE_SCHEME: &str = "pdfcn-qrcode:";
 /// The Wave 1 vector-substrate schemes (`%Vector`, Charts v2, `%Barcode`).
@@ -198,6 +215,7 @@ fn qrcode_png(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<Vec<u8>> {
 /// The same symbol as [`qrcode_png`], as SVG: one path, one unit square per
 /// dark module, the quiet zone kept in the viewBox. It lets the QR land in the
 /// PDF as vectors (see `vector_pdf`) while the PNG stays the layout's input.
+#[cfg(feature = "vector")]
 fn qrcode_svg(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<String> {
     use qrcodegen::QrCode;
     use std::fmt::Write as _;
@@ -227,8 +245,8 @@ fn qrcode_svg(payload: &[u8], ecc: qrcodegen::QrCodeEcc) -> Option<String> {
 /// `sources` under the same src, for the vector pass.
 fn generate_qrcodes(
     html: &str,
-    images: &mut BTreeMap<String, Vec<u8>>,
-    sources: &mut BTreeMap<String, String>,
+    images: &mut Images<'_>,
+    sources: &mut BTreeMap<String, VectorSource>,
 ) {
     let srcs: Vec<String> = scan_img_tags(html)
         .iter()
@@ -246,12 +264,22 @@ fn generate_qrcodes(
             continue;
         };
         if let Some(png) = qrcode_png(&payload, ecc) {
+            // Only the vector pass reads the SVG; without it the PNG is final.
+            #[cfg(feature = "vector")]
             if let Some(svg) = qrcode_svg(&payload, ecc) {
-                sources.insert(src.clone(), svg);
+                sources.insert(
+                    src.clone(),
+                    VectorSource {
+                        svg,
+                        raster_box: None,
+                    },
+                );
             }
-            images.insert(src, png);
+            images.insert(src, png.into());
         }
     }
+    #[cfg(not(feature = "vector"))]
+    let _ = sources;
 }
 
 /// Charts v2 specs (series + labels + colors, hex-encoded whole) can make
@@ -295,13 +323,13 @@ fn short_placeholder_src(scheme: &str, src: &str) -> String {
 /// `vector` cargo feature.
 pub(crate) fn generate_vectors(
     html: &str,
-    images: &mut BTreeMap<String, Vec<u8>>,
+    images: &mut Images<'_>,
     svg_assets: &BTreeMap<String, String>,
-    sources: &mut BTreeMap<String, String>,
+    sources: &mut BTreeMap<String, VectorSource>,
 ) -> String {
     #[cfg(feature = "vector")]
     {
-        use crate::{barcode, charts_svg, raster};
+        use crate::{barcode, charts_svg};
         use serde_json::Value as JsonValue;
 
         let mut boxes: BTreeMap<String, (Option<f64>, Option<f64>)> = BTreeMap::new();
@@ -341,7 +369,7 @@ pub(crate) fn generate_vectors(
                 None
             };
             let registered_key = short_src.as_ref().unwrap_or(&src);
-            if !images.contains_key(registered_key) {
+            if !images.contains_key(registered_key) && !sources.contains_key(registered_key) {
                 // One closure so any step can bail out with `?`: an
                 // unfillable placeholder is simply left unresolved. Yields
                 // the SVG and the box to rasterize it at.
@@ -370,13 +398,16 @@ pub(crate) fn generate_vectors(
                     }
                     None
                 })();
-                let png = svg.and_then(|(svg, w, h)| {
-                    let png = raster::svg_to_png(&svg, w, h)?;
-                    sources.insert(registered_key.clone(), svg);
-                    Some(png)
-                });
-                if let Some(png) = png {
-                    images.insert(registered_key.clone(), png);
+                // Rasterizing waits for the vector pass, which only needs the
+                // PNG if the SVG cannot become a vector (see `vector_pdf`).
+                if let Some((svg, w, h)) = svg {
+                    sources.insert(
+                        registered_key.clone(),
+                        VectorSource {
+                            svg,
+                            raster_box: Some((w, h)),
+                        },
+                    );
                 } else if short_src.is_some() {
                     // Nothing to embed, so no rewrite either -- leave the
                     // original (unresolvable) src in place, same as any
@@ -413,7 +444,7 @@ pub(crate) fn generate_vectors(
 /// Pass 2: center-crops source bytes to an `<img>` box's aspect ratio when
 /// the markup asks for `object-fit: cover` with a px box, rewriting the
 /// `src` to the cropped variant. Returns the rewritten HTML.
-fn apply_cover_crops(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
+fn apply_cover_crops(html: &str, images: &mut Images<'_>) -> String {
     let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
     let mut cropped: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for tag in scan_img_tags(html) {
@@ -459,7 +490,7 @@ fn apply_cover_crops(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Stri
         }
     }
     for (key, bytes) in cropped {
-        images.insert(key, bytes);
+        images.insert(key, bytes.into());
     }
     let mut out = html.to_string();
     // Back to front so earlier spans stay valid.
@@ -507,7 +538,7 @@ fn exif_orientation(bytes: &[u8]) -> image::metadata::Orientation {
 /// those another pass would re-encode: an untouched photo would otherwise keep
 /// its sideways pixels. Images without an orientation tag are left byte for
 /// byte as they were.
-fn apply_exif_orientation(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
+fn apply_exif_orientation(html: &str, images: &mut Images<'_>) {
     let srcs: BTreeSet<String> = scan_img_tags(html)
         .iter()
         .filter_map(|tag| attr_value(&tag.attrs, "src").map(str::to_string))
@@ -531,7 +562,7 @@ fn apply_exif_orientation(html: &str, images: &mut BTreeMap<String, Vec<u8>>) {
                 .is_ok()
         };
         if written {
-            images.insert(src, out);
+            images.insert(src, out.into());
         }
     }
 }
@@ -603,11 +634,7 @@ const MAX_IMAGE_DIMENSION_PX: u32 = 4096;
 /// only layout knows.
 pub(crate) type PageBound = (f64, f64);
 
-fn normalize_resolutions(
-    html: &str,
-    images: &mut BTreeMap<String, Vec<u8>>,
-    page: Option<PageBound>,
-) {
+fn normalize_resolutions(html: &str, images: &mut Images<'_>, page: Option<PageBound>) {
     // The widest/tallest box each src paints into governs its limit.
     struct Limit {
         w: Option<f64>,
@@ -652,7 +679,7 @@ fn normalize_resolutions(
         })
         .collect();
     for (src, bytes) in replacements {
-        images.insert(src, bytes);
+        images.insert(src, bytes.into());
     }
 }
 
@@ -770,14 +797,23 @@ fn encode_jpeg(img: &image::DynamicImage, out: &mut Vec<u8>) -> Option<()> {
 /// the side channel reaches the substrate.
 #[cfg(test)]
 pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> String {
-    prepare_assets_with_vectors(
+    let mut prepared: Images<'_> = std::mem::take(images)
+        .into_iter()
+        .map(|(src, bytes)| (src, Cow::Owned(bytes)))
+        .collect();
+    let out = prepare_assets_with_vectors(
         html,
-        images,
+        &mut prepared,
         &BTreeMap::new(),
         None,
         true,
         &mut BTreeMap::new(),
-    )
+    );
+    *images = prepared
+        .into_iter()
+        .map(|(src, bytes)| (src, bytes.into_owned()))
+        .collect();
+    out
 }
 
 /// Like [`prepare_assets`], with the vector substrate's side channel:
@@ -786,11 +822,11 @@ pub fn prepare_assets(html: &str, images: &mut BTreeMap<String, Vec<u8>>) -> Str
 /// keeps its own resolution, and preparing photos is `pdfcn images`' job.
 pub(crate) fn prepare_assets_with_vectors(
     html: &str,
-    images: &mut BTreeMap<String, Vec<u8>>,
+    images: &mut Images<'_>,
     svg_assets: &BTreeMap<String, String>,
     page: Option<PageBound>,
     shrink: bool,
-    vector_sources: &mut BTreeMap<String, String>,
+    vector_sources: &mut BTreeMap<String, VectorSource>,
 ) -> String {
     // Orientation first, on the full-resolution bytes: the crops and the
     // normalisation below must all see the picture the right way up.
@@ -817,7 +853,7 @@ pub(crate) fn prepare_assets_with_vectors(
                 .map(|(base, _)| base.to_string())
         })
         .collect();
-    let parked: Vec<(String, Vec<u8>)> = cropped_bases
+    let parked: Vec<(String, Cow<'_, [u8]>)> = cropped_bases
         .into_iter()
         .filter_map(|base| images.remove(&base).map(|bytes| (base, bytes)))
         .collect();
@@ -877,19 +913,24 @@ mod tests {
 
     #[cfg(feature = "vector")]
     #[test]
-    fn an_icon_placeholder_becomes_a_png_in_its_colour() {
+    fn an_icon_placeholder_becomes_a_vector_source_in_its_colour() {
         let payload: String = "receipt|#ff0000|2"
             .bytes()
             .map(|b| format!("{b:02x}"))
             .collect();
         let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
         let mut images = BTreeMap::new();
-        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut BTreeMap::new());
-        let png = images
+        let mut sources = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut sources);
+        // Nothing is rasterized up front: the vector pass decides.
+        assert!(images.is_empty());
+        let source = sources
             .get(&format!("pdfcn-icon:{payload}"))
-            .expect("the icon was rasterised");
-        let img = image::load_from_memory(png).unwrap().to_rgba8();
-        // 24 CSS px at 3x print density.
+            .expect("the icon was resolved");
+        assert_eq!(source.raster_box, Some((Some(24.0), Some(24.0))));
+        // Its fallback raster: 24 CSS px at 3x print density, in red.
+        let png = crate::raster::svg_to_png(&source.svg, Some(24.0), Some(24.0)).unwrap();
+        let img = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!((img.width(), img.height()), (72, 72));
         // Drawn in red, and transparent elsewhere.
         assert!(img.pixels().any(|p| p[0] > 200 && p[1] < 40 && p[3] > 200));
@@ -905,8 +946,10 @@ mod tests {
             .collect();
         let html = format!(r#"<img src="pdfcn-icon:{payload}" style="width:24px;height:24px;">"#);
         let mut images = BTreeMap::new();
-        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut BTreeMap::new());
+        let mut sources = BTreeMap::new();
+        generate_vectors(&html, &mut images, &BTreeMap::new(), &mut sources);
         assert!(images.is_empty());
+        assert!(sources.is_empty());
     }
 
     #[test]
@@ -1055,7 +1098,8 @@ mod tests {
     #[test]
     fn a_cover_banner_with_an_unknown_width_keeps_the_pixels_the_page_width_needs() {
         let src = "photo.png";
-        let mut images = BTreeMap::from([(src.to_string(), png_bytes(6300, 8400, [1, 2, 3]))]);
+        let mut images =
+            BTreeMap::from([(src.to_string(), Cow::from(png_bytes(6300, 8400, [1, 2, 3])))]);
         let html = format!(r#"<img src="{src}" style="width:100%;height:300px;object-fit:cover">"#);
         prepare_assets_with_vectors(
             &html,
@@ -1077,7 +1121,7 @@ mod tests {
     fn without_shrink_an_oversized_source_keeps_its_resolution() {
         let src = "photo.png";
         let original = png_bytes(2000, 1000, [1, 2, 3]);
-        let mut images = BTreeMap::from([(src.to_string(), original.clone())]);
+        let mut images = BTreeMap::from([(src.to_string(), Cow::from(original.clone()))]);
         let html = format!(r#"<img src="{src}" style="width:100px;height:50px">"#);
         prepare_assets_with_vectors(
             &html,

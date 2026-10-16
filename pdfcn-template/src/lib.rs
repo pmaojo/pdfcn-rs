@@ -3,6 +3,7 @@
 //! `- include` partials, using `minijinja` purely as an expression engine
 //! (no `.jinja` template files, no I/O of its own).
 
+use std::borrow::Cow;
 use std::fmt;
 
 use minijinja::Environment;
@@ -113,14 +114,78 @@ fn display_value(value: &JsonValue) -> String {
     }
 }
 
+/// The variables an expression can see: the caller's context, never copied,
+/// under a stack of frames holding what the template itself bound (`- for`
+/// items, `loop`, `- set`). Entering a loop iteration pushes one frame with
+/// its two bindings and leaving it pops that frame, so an iteration costs
+/// O(1) however large the context is -- it used to clone the whole context
+/// object once per iteration. Lookups walk the frames innermost first, so an
+/// inner binding shadows an outer one (and the context) exactly as the old
+/// merged copy did.
+struct Scope<'a> {
+    base: &'a JsonValue,
+    /// Innermost last. Frame 0 belongs to the top level of the document.
+    frames: Vec<Vec<(String, JsonValue)>>,
+}
+
+impl<'a> Scope<'a> {
+    fn new(base: &'a JsonValue) -> Self {
+        Self {
+            base,
+            frames: vec![Vec::new()],
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&JsonValue> {
+        for frame in self.frames.iter().rev() {
+            if let Some((_, value)) = frame.iter().rev().find(|(k, _)| k == name) {
+                return Some(value);
+            }
+        }
+        self.base.get(name)
+    }
+
+    /// Binds `name` in the innermost frame (`- set`), replacing an earlier
+    /// binding of the same name there. A top-level `- set` over a context that
+    /// is not an object has nowhere to go and is dropped -- like an unknown
+    /// utility class this degrades rather than fails the render (and is what
+    /// binding into a non-object context always did).
+    fn set(&mut self, name: &str, value: JsonValue) {
+        if self.frames.len() == 1 && !self.base.is_object() {
+            return;
+        }
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        match frame.iter_mut().find(|(k, _)| k == name) {
+            Some(slot) => slot.1 = value,
+            None => frame.push((name.to_string(), value)),
+        }
+    }
+
+    /// Only the root variables `names` mentions, as a minijinja context: what
+    /// an expression handed to minijinja can reach, without serializing the
+    /// whole context for each one.
+    fn minijinja_context<'n>(
+        &self,
+        names: impl IntoIterator<Item = &'n String>,
+    ) -> minijinja::Value {
+        let map: serde_json::Map<String, JsonValue> = names
+            .into_iter()
+            .filter_map(|name| Some((name.clone(), self.get(name)?.clone())))
+            .collect();
+        minijinja::Value::from_serialize(&map)
+    }
+}
+
 /// Resolves an expression that is a plain variable path -- `title`,
-/// `p.name`, `rows[0].total` -- straight against the JSON context. Most
-/// template expressions are exactly that, and handing each one to minijinja
-/// meant serializing the *whole* context into minijinja values first: a
-/// 100-product catalog paid for 100 products once per `{{ p.name }}`. Returns
-/// `None` for anything else, and for any path that does not resolve, so
-/// minijinja keeps the final word on every case this does not cover.
-fn eval_path(expr: &str, ctx: &JsonValue) -> Option<JsonValue> {
+/// `p.name`, `rows[0].total` -- straight against the scope. Most template
+/// expressions are exactly that, and handing each one to minijinja meant
+/// serializing the context into minijinja values first: a 100-product catalog
+/// paid for 100 products once per `{{ p.name }}`. Returns `None` for anything
+/// else, and for any path that does not resolve, so minijinja keeps the final
+/// word on every case this does not cover.
+fn eval_path<'s>(expr: &str, scope: &'s Scope<'_>) -> Option<&'s JsonValue> {
     let bytes = expr.as_bytes();
     let ident_end = |from: usize| {
         let mut i = from;
@@ -135,7 +200,7 @@ fn eval_path(expr: &str, ctx: &JsonValue) -> Option<JsonValue> {
     if matches!(root, "true" | "false" | "none" | "True" | "False" | "None") {
         return None;
     }
-    let mut value = ctx.get(root)?;
+    let mut value = scope.get(root)?;
     let mut i = end;
     while i < bytes.len() {
         match bytes[i] {
@@ -153,30 +218,36 @@ fn eval_path(expr: &str, ctx: &JsonValue) -> Option<JsonValue> {
             _ => return None,
         }
     }
-    Some(value.clone())
+    Some(value)
 }
 
-fn eval_expr(expr: &str, ctx: &JsonValue, env: &Environment) -> Result<JsonValue, EvalError> {
-    if let Some(value) = eval_path(expr, ctx) {
-        return Ok(value);
+fn eval_expr<'s>(
+    expr: &str,
+    scope: &'s Scope<'_>,
+    env: &Environment,
+) -> Result<Cow<'s, JsonValue>, EvalError> {
+    if let Some(value) = eval_path(expr, scope) {
+        return Ok(Cow::Borrowed(value));
     }
-    let mv_ctx = minijinja::Value::from_serialize(ctx);
     let compiled = env
         .compile_expression(expr)
         .map_err(|source| EvalError::Expr {
             expr: expr.to_string(),
             source,
         })?;
-    let result = compiled.eval(mv_ctx).map_err(|source| EvalError::Expr {
+    let ctx = scope.minijinja_context(&compiled.undeclared_variables(false));
+    let result = compiled.eval(ctx).map_err(|source| EvalError::Expr {
         expr: expr.to_string(),
         source,
     })?;
-    Ok(serde_json::to_value(result).unwrap_or(JsonValue::Null))
+    Ok(Cow::Owned(
+        serde_json::to_value(result).unwrap_or(JsonValue::Null),
+    ))
 }
 
 /// Replaces every `{{ expr }}` span in `text` with its evaluated,
 /// stringified value.
-fn interpolate(text: &str, ctx: &JsonValue, env: &Environment) -> Result<String, EvalError> {
+fn interpolate(text: &str, scope: &Scope<'_>, env: &Environment) -> Result<String, EvalError> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("{{") {
@@ -188,7 +259,7 @@ fn interpolate(text: &str, ctx: &JsonValue, env: &Environment) -> Result<String,
             break;
         };
         let expr = after[..end].trim();
-        let value = eval_expr(expr, ctx, env)?;
+        let value = eval_expr(expr, scope, env)?;
         out.push_str(&display_value(&value));
         rest = &after[end + 2..];
     }
@@ -198,15 +269,15 @@ fn interpolate(text: &str, ctx: &JsonValue, env: &Environment) -> Result<String,
 
 fn resolve_attrs(
     attrs: &[Attr],
-    ctx: &JsonValue,
+    scope: &Scope<'_>,
     env: &Environment,
 ) -> Result<Vec<ResolvedAttr>, EvalError> {
     attrs
         .iter()
         .map(|a| {
             let value = match &a.value {
-                AttrValue::Literal(s) => interpolate(s, ctx, env)?,
-                AttrValue::Expr(e) => display_value(&eval_expr(e, ctx, env)?),
+                AttrValue::Literal(s) => interpolate(s, scope, env)?,
+                AttrValue::Expr(e) => display_value(&*eval_expr(e, scope, env)?),
             };
             Ok(ResolvedAttr {
                 name: a.name.clone(),
@@ -214,21 +285,6 @@ fn resolve_attrs(
             })
         })
         .collect()
-}
-
-fn with_binding(ctx: &JsonValue, binding: &str, item: JsonValue) -> JsonValue {
-    match ctx {
-        JsonValue::Object(map) => {
-            let mut merged = map.clone();
-            merged.insert(binding.to_string(), item);
-            JsonValue::Object(merged)
-        }
-        _ => {
-            let mut merged = serde_json::Map::new();
-            merged.insert(binding.to_string(), item);
-            JsonValue::Object(merged)
-        }
-    }
 }
 
 /// The per-iteration `loop` binding exposed to `- for` bodies, mirroring
@@ -244,21 +300,20 @@ fn loop_binding(index: usize, length: usize) -> JsonValue {
     })
 }
 
-/// Evaluates a node list against `ctx`. Takes `&mut` because `- set` binds
-/// a value into the context for every node after it; nested scopes (loop
-/// bodies, included partials) work on their own mutable copy derived from
-/// the enclosing context, so a `- set` inside a loop iteration is scoped to
-/// that iteration — matching Jinja's scoping.
+/// Evaluates a node list in `scope`. Takes `&mut` because `- set` binds a
+/// value for every node after it; a loop iteration gets a frame of its own,
+/// so a `- set` inside it is scoped to that iteration -- matching Jinja's
+/// scoping. An included partial shares its includer's frame.
 fn evaluate_nodes(
     nodes: &[Node],
-    ctx: &mut JsonValue,
+    scope: &mut Scope<'_>,
     env: &Environment,
     loader: &dyn PartialLoader,
 ) -> Result<Vec<Resolved>, EvalError> {
     let mut out = Vec::with_capacity(nodes.len());
     for node in nodes {
         match node {
-            Node::Text(text) => out.push(Resolved::Text(interpolate(text, ctx, env)?)),
+            Node::Text(text) => out.push(Resolved::Text(interpolate(text, scope, env)?)),
             Node::Element {
                 tag,
                 id,
@@ -269,8 +324,8 @@ fn evaluate_nodes(
                 tag: tag.clone(),
                 id: id.clone(),
                 classes: classes.clone(),
-                attrs: resolve_attrs(attrs, ctx, env)?,
-                children: evaluate_nodes(children, ctx, env, loader)?,
+                attrs: resolve_attrs(attrs, scope, env)?,
+                children: evaluate_nodes(children, scope, env, loader)?,
             }),
             Node::Component {
                 name,
@@ -278,15 +333,17 @@ fn evaluate_nodes(
                 children,
             } => out.push(Resolved::Component {
                 name: name.clone(),
-                attrs: resolve_attrs(attrs, ctx, env)?,
-                children: evaluate_nodes(children, ctx, env, loader)?,
+                attrs: resolve_attrs(attrs, scope, env)?,
+                children: evaluate_nodes(children, scope, env, loader)?,
             }),
             Node::For {
                 binding,
                 iterable,
                 body,
             } => {
-                let seq = eval_expr(iterable, ctx, env)?;
+                // One copy of the list per loop (the items then move into
+                // their frames); never one copy of the context per item.
+                let seq = eval_expr(iterable, scope, env)?.into_owned();
                 let JsonValue::Array(items) = seq else {
                     return Err(EvalError::NotIterable {
                         binding: binding.clone(),
@@ -295,11 +352,13 @@ fn evaluate_nodes(
                 };
                 let length = items.len();
                 for (index, item) in items.into_iter().enumerate() {
-                    let mut child_ctx = with_binding(ctx, binding, item);
-                    if let Some(map) = child_ctx.as_object_mut() {
-                        map.insert("loop".to_string(), loop_binding(index, length));
-                    }
-                    out.extend(evaluate_nodes(body, &mut child_ctx, env, loader)?);
+                    scope.frames.push(vec![
+                        (binding.clone(), item),
+                        ("loop".to_string(), loop_binding(index, length)),
+                    ]);
+                    let body = evaluate_nodes(body, scope, env, loader);
+                    scope.frames.pop();
+                    out.extend(body?);
                 }
             }
             Node::If {
@@ -308,29 +367,25 @@ fn evaluate_nodes(
             } => {
                 let mut matched = false;
                 for (cond, body) in branches {
-                    if is_truthy(&eval_expr(cond, ctx, env)?) {
-                        out.extend(evaluate_nodes(body, ctx, env, loader)?);
+                    if is_truthy(&*eval_expr(cond, scope, env)?) {
+                        out.extend(evaluate_nodes(body, scope, env, loader)?);
                         matched = true;
                         break;
                     }
                 }
                 if !matched {
                     if let Some(body) = else_body {
-                        out.extend(evaluate_nodes(body, ctx, env, loader)?);
+                        out.extend(evaluate_nodes(body, scope, env, loader)?);
                     }
                 }
             }
             Node::Include { path } => {
                 let partial = loader.load(path)?;
-                out.extend(evaluate_nodes(&partial, ctx, env, loader)?);
+                out.extend(evaluate_nodes(&partial, scope, env, loader)?);
             }
             Node::Set { name, expr } => {
-                let value = eval_expr(expr, ctx, env)?;
-                if let JsonValue::Object(map) = ctx {
-                    map.insert(name.clone(), value);
-                }
-                // A non-object context has nowhere to bind; like an unknown
-                // utility class this degrades rather than fails the render.
+                let value = eval_expr(expr, scope, env)?.into_owned();
+                scope.set(name, value);
             }
         }
     }
@@ -345,9 +400,10 @@ pub fn evaluate(
     loader: &dyn PartialLoader,
 ) -> Result<Vec<Resolved>, EvalError> {
     let env = Environment::new();
-    // `- set` mutates the context; the caller's value stays untouched.
-    let mut ctx = context.clone();
-    evaluate_nodes(document, &mut ctx, &env, loader)
+    // `- set` binds into the scope's own frames; the caller's value is only
+    // ever read.
+    let mut scope = Scope::new(context);
+    evaluate_nodes(document, &mut scope, &env, loader)
 }
 
 #[cfg(test)]
@@ -387,7 +443,11 @@ mod tests {
             "p.nested.x",
             "rows[0][0].total",
         ] {
-            assert_eq!(eval_path(expr, &ctx), Some(via_minijinja(expr)), "{expr}");
+            assert_eq!(
+                eval_path(expr, &Scope::new(&ctx)).cloned(),
+                Some(via_minijinja(expr)),
+                "{expr}"
+            );
         }
         for expr in [
             "missing",
@@ -401,7 +461,7 @@ mod tests {
             "1abc",
             "",
         ] {
-            assert_eq!(eval_path(expr, &ctx), None, "{expr}");
+            assert_eq!(eval_path(expr, &Scope::new(&ctx)), None, "{expr}");
         }
     }
     use serde_json::json;
@@ -503,6 +563,84 @@ mod tests {
             }
             other => panic!("expected Element, got {other:?}"),
         }
+    }
+
+    fn texts(resolved: &[Resolved]) -> Vec<String> {
+        resolved
+            .iter()
+            .map(|r| match r {
+                Resolved::Element { children, .. } => match &children[0] {
+                    Resolved::Text(t) => t.clone(),
+                    other => panic!("expected Text, got {other:?}"),
+                },
+                other => panic!("expected Element, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// A loop binding shadows a context key of the same name inside the body
+    /// only; the context value is back after the loop.
+    #[test]
+    fn a_loop_binding_shadows_the_context_only_inside_the_loop() {
+        let doc = parse_document(
+            "- for x in xs
+  %p {{ x }}
+%p {{ x }}",
+        )
+        .unwrap();
+        let ctx = json!({ "x": "outer", "xs": ["a", "b"] });
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        assert_eq!(texts(&resolved), ["a", "b", "outer"]);
+    }
+
+    /// Nested loops see the outer item, the inner `loop` shadows the outer
+    /// one, and expressions minijinja evaluates (filters, arithmetic) see the
+    /// same bindings as plain paths do.
+    #[test]
+    fn nested_loops_and_minijinja_expressions_see_every_frame() {
+        let doc = parse_document(concat!(
+            "- for row in rows
+",
+            "  - for cell in row.cells
+",
+            "    %p {{ row.name | upper }}-{{ cell * 10 }}-{{ loop.index1 }}/{{ loop.length }}-{{ title }}",
+        ))
+        .unwrap();
+        let ctx = json!({ "title": "T", "rows": [
+            { "name": "a", "cells": [1, 2] },
+            { "name": "b", "cells": [3] },
+        ]});
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        assert_eq!(texts(&resolved), ["A-10-1/2-T", "A-20-2/2-T", "B-30-1/1-T"]);
+    }
+
+    /// `- set` inside an iteration is scoped to that iteration; a top-level
+    /// `- set` shadows the context for the rest of the document, and the
+    /// caller's context is never modified.
+    #[test]
+    fn set_is_scoped_like_jinja_and_never_touches_the_callers_context() {
+        let doc = parse_document(concat!(
+            "- set label = \"top\"\n",
+            "- for x in xs\n",
+            "  - set label = x ~ \"!\"\n",
+            "  %p {{ label }}\n",
+            "%p {{ label }}",
+        ))
+        .unwrap();
+        let ctx = json!({ "label": "ctx", "xs": ["a", "b"] });
+        let before = ctx.clone();
+        let resolved = evaluate(&doc, &ctx, &NoPartials).unwrap();
+        assert_eq!(texts(&resolved), ["a!", "b!", "top"]);
+        assert_eq!(ctx, before);
+    }
+
+    /// A context that is not an object still renders: loops bind their item,
+    /// and a top-level `- set` is dropped as it always was.
+    #[test]
+    fn a_non_object_context_degrades_like_before() {
+        let doc = parse_document("- set y = 1\n%p [{{ y }}]").unwrap();
+        let resolved = evaluate(&doc, &json!([1, 2]), &NoPartials).unwrap();
+        assert_eq!(texts(&resolved), ["[]"]);
     }
 
     #[test]
