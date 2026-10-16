@@ -45,10 +45,11 @@ Factura de `examples/invoice` en cinco herramientas, mediana de 15 procesos,
 | react-pdf 4.9 (Inter) | 733 ms | 32 ms |
 | WeasyPrint 70 | 1661 ms | 557 ms |
 
-`bench/catalog/`: catálogo de 100 fotos + 100 SVG. **Ahí pdfcn es el más
-lento** (≈18,6 s frente a 0,56 s de Typst); el coste está en el pase de fotos
-(~180 ms por foto), no en los SVG. Pendiente de investigar antes de publicar
-cualquier afirmación de velocidad más allá de la factura.
+`bench/catalog/`: catálogo de 100 fotos + 100 SVG. Era el punto débil
+(≈18,6 s frente a 0,56 s de Typst): cada foto se decodificaba tres veces y se
+re-codificaba a JPEG dos. Desde el spike 005 los JPEG van al PDF tal cual,
+como en Typst: **≈0,4 s** en este contenedor (4 núcleos; aún sin re-medir las
+demás herramientas aquí).
 
 Requisitos para reproducir: `npm i @react-pdf/renderer@4.9.0 react@19
 playwright-core` y un venv con `typst weasyprint` dentro de `bench/`;
@@ -57,5 +58,5 @@ script de recarga. `CHROMIUM=` apunta a otro binario de Chromium.
 
 ## Pendiente
 
-- Optimizar el pase de fotos (catálogo de 100 imágenes).
+- Re-medir el catálogo con todas las herramientas tras el spike 005.
 - Revisar el texto de la slide 03 si cambian las cifras.

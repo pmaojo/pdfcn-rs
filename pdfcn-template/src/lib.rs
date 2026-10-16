@@ -113,7 +113,53 @@ fn display_value(value: &JsonValue) -> String {
     }
 }
 
+/// Resolves an expression that is a plain variable path -- `title`,
+/// `p.name`, `rows[0].total` -- straight against the JSON context. Most
+/// template expressions are exactly that, and handing each one to minijinja
+/// meant serializing the *whole* context into minijinja values first: a
+/// 100-product catalog paid for 100 products once per `{{ p.name }}`. Returns
+/// `None` for anything else, and for any path that does not resolve, so
+/// minijinja keeps the final word on every case this does not cover.
+fn eval_path(expr: &str, ctx: &JsonValue) -> Option<JsonValue> {
+    let bytes = expr.as_bytes();
+    let ident_end = |from: usize| {
+        let mut i = from;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        (i > from && !bytes[from].is_ascii_digit()).then_some(i)
+    };
+    let end = ident_end(0)?;
+    let root = &expr[..end];
+    // Literals minijinja reads as constants, never as variables.
+    if matches!(root, "true" | "false" | "none" | "True" | "False" | "None") {
+        return None;
+    }
+    let mut value = ctx.get(root)?;
+    let mut i = end;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'.' => {
+                let end = ident_end(i + 1)?;
+                value = value.as_object()?.get(&expr[i + 1..end])?;
+                i = end;
+            }
+            b'[' => {
+                let close = i + 1 + expr[i + 1..].find(']')?;
+                let index: usize = expr[i + 1..close].parse().ok()?;
+                value = value.as_array()?.get(index)?;
+                i = close + 1;
+            }
+            _ => return None,
+        }
+    }
+    Some(value.clone())
+}
+
 fn eval_expr(expr: &str, ctx: &JsonValue, env: &Environment) -> Result<JsonValue, EvalError> {
+    if let Some(value) = eval_path(expr, ctx) {
+        return Ok(value);
+    }
     let mv_ctx = minijinja::Value::from_serialize(ctx);
     let compiled = env
         .compile_expression(expr)
@@ -308,6 +354,56 @@ pub fn evaluate(
 mod tests {
     use super::*;
     use pdfcn_parser::parse_document;
+
+    /// The path fast path must agree with minijinja on everything it
+    /// answers, and decline (None) everything else.
+    #[test]
+    fn plain_paths_resolve_like_minijinja() {
+        let ctx = serde_json::json!({
+            "title": "T",
+            "n": 1.5,
+            "big": 12345678901234u64,
+            "p": {"name": "Ana", "tags": ["a", "b"], "nested": {"x": null}},
+            "rows": [[{"total": 3}]],
+        });
+        let env = Environment::new();
+        let via_minijinja = |expr: &str| {
+            let compiled = env.compile_expression(expr).unwrap();
+            serde_json::to_value(
+                compiled
+                    .eval(minijinja::Value::from_serialize(&ctx))
+                    .unwrap(),
+            )
+            .unwrap_or(JsonValue::Null)
+        };
+        for expr in [
+            "title",
+            "n",
+            "big",
+            "p",
+            "p.name",
+            "p.tags",
+            "p.tags[1]",
+            "p.nested.x",
+            "rows[0][0].total",
+        ] {
+            assert_eq!(eval_path(expr, &ctx), Some(via_minijinja(expr)), "{expr}");
+        }
+        for expr in [
+            "missing",
+            "p.missing",
+            "p.tags[9]",
+            "title | upper",
+            "n + 1",
+            "true",
+            "none",
+            "p['name']",
+            "1abc",
+            "",
+        ] {
+            assert_eq!(eval_path(expr, &ctx), None, "{expr}");
+        }
+    }
     use serde_json::json;
 
     #[test]

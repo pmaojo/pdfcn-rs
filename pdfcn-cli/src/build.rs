@@ -87,6 +87,11 @@ pub struct BuildArgs {
     /// auto, jpeg, lossless, or raw
     #[arg(long)]
     image_format: Option<String>,
+    /// Downscale images carrying at least twice what their box can print
+    /// (~300dpi) before embedding them. Off by default: images go in as they
+    /// are, so prepare photos once with `pdfcn images` instead
+    #[arg(long, default_value_t = false)]
+    shrink_images: bool,
     /// PDF document title metadata
     #[arg(long)]
     title: Option<String>,
@@ -371,6 +376,7 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
         show_page_numbers: args.show_page_numbers,
         skip_first_page: args.skip_first_page,
         image_optimization,
+        shrink_images: args.shrink_images,
         metadata: DocumentMetadata {
             title: args.title,
             author: args.author,

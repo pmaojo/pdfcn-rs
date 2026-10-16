@@ -51,7 +51,7 @@ path = "src/lib.rs"
 # pull vector/factur-x in even if some other crate's build asked for
 # `--no-default-features` -- this deployed function wants them
 # unconditionally, not by accident of unification.
-pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x"] }
+pdfcn-core = { workspace = true, default-features = false, features = ["vector", "factur-x", "jpeg-passthrough"] }
 pdfcn-parser = { workspace = true }
 vercel_runtime = { workspace = true }
 http = { version = "1", default-features = false }
@@ -146,7 +146,11 @@ napi = { version = "2", default-features = false, features = ["napi4"] }
 napi-derive = "2"
 
 [profile.release]
-opt-level = "z"
+# Speed, not size: "z" made every render of an image- or text-heavy document
+# ~1.7x slower (catalog of 100 photos 667ms -> 394ms, invoice 47ms -> 39ms)
+# to save 6MB on generate-pdf (26.8MB vs 20.9MB, tripwire 60MB). See
+# docs/spikes/005-image-fast-path.md.
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"

@@ -153,6 +153,8 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
         show_page_numbers: opts.show_page_numbers.unwrap_or(false),
         skip_first_page: opts.skip_first_page.unwrap_or(false),
         image_optimization,
+        // Photos go in at their own resolution; callers prepare them first.
+        shrink_images: false,
         metadata: DocumentMetadata {
             title: opts.title,
             author: opts.author,

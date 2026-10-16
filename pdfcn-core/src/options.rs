@@ -58,6 +58,11 @@ pub struct RenderOptions {
     /// compression is already on by default; this is what makes it
     /// tunable rather than what turns it on.
     pub image_optimization: Option<ImageOptimization>,
+    /// Downscale each image to ~300dpi of its layout box (and 4096px a side)
+    /// before embedding it, when it carries at least twice that. Off by
+    /// default: an image goes in at its own resolution, a JPEG byte for byte,
+    /// and preparing photos once is `pdfcn images`' job, not every render's.
+    pub shrink_images: bool,
     pub metadata: DocumentMetadata,
     /// The side channel for the Wave 1 vector substrate: `id -> SVG source`
     /// for `%Vector(id="...")` placeholders (`<img src="pdfcn-vector:{id}">`).
