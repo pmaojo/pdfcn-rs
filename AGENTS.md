@@ -51,7 +51,7 @@ cargo tree --edges features -p pdfcn-vercel   # resvg/lopdf are expected now
 | `pdfcn-parser` | Indentation-based HAML-like lexer/parser (`winnow`) → AST |
 | `pdfcn-template` | `{{ interpolation }}`, `- for`, `- if`, `- include` (`minijinja`) |
 | `pdfcn-components` | `%InvoiceTable`, `%Badge`, `%Card`, `%LineChart`, `%Barcode`, ... registry |
-| `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (`lightningcss`) |
+| `pdfcn-styles` | Zero-Node Tailwind-style utility scanner + print-safe CSS (own minifier, no dependencies) |
 | `pdfcn-core` | Orchestrates the pipeline; HTML → PDF; the Cargo features (`vector`, `factur-x`, `jpeg-passthrough`, `cache`, all on by default) live here |
 | `pdfcn-cli` | `pdfcn new / add / build / dev` |
 | `api/generate-pdf.rs`, `api/generate-pdf-batch.rs` | Vercel Function handlers |

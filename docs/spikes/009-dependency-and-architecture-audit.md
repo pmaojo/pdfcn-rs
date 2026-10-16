@@ -153,4 +153,43 @@ internos de página e imagen.
 
 ## Resultados
 
-(Se rellena con cada paso.)
+Mismo método que arriba. «Líneas» = la cifra del prompt; «únicos» = nombre +
+versión.
+
+| Paso | Líneas | Únicos | `generate-pdf` | Notas |
+|---|---|---|---|---|
+| Antes (fases A–C) | 417 | 329 | 27,0 MB | |
+| D1 features | 390 | 308 | 26,9 MB | golden igual |
+| D2 sin uso | 390 | 308 | 26,9 MB | manifiestos honestos; ningún crate sale del grafo |
+| D3 lightningcss → `minify.rs` | **365** | **285** | **22,9 MB** | render igual (instrucciones: factura +0,1 %, catálogo −0,5 %); compilación en limpio 508 → **458 s** (−10 %; enlace 183 → 148 s; 440 → 376 unidades) |
+
+### D3 — lo que se encontró al sustituir lightningcss
+
+`pdfcn-styles` queda sin ninguna dependencia. `minify.rs` (≈200 líneas con
+tests) compacta espacios, escribe todo `rgb/rgba/hsl/hsla` como hex y pone
+`px` a un número suelto en una propiedad de longitud. La prueba de
+equivalencia (`pdfcn-core/tests/css_equivalence.rs`, lightningcss solo como
+dev-dependency) renderiza **todo el corpus** (`fixtures/utility-corpus.txt`,
+1 719 utilidades que resuelven por tema, claro y oscuro) en bloques de 64 con
+la hoja nueva y con lo que el código viejo enviaba, y compara los ops de
+página. Resultado: **idénticos** (colores a ±1/255), con dos excepciones que
+resultaron ser bugs del código viejo, no del nuevo:
+
+1. Cualquier clase que necesita selector de atributo — `w-1/2`, `p-2.5`,
+   todo valor arbitrario — hacía que lightningcss soltase una `\`, y el código
+   viejo enviaba entonces **la hoja sin minificar**. En ese camino azul
+   convertía `hsl()` por su cuenta (±1 en un canal) y no podía leer
+   `rgb(0 0 0/50%)`, que además le hacía perder las reglas siguientes.
+2. En ese mismo camino, `border-color: hsl(214.3, 31.8%, 91.4%)` no lo lee el
+   parser de `border-color` de azul (cuatro lados separados por espacios): el
+   token `border` de shadcn salía **negro, o no salía**.
+
+Los dos casos tienen test (`a_space_separated_colour_no_longer_costs_the_rules_after_it`,
+`a_border_takes_its_token_colour_whatever_else_the_document_uses`), que
+fallan con la hoja vieja.
+
+**Golden** (regenerado a propósito, 7 páginas de `invoice`, `showcase` y
+`verifactu`, que usan esas clases): los bordes de tablas y tarjetas pasan de
+negro o ausentes al color del token (`rgb(226, 232, 240)`), y algunos
+colores cambian en 1 en un canal (`rgb(1, 8, 22)` → `rgb(2, 8, 23)`, que es
+`#020817`, el valor exacto de shadcn).

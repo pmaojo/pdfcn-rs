@@ -1069,8 +1069,8 @@ mod tests {
 
     /// Wave 0's shadcn tokens (semantic theme colors, full neutral/accent
     /// scales, radius/shadow scales) resolve to plain CSS declarations, but
-    /// the pipeline still has to carry that CSS through `lightningcss`
-    /// minification and `printpdf`'s HTML/CSS layout engine end to end.
+    /// the pipeline still has to carry that CSS through the stylesheet
+    /// minifier and `printpdf`'s HTML/CSS layout engine end to end.
     /// This is the sanity check the "Wave 0" scoping asked for before Wave 1
     /// component fidelity can be trusted on top of it.
     #[test]
@@ -1230,7 +1230,7 @@ mod tests {
     /// The theme request field drives token resolution end to end: dark
     /// mode flips `bg-background` (and the primary ink on top of it), and
     /// an override rebrands `bg-primary`. Assertions target the *minified*
-    /// stylesheet values -- lightningcss rewrites `hsl(...)` tokens to hex --
+    /// stylesheet values -- the minifier rewrites `hsl(...)` tokens to hex --
     /// so the expected strings are the hex forms: shadcn's dark background
     /// hsl(222.2, 84%, 4.9%) is #020817, dark primary hsl(210, 40%, 98%)
     /// is #f8fafc.

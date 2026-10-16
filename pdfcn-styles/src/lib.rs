@@ -1,6 +1,7 @@
 mod composite;
 mod decoration;
 mod gap;
+mod minify;
 pub mod theme;
 mod tokens;
 mod utilities;
@@ -16,8 +17,6 @@ pub use theme::{Theme, ThemeMode};
 pub use utilities::{resolve, resolve_with};
 
 use std::collections::BTreeSet;
-
-use lightningcss::stylesheet::{MinifyOptions, ParserOptions, PrinterOptions, StyleSheet};
 
 /// Print-safety rules injected into every generated stylesheet by default
 /// (FR-3): forces background/color reproduction and keeps table rows and
@@ -118,6 +117,14 @@ pub fn build_stylesheet_with_theme(html: &str, theme: &Theme) -> String {
 /// them) and wants to skip re-scanning the HTML for `class="..."`
 /// attributes.
 pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) -> String {
+    minify::minify(&build_stylesheet_unminified(classes, theme))
+}
+
+/// The stylesheet [`build_stylesheet_from_classes`] minifies: one rule per
+/// class, as generated. Public for the equivalence tests that compare the
+/// minifier against its previous implementation; not part of the API.
+#[doc(hidden)]
+pub fn build_stylesheet_unminified(classes: &BTreeSet<String>, theme: &Theme) -> String {
     let mut css = String::from(PRINT_RULES);
     for class in classes {
         // The name may arrive encoded (from finished HTML) or as written.
@@ -133,7 +140,7 @@ pub fn build_stylesheet_from_classes(classes: &BTreeSet<String>, theme: &Theme) 
     if classes.contains("table-striped") {
         css.push_str(TABLE_STRIPED_RULE);
     }
-    minify(&css).unwrap_or(css)
+    css
 }
 
 /// Splits a Tailwind variant prefix off `class`, returning the pseudo
@@ -280,7 +287,7 @@ fn classes_in_style_blocks(html: &str) -> BTreeSet<String> {
 /// anywhere after a `px-2.5`/`py-0.5` class in the same document rendered
 /// with invisible, zero-width bars, because `.w-full` sorted after the
 /// broken selector). The attribute-selector form sidesteps the escape
-/// entirely and both `lightningcss` (this crate's own minifier) and
+/// entirely and both this crate's own minifier (`minify`) and
 /// `azul-layout` parse it correctly.
 fn class_selector(class: &str) -> String {
     // Anything that is not a plain identifier character needs the attribute
@@ -295,29 +302,6 @@ fn class_selector(class: &str) -> String {
     } else {
         format!(".{class}")
     }
-}
-
-fn minify(css: &str) -> Option<String> {
-    let mut sheet = StyleSheet::parse(css, ParserOptions::default()).ok()?;
-    sheet.minify(MinifyOptions::default()).ok()?;
-    let out = sheet
-        .to_css(PrinterOptions {
-            minify: true,
-            ..PrinterOptions::default()
-        })
-        .ok()?;
-    // `class_selector` never emits a backslash (see its own doc comment
-    // for why: azul-layout's parser can't handle one and silently drops
-    // every later rule in the stylesheet). `lightningcss`'s own minifier
-    // can still reintroduce one by unquoting an attribute selector's
-    // value back into an escaped bare identifier -- verified empirically,
-    // not assumed: `[class~="px-2.5"]` came back out as
-    // `[class~=px-2\.5]`. Falling back to the unminified (but always
-    // backslash-free) input is a bigger stylesheet, never a broken one.
-    if out.code.contains('\\') {
-        return None;
-    }
-    Some(out.code)
 }
 
 #[cfg(test)]
@@ -366,7 +350,7 @@ mod tests {
     /// A regression guard for a real bug: a class needing escaping in a
     /// `.class` selector (`px-2.5`, containing a literal dot) used to be
     /// emitted as `.px-2\.5{...}` -- valid CSS, but azul-layout's own
-    /// parser (not lightningcss, which handles it fine) can't parse that
+    /// parser can't parse that
     /// backslash escape and silently drops every rule after it in the
     /// stylesheet, corrupting unrelated components' layout further down
     /// the same document. No selector this crate emits may contain a
