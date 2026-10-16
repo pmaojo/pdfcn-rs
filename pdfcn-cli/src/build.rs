@@ -276,27 +276,15 @@ fn fetch_remote_image(url: &str) -> Option<Vec<u8>> {
 }
 
 fn parse_size(s: &str) -> anyhow::Result<PageSize> {
-    match s.to_ascii_lowercase().as_str() {
-        "a4" => Ok(PageSize::A4),
-        "letter" => Ok(PageSize::Letter),
-        custom => {
-            let (w, h) = custom.split_once('x').ok_or_else(|| {
-                anyhow::anyhow!("invalid --size '{s}', expected a4, letter, or <width>x<height>")
-            })?;
-            Ok(PageSize::Custom {
-                width_mm: w.parse()?,
-                height_mm: h.parse()?,
-            })
-        }
-    }
+    PageSize::from_name(&s.to_ascii_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!("invalid --size '{s}', expected a4, letter, or <width>x<height>")
+    })
 }
 
 fn parse_orientation(s: &str) -> anyhow::Result<Orientation> {
-    match s.to_ascii_lowercase().as_str() {
-        "portrait" => Ok(Orientation::Portrait),
-        "landscape" => Ok(Orientation::Landscape),
-        other => anyhow::bail!("invalid --orientation '{other}', expected portrait or landscape"),
-    }
+    Orientation::from_name(&s.to_ascii_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!("invalid --orientation '{s}', expected portrait or landscape")
+    })
 }
 
 fn parse_theme(s: &str) -> anyhow::Result<Theme> {
@@ -308,15 +296,9 @@ fn parse_theme(s: &str) -> anyhow::Result<Theme> {
 }
 
 fn parse_image_format(s: &str) -> anyhow::Result<ImageFormat> {
-    match s.to_ascii_lowercase().as_str() {
-        "auto" => Ok(ImageFormat::Auto),
-        "jpeg" => Ok(ImageFormat::Jpeg),
-        "lossless" => Ok(ImageFormat::Lossless),
-        "raw" => Ok(ImageFormat::Raw),
-        other => {
-            anyhow::bail!("invalid --image-format '{other}', expected auto, jpeg, lossless, or raw")
-        }
-    }
+    ImageFormat::from_name(&s.to_ascii_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!("invalid --image-format '{s}', expected auto, jpeg, lossless, or raw")
+    })
 }
 
 pub fn run(args: BuildArgs) -> anyhow::Result<()> {

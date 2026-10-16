@@ -112,6 +112,19 @@ pub enum ImageFormat {
     Raw,
 }
 
+impl ImageFormat {
+    /// `auto`, `jpeg`, `lossless` or `raw`; case-sensitive.
+    pub fn from_name(name: &str) -> Option<ImageFormat> {
+        match name {
+            "auto" => Some(ImageFormat::Auto),
+            "jpeg" => Some(ImageFormat::Jpeg),
+            "lossless" => Some(ImageFormat::Lossless),
+            "raw" => Some(ImageFormat::Raw),
+            _ => None,
+        }
+    }
+}
+
 /// Tunes `PdfSaveOptions.image_optimization` (see [`RenderOptions::image_optimization`]).
 /// Every field left `None` keeps printpdf's own default for that setting, except
 /// `max_size`, which defaults to `"64MB"` rather than printpdf's `"2MB"`.

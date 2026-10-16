@@ -3,7 +3,7 @@
 //! metadata. Kept here rather than duplicated per binary the same reason
 //! `auth`/`remote_image` are.
 
-use pdfcn_core::{DocumentMetadata, FacturXProfile, ImageFormat, ImageOptimization};
+use pdfcn_core::{DocumentMetadata, FacturXProfile, ImageFormat, ImageOptimization, PageConfig};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -22,15 +22,11 @@ impl ImageOptimizationDto {
     pub fn into_image_optimization(self) -> Result<ImageOptimization, String> {
         let format = match self.format.as_deref() {
             None => None,
-            Some("auto") => Some(ImageFormat::Auto),
-            Some("jpeg") => Some(ImageFormat::Jpeg),
-            Some("lossless") => Some(ImageFormat::Lossless),
-            Some("raw") => Some(ImageFormat::Raw),
-            Some(other) => {
-                return Err(format!(
-                    "invalid image_optimization.format \"{other}\" (expected \"auto\", \"jpeg\", \"lossless\", or \"raw\")"
-                ))
-            }
+            Some(name) => Some(ImageFormat::from_name(name).ok_or_else(|| {
+                format!(
+                    "invalid image_optimization.format \"{name}\" (expected \"auto\", \"jpeg\", \"lossless\", or \"raw\")"
+                )
+            })?),
         };
         Ok(ImageOptimization {
             quality: self.quality,
@@ -97,5 +93,69 @@ impl FacturXDto {
                 "invalid factur_x.profile \"{other}\" (expected minimum, basic-wl, basic, en16931, or extended)"
             )),
         }
+    }
+}
+
+/// A request's `page` object, shared by both handlers. Lenient by contract:
+/// a missing or unrecognised size or orientation is the default (see
+/// `PageConfig::from_request`).
+#[derive(Clone, Deserialize)]
+pub struct PageConfigDto {
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub orientation: Option<String>,
+    #[serde(default)]
+    pub margin_mm: Option<f32>,
+}
+
+impl PageConfigDto {
+    pub fn into_page_config(self) -> PageConfig {
+        PageConfig::from_request(
+            self.size.as_deref(),
+            self.orientation.as_deref(),
+            self.margin_mm,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdfcn_core::{Orientation, PageSize};
+
+    fn page(json: &str) -> PageConfig {
+        serde_json::from_str::<PageConfigDto>(json)
+            .unwrap()
+            .into_page_config()
+    }
+
+    #[test]
+    fn page_dto_reads_size_orientation_and_margin() {
+        let config = page(r#"{"size":"letter","orientation":"landscape","margin_mm":12}"#);
+        assert!(matches!(config.size, PageSize::Letter));
+        assert!(matches!(config.orientation, Orientation::Landscape));
+        assert_eq!(config.margin_mm, 12.0);
+    }
+
+    #[test]
+    fn page_dto_falls_back_to_the_defaults_on_unknown_or_missing_fields() {
+        let config = page(r#"{"size":"bogus","orientation":"sideways"}"#);
+        let default = PageConfig::default();
+        assert!(matches!(config.size, PageSize::A4));
+        assert!(matches!(config.orientation, Orientation::Portrait));
+        assert_eq!(config.margin_mm, default.margin_mm);
+    }
+
+    #[test]
+    fn image_format_names_are_checked() {
+        let dto = |format: &str| ImageOptimizationDto {
+            quality: None,
+            max_size: None,
+            greyscale: None,
+            format: Some(format.to_string()),
+        };
+        assert!(dto("jpeg").into_image_optimization().is_ok());
+        assert!(dto("webp").into_image_optimization().is_err());
     }
 }
