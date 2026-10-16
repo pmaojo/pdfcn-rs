@@ -74,8 +74,18 @@ de un polígono pintado pasan por pt → mm → pt (diferencias de 5·10⁻⁴ p
 | 50 enlaces, 20 páginas | 316 ms · 99 MB | **216 ms · 77 MB** |
 | El mismo sin enlaces | 195 ms · 78 MB | 229 ms · 77 MB (ruido; mínimo 190 ms) |
 
-Con enlaces cuesta ya lo mismo que sin ellos: el segundo maquetado era todo
-el sobrecoste.
+El reloj de pared en este contenedor oscila ±25 % entre tandas (otra tanda
+dio sin enlaces 259/264 ms el binario base frente a 207/235 ms el nuevo), así
+que la cifra que decide es la que no tiene ruido, las **instrucciones
+ejecutadas** (callgrind, `valgrind --tool=callgrind`, mismo documento):
+
+| | Antes | Después |
+|---|---|---|
+| Sin enlaces | 1 371 M | 1 344 M (−2 %) |
+| 50 enlaces | 2 263 M | **1 352 M** (−40 %) |
+
+Con enlaces cuesta ya lo mismo que sin ellos (+0,6 %): el segundo maquetado
+era todo el sobrecoste. Y el documento sin enlaces no empeora.
 
 **Golden**: el dibujo de `links`, `format-latex`, `format-markdown` y
 `format-typst` es idéntico (comparado quitando las anotaciones); cambian solo
