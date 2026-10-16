@@ -2891,7 +2891,7 @@ dependencies = [
 [[package]]
 name = "printpdf"
 version = "0.12.8"
-source = "git+https://github.com/pmaojo/printpdf?rev=66719e9021bd58ee7cd4c1e59701562b6429c107#66719e9021bd58ee7cd4c1e59701562b6429c107"
+source = "git+https://github.com/pmaojo/printpdf?rev=59f591eb4b2fcf40f5786c3773b00c1739de2029#59f591eb4b2fcf40f5786c3773b00c1739de2029"
 dependencies = [
  "allsorts-azul",
  "azul-core",

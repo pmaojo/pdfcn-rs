@@ -163,6 +163,17 @@ versión.
 | D2 sin uso | 390 | 308 | 26,9 MB | manifiestos honestos; ningún crate sale del grafo |
 | D3 lightningcss → `minify.rs` | **365** | **285** | **22,9 MB** | render igual (instrucciones: factura +0,1 %, catálogo −0,5 %); compilación en limpio 508 → **458 s** (−10 %; enlace 183 → 148 s; 440 → 376 unidades) |
 
+| D5 separación silábica opcional | **361** | **281** | **20,0 MB** | fork `fix/optional-hyphenation`; decisión del usuario: apagada por defecto |
+
+**Nota de migración (D5)**: un CSS de autor con `hyphens: auto` deja de
+partir palabras en el build por defecto (y en la función Vercel). Quien lo
+necesite compila con la feature `hyphenation` (`pdfcn-core` o `pdfcn-cli`).
+Ninguna utilidad ni ejemplo la usaba. Decisiones del usuario sobre lo demás:
+`reqwest` se mantiene (reescribir la protección SSRF no compensa ~39 crates)
+y el perfil de enlace no se toca (velocidad de render primero, spike 005).
+Con eso, los objetivos de ≤ 300 crates y −25 % de compilación quedan fuera
+de alcance: lo realista es ~360 líneas / ~280 crates únicos y −10 %.
+
 ### D3 — lo que se encontró al sustituir lightningcss
 
 `pdfcn-styles` queda sin ninguna dependencia. `minify.rs` (≈200 líneas con
