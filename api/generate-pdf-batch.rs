@@ -22,10 +22,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::BodyExt;
 use pdfcn_core::{
     img_srcs, render_html_as, render_pdf_with_assets, theme_from_json, EvalError, Format,
-    Orientation, PageConfig, PageSize, PartialLoader, RenderOptions, Theme,
+    PageConfig, PartialLoader, RenderOptions, Theme,
 };
 use pdfcn_vercel::auth::{api_key, authorized};
-use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto};
+use pdfcn_vercel::dto::{ImageOptimizationDto, MetadataDto, PageConfigDto};
 use pdfcn_vercel::remote_image::{decode_base64_map, fetch_remote_image};
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -43,43 +43,6 @@ const MAX_DOCUMENTS: usize = 50;
 /// are fetched once and shared (the common case -- one logo, many
 /// invoices), which is what keeps this small.
 const MAX_REMOTE_IMAGES_PER_BATCH: usize = 24;
-
-#[derive(Clone, Deserialize)]
-struct PageConfigDto {
-    #[serde(default)]
-    size: Option<String>,
-    #[serde(default)]
-    orientation: Option<String>,
-    #[serde(default)]
-    margin_mm: Option<f32>,
-}
-
-impl PageConfigDto {
-    fn into_page_config(self) -> PageConfig {
-        let default = PageConfig::default();
-        let size = match self.size.as_deref() {
-            Some("letter") => PageSize::Letter,
-            Some("a4") | None => default.size,
-            Some(custom) => custom
-                .split_once('x')
-                .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
-                .map(|(width_mm, height_mm)| PageSize::Custom {
-                    width_mm,
-                    height_mm,
-                })
-                .unwrap_or(default.size),
-        };
-        let orientation = match self.orientation.as_deref() {
-            Some("landscape") => Orientation::Landscape,
-            _ => default.orientation,
-        };
-        PageConfig {
-            size,
-            orientation,
-            margin_mm: self.margin_mm.unwrap_or(default.margin_mm),
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct DocumentDto {

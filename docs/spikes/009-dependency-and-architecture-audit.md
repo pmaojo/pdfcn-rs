@@ -162,8 +162,8 @@ versión.
 | D1 features | 390 | 308 | 26,9 MB | golden igual |
 | D2 sin uso | 390 | 308 | 26,9 MB | manifiestos honestos; ningún crate sale del grafo |
 | D3 lightningcss → `minify.rs` | **365** | **285** | **22,9 MB** | render igual (instrucciones: factura +0,1 %, catálogo −0,5 %); compilación en limpio 508 → **458 s** (−10 %; enlace 183 → 148 s; 440 → 376 unidades) |
-
 | D5 separación silábica opcional | **361** | **281** | **20,0 MB** | fork `fix/optional-hyphenation`; decisión del usuario: apagada por defecto |
+| D4 arquitectura (tras D5) | 361 | 281 | 20,0 MB | sin cambio de dependencias ni de render |
 
 **Nota de migración (D5)**: un CSS de autor con `hyphens: auto` deja de
 partir palabras en el build por defecto (y en la función Vercel). Quien lo
@@ -173,6 +173,29 @@ Ninguna utilidad ni ejemplo la usaba. Decisiones del usuario sobre lo demás:
 y el perfil de enlace no se toca (velocidad de render primero, spike 005).
 Con eso, los objetivos de ≤ 300 crates y −25 % de compilación quedan fuera
 de alcance: lo realista es ~360 líneas / ~280 crates únicos y −10 %.
+
+### D4 — arquitectura, sin cambiar el comportamiento
+
+- **Página e imagen se interpretan en un solo sitio**: `PageSize::from_name`,
+  `Orientation::from_name`, `PageConfig::from_request` (`page.rs`) e
+  `ImageFormat::from_name` (`options.rs`). Los dos endpoints HTTP comparten
+  `pdfcn_vercel::dto::PageConfigDto` (antes uno por binario); napi usa
+  `from_request`; la CLI usa `from_name` y sigue dando error ante un nombre
+  desconocido. No se hizo un `RenderRequest` completo: cada front-end tiene
+  campos propios (la CLI lee ficheros, napi recibe `Buffer`s) y unificarlos
+  cambiaría su API pública; lo duplicado de verdad era esto. Test
+  `from_request_reads_every_input_as_the_front_ends_did` compara con el
+  parser antiguo, copiado tal cual, en todas las combinaciones.
+- **IO fuera del pipeline**: `pdfcn-core/src/fs.rs` (`FsPartialLoader`,
+  `render_files*`, `RemoteImageFetcher`, `load_images`); mismas rutas
+  públicas por re-export.
+- **`render_pdf_with_assets`** 207 → 144 líneas: `content_box_px`,
+  `embedded_fonts` y `apply_metadata` salen a funciones; lo que depende de
+  features (`vector`, `jpeg-passthrough`) se queda a la vista en la función.
+- Neto: −65 líneas en 8 ficheros. Golden igual; dependencias y tamaño igual.
+- **Deuda**: partir `assets.rs` en `assets/{scan,qr,vectors,photos}.rs` no se
+  hizo: es mover ~1 400 líneas sin beneficio medible y con alto coste de
+  revisión; queda propuesto.
 
 ### D3 — lo que se encontró al sustituir lightningcss
 

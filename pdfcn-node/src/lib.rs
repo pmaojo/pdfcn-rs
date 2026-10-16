@@ -6,8 +6,7 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdfcn_core::{
-    DocumentMetadata, ImageFormat, ImageOptimization, NoPartials, Orientation, PageConfig,
-    PageSize, RenderOptions, Theme,
+    DocumentMetadata, ImageFormat, ImageOptimization, NoPartials, PageConfig, RenderOptions, Theme,
 };
 use std::collections::BTreeMap;
 
@@ -68,31 +67,11 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
         return Ok(RenderOptions::default());
     };
 
-    let default = PageConfig::default();
-    let size = match opts.size.as_deref() {
-        Some("letter") => PageSize::Letter,
-        Some("a4") | None => default.size,
-        Some(custom) => custom
-            .split_once('x')
-            .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
-            .map(|(width_mm, height_mm)| PageSize::Custom {
-                width_mm,
-                height_mm,
-            })
-            .unwrap_or(default.size),
-    };
-    let orientation = match opts.orientation.as_deref() {
-        Some("landscape") => Orientation::Landscape,
-        _ => default.orientation,
-    };
-    let page = PageConfig {
-        size,
-        orientation,
-        margin_mm: opts
-            .margin_mm
-            .map(|m| m as f32)
-            .unwrap_or(default.margin_mm),
-    };
+    let page = PageConfig::from_request(
+        opts.size.as_deref(),
+        opts.orientation.as_deref(),
+        opts.margin_mm.map(|m| m as f32),
+    );
 
     let theme = match opts.theme.as_deref() {
         None | Some("light") => Theme::light(),
@@ -106,15 +85,11 @@ fn to_render_options(opts: Option<PageOptions>) -> Result<RenderOptions> {
 
     let image_format = match opts.image_format.as_deref() {
         None => None,
-        Some("auto") => Some(ImageFormat::Auto),
-        Some("jpeg") => Some(ImageFormat::Jpeg),
-        Some("lossless") => Some(ImageFormat::Lossless),
-        Some("raw") => Some(ImageFormat::Raw),
-        Some(other) => {
-            return Err(Error::from_reason(format!(
-                "invalid image_format \"{other}\", expected \"auto\", \"jpeg\", \"lossless\", or \"raw\""
-            )))
-        }
+        Some(name) => Some(ImageFormat::from_name(name).ok_or_else(|| {
+            Error::from_reason(format!(
+                "invalid image_format \"{name}\", expected \"auto\", \"jpeg\", \"lossless\", or \"raw\""
+            ))
+        })?),
     };
     let image_optimization = if opts.image_quality.is_some()
         || opts.image_max_size.is_some()
