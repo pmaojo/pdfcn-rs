@@ -131,8 +131,8 @@ Feature: Wave 1 vector substrate — %Vector, Charts v2, %Barcode, %Icon and QR 
   @covers(pdfcn-core/src/vector_pdf.rs)
   Scenario: Keeping the PNG when the SVG cannot become vectors
     Given a placeholder whose SVG source the vector pass cannot convert
-    When the PDF is post-processed
-    Then the placeholder keeps its PNG and the document is returned unchanged
+    When the vector pass prepares it before layout
+    Then it is rasterized and lands as the PNG it always was
 
   @covers(pdfcn-core/tests/golden.rs)
   Scenario: Failing CI when a vector placeholder slips back to a raster image
@@ -140,3 +140,11 @@ Feature: Wave 1 vector substrate — %Vector, Charts v2, %Barcode, %Icon and QR 
     When the golden suite renders them
     Then any %Vector, chart, barcode, icon or QR code left as an image fails the suite
     And each Form's bounding box and drawing operators are part of the snapshot
+
+  @covers(pdfcn-core/tests/golden.rs)
+  Scenario: Comparing what a build without vector or jpeg-passthrough can reproduce
+    Given the snapshots were written by the default build
+    When the golden suite runs with --no-default-features
+    Then every example whose snapshot draws no image and no vector Form is still compared
+    And the others are skipped and named, never failed for a difference the features explain
+    And regenerating snapshots from such a build is refused

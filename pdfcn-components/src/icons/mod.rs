@@ -23,9 +23,14 @@
 use std::collections::BTreeMap;
 use std::sync::{OnceLock, RwLock};
 
+// The `%Icon` component itself expands only with the `vector` feature;
+// without it the name expands to the "feature disabled" marker (`lib.rs`).
+#[cfg(feature = "vector")]
 use maud::{html, Markup};
+#[cfg(feature = "vector")]
 use pdfcn_template::ResolvedAttr;
 
+#[cfg(feature = "vector")]
 use crate::{attr, invalid_component};
 
 mod data;
@@ -35,6 +40,7 @@ mod data;
 const MAX_ICON_BYTES: usize = 64 * 1024;
 
 /// Colour used when none is given: plain black, like an un-styled Tabler SVG.
+#[cfg(feature = "vector")]
 const DEFAULT_COLOR: &str = "#000000";
 
 type Registry = RwLock<BTreeMap<String, String>>;
@@ -181,16 +187,19 @@ pub fn icon_svg(name: &str, color: &str, stroke: Option<&str>) -> Option<String>
     ))
 }
 
+#[cfg(feature = "vector")]
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+#[cfg(feature = "vector")]
 fn error(message: &str) -> Markup {
     html! {
         div class=(invalid_component()) { "Icon: " (message) }
     }
 }
 
+#[cfg(feature = "vector")]
 pub fn icon(attrs: &[ResolvedAttr]) -> Markup {
     let Some(name) = attr(attrs, "name").filter(|n| !n.is_empty()) else {
         return error("a \"name\" is required (see `pdfcn icons`)");
@@ -241,6 +250,7 @@ pub fn decode_payload(hex_payload: &str) -> Option<(String, String, Option<Strin
 mod tests {
     use super::*;
 
+    #[cfg(feature = "vector")]
     fn a(name: &str, value: &str) -> ResolvedAttr {
         ResolvedAttr {
             name: name.into(),
@@ -305,6 +315,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "vector")]
     #[test]
     fn unknown_icons_are_a_visible_error_not_a_blank() {
         let out = icon(&[a("name", "no-such-icon")]).into_string();
@@ -322,6 +333,7 @@ mod tests {
             .contains("stroke"));
     }
 
+    #[cfg(feature = "vector")]
     #[test]
     fn the_component_emits_a_placeholder_with_its_size() {
         let out = icon(&[
@@ -336,6 +348,7 @@ mod tests {
         assert!(!out.contains("<svg") && !out.contains("<path"), "{out}");
     }
 
+    #[cfg(feature = "vector")]
     #[test]
     fn the_payload_round_trips() {
         let out = icon(&[

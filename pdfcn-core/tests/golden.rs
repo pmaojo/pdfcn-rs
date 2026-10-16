@@ -170,6 +170,8 @@ fn render_pages(example: &str) -> Vec<String> {
     );
 
     let opts = PdfToSvgOptions::default();
+    // Only the `vector` oracle below appends to the pages.
+    #[cfg_attr(not(feature = "vector"), allow(unused_mut))]
     let mut pages: Vec<String> = doc
         .pages
         .iter()
@@ -282,10 +284,41 @@ const VECTOR_PLACEHOLDERS: &[&str] = &[
     "HtmlImg_pdfcn_qrcode_",
 ];
 
-fn check_example(example: &str) {
+/// Whether this build draws images the way the default build that wrote the
+/// snapshots does. Without `vector` an SVG placeholder lands as a PNG, and
+/// without `jpeg-passthrough` printpdf re-encodes every photo, so a snapshot
+/// holding either can only match the default build.
+const DEFAULT_IMAGE_PATH: bool = cfg!(all(feature = "vector", feature = "jpeg-passthrough"));
+
+/// A snapshot whose pages draw no raster image and no vector Form: what every
+/// build renders identically.
+fn feature_independent(example: &str) -> bool {
+    let dir = golden_dir();
+    (1..)
+        .map(|page| dir.join(format!("{example}-page{page}.svg")))
+        .take_while(|path| path.exists())
+        .all(|path| {
+            std::fs::read_to_string(&path)
+                .map(|svg| !svg.contains("<image") && !svg.contains("<!-- vector"))
+                .unwrap_or(false)
+        })
+}
+
+/// Compares `example` against its snapshots; `false` when this build cannot
+/// (see [`DEFAULT_IMAGE_PATH`]) and it was skipped.
+fn check_example(example: &str) -> bool {
+    let updating = std::env::var_os("UPDATE_GOLDEN").is_some();
+    if !DEFAULT_IMAGE_PATH {
+        assert!(
+            !updating,
+            "regenerate golden snapshots with the default features: they are what CI compares"
+        );
+        if !feature_independent(example) {
+            return false;
+        }
+    }
     let pages = render_pages(example);
     let dir = golden_dir();
-    let updating = std::env::var_os("UPDATE_GOLDEN").is_some();
 
     if updating {
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -330,6 +363,7 @@ fn check_example(example: &str) {
             pages.len() + 1
         );
     }
+    true
 }
 
 /// Every SVG-backed placeholder must reach the PDF as vectors. A new
@@ -378,8 +412,17 @@ fn vector_placeholders_never_land_as_raster_images() {
 
 #[test]
 fn examples_match_their_golden_snapshots() {
-    for example in EXAMPLES {
-        check_example(example);
+    let skipped: Vec<&str> = EXAMPLES
+        .iter()
+        .copied()
+        .filter(|example| !check_example(example))
+        .collect();
+    if DEFAULT_IMAGE_PATH {
+        assert!(skipped.is_empty());
+    } else {
+        // A reduced build still compares every example that draws no image.
+        assert!(skipped.len() < EXAMPLES.len(), "no example was compared");
+        eprintln!("golden: skipped (they draw images or vectors): {skipped:?}");
     }
 }
 

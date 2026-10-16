@@ -56,6 +56,7 @@ pub use pdfcn_styles::{unresolved_classes, Theme, ThemeMode};
 pub use pdfcn_template::{EvalError, NoPartials, PartialLoader};
 pub use prepare::{prepare_image, PrepareFormat, PrepareOptions, Prepared};
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -63,8 +64,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use printpdf::html::rust_fontconfig::{FcFontCache, FcParseFontBytes};
-use printpdf::html::SharedFontPool;
-use printpdf::{Base64OrRaw, GeneratePdfOptions, PdfDocument, PdfSaveOptions};
+use printpdf::html::{add_xml_to_document, PageMargins, SharedFontPool, XmlRenderOptions};
+use printpdf::{PdfDocument, PdfSaveOptions};
 use serde_json::Value as JsonValue;
 
 /// The built-in document typefaces, embedded so PDF generation has no
@@ -470,8 +471,12 @@ pub fn render_pdf_with_assets(
     // Post-render asset preparation runs here — the one choke point every
     // entry point (CLI, HTTP API, napi bindings) funnels through — so QR
     // placeholders get real bytes and object-fit:cover images get cropped
-    // before the layout engine ever sees them.
-    let mut prepared_images = images.clone();
+    // before the layout engine ever sees them. Every entry borrows the
+    // caller's bytes until a pass replaces it (docs/spikes/006).
+    let mut prepared_images: assets::Images<'_> = images
+        .iter()
+        .map(|(src, bytes)| (src.clone(), Cow::Borrowed(bytes.as_slice())))
+        .collect();
     let (width_mm, height_mm) = options.page.page_size_mm();
     // What a percentage-sized image can at most occupy: the page minus margins,
     // in CSS px (96 per inch).
@@ -491,11 +496,19 @@ pub fn render_pdf_with_assets(
         &mut vector_sources,
     );
     let html = html.as_str();
+    // Images the layout engine lays out by size alone: their XObject is
+    // replaced once the document is saved (`pdf_xobjects::finish`).
+    #[allow(unused_mut)]
+    let mut placeholders: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    #[cfg(feature = "vector")]
+    let forms = vector_pdf::prepare(&vector_sources, &mut prepared_images, &mut placeholders);
+    #[cfg(not(feature = "vector"))]
+    let _ = vector_sources;
     // Last, after every pass that may re-encode a photo: whatever JPEG is
     // left goes into the PDF as it is (see `jpeg_passthrough`).
     #[cfg(feature = "jpeg-passthrough")]
     let jpegs = if jpeg_passthrough::allowed(options.image_optimization.as_ref()) {
-        jpeg_passthrough::take(&mut prepared_images)
+        jpeg_passthrough::take(&mut prepared_images, &mut placeholders)
     } else {
         BTreeMap::new()
     };
@@ -506,18 +519,26 @@ pub fn render_pdf_with_assets(
     // the verified upstream gap. Left wired rather than dropped: correct
     // today (a documented no-op) and self-healing if printpdf starts
     // drawing them.
-    let pdf_options = GeneratePdfOptions {
-        page_width: Some(width_mm),
-        page_height: Some(height_mm),
-        margin_top: Some(options.page.margin_mm),
-        margin_right: Some(options.page.margin_mm),
-        margin_bottom: Some(options.page.margin_mm),
-        margin_left: Some(options.page.margin_mm),
+    //
+    // Built here rather than through `PdfDocument::from_html_with_cache`,
+    // which copies every image and font into an `XmlRenderOptions` of its
+    // own: this one owns them already, and `add_xml_to_document` only reads
+    // it -- so the probe render for links reuses it too.
+    let mut xml_options = XmlRenderOptions {
+        page_width: printpdf::Mm(width_mm),
+        page_height: printpdf::Mm(height_mm),
+        margins: PageMargins::new(
+            printpdf::Mm(options.page.margin_mm),
+            printpdf::Mm(options.page.margin_mm),
+            printpdf::Mm(options.page.margin_mm),
+            printpdf::Mm(options.page.margin_mm),
+        ),
         header_text: options.header_text.clone(),
         footer_text: options.footer_text.clone(),
-        show_page_numbers: Some(options.show_page_numbers),
-        skip_first_page: Some(options.skip_first_page),
-        ..Default::default()
+        show_page_numbers: options.show_page_numbers,
+        skip_first_page: options.skip_first_page,
+        image_placeholders: placeholders,
+        ..XmlRenderOptions::default()
     };
     // Embed only the fonts the document can reach. Every built-in family
     // is ~300-500KB of TTF, and a typical invoice uses two of the twelve;
@@ -527,7 +548,6 @@ pub fn render_pdf_with_assets(
     // sets. Caller-supplied fonts are always kept (they were supplied
     // deliberately, and their bytes aren't ours to second-guess).
     let used_families = used_font_families(html);
-    let mut fonts = BTreeMap::new();
     let mut raw_fonts: BTreeMap<String, &[u8]> = BTreeMap::new();
     for (family, bytes) in BUILTIN_FONTS {
         // A face belongs to its family: `font-bold` / `italic` select the
@@ -541,11 +561,9 @@ pub fn render_pdf_with_assets(
         {
             continue;
         }
-        fonts.insert(family.to_string(), Base64OrRaw::Raw(bytes.to_vec()));
         raw_fonts.insert(family.to_string(), bytes);
     }
     for (family, bytes) in custom_fonts {
-        fonts.insert(family.clone(), Base64OrRaw::Raw(bytes.clone()));
         raw_fonts.insert(family.clone(), bytes);
     }
     let pool = if custom_fonts.is_empty() {
@@ -556,36 +574,29 @@ pub fn render_pdf_with_assets(
     } else {
         font_pool(&raw_fonts)
     };
+    // printpdf's options own their font bytes: the one copy per render.
+    xml_options.fonts = raw_fonts
+        .into_iter()
+        .map(|(family, bytes)| (family, bytes.to_vec()))
+        .collect();
+    xml_options.font_pool = Some(pool);
+    // Whatever images are left are decoded by printpdf: a borrowed one is
+    // copied into its options once, an owned one (a crop, a raster) moves.
+    xml_options.images = prepared_images
+        .into_iter()
+        .map(|(src, bytes)| (src, bytes.into_owned()))
+        .collect();
 
-    let mut image_map: BTreeMap<String, Base64OrRaw> = BTreeMap::new();
-    for (src, bytes) in &prepared_images {
-        image_map.insert(src.clone(), Base64OrRaw::Raw(bytes.clone()));
-    }
-
-    let mut warnings = Vec::new();
-    let mut doc = PdfDocument::from_html_with_cache(
-        html,
-        &image_map,
-        &fonts,
-        &pdf_options,
-        &mut warnings,
-        Some(pool.clone()),
-    )
-    .map_err(CoreError::Render)?;
+    let mut doc = PdfDocument::new("PDF Document");
+    // A failed layout leaves the document without pages, exactly as
+    // `from_html_with_cache` (which this replaces) does.
+    let _ = add_xml_to_document(&mut doc, html, &xml_options);
 
     // Hyperlinks: find where each link box landed with a marker-colored probe
     // render, then annotate the real document. See `links`.
     if let Some(plan) = links::plan(html) {
-        let mut probe_warnings = Vec::new();
-        let probe = PdfDocument::from_html_with_cache(
-            &plan.marked_html,
-            &image_map,
-            &fonts,
-            &pdf_options,
-            &mut probe_warnings,
-            Some(pool),
-        )
-        .map_err(CoreError::Render)?;
+        let mut probe = PdfDocument::new("PDF Document");
+        let _ = add_xml_to_document(&mut probe, &plan.marked_html, &xml_options);
         links::apply(&plan, &probe, &mut doc);
     }
 
@@ -613,33 +624,44 @@ pub fn render_pdf_with_assets(
     #[allow(unused_mut)]
     let mut image_optimization =
         to_printpdf_image_optimization(options.image_optimization.as_ref());
-    // When every image printpdf is about to write is a placeholder that a
-    // later pass replaces (a held-back JPEG, an SVG turned vector), compressing
-    // its pixels is pure waste -- it was a third of an image-heavy render.
-    // Write them raw; `jpeg_passthrough::splice` compresses whatever is left.
-    #[cfg(feature = "jpeg-passthrough")]
-    let raw_placeholders = !prepared_images.is_empty()
-        && prepared_images
-            .keys()
-            .all(|src| jpegs.contains_key(src) || vector_sources.contains_key(src));
-    #[cfg(feature = "jpeg-passthrough")]
+    // When every image printpdf decoded is one that a later pass replaces
+    // (a QR code's PNG that becomes a vector), compressing its pixels is pure
+    // waste. Write them raw; `pdf_xobjects::finish` compresses whatever is
+    // left. Size-only placeholders have no pixels to compress either way.
+    #[cfg(feature = "vector")]
+    let raw_placeholders = !xml_options.images.is_empty()
+        && xml_options.images.keys().all(|src| forms.contains_key(src));
+    #[cfg(not(feature = "vector"))]
+    let raw_placeholders = false;
     if raw_placeholders {
         image_optimization.format = Some(printpdf::ImageCompression::None);
     }
+    // The layout is done: printpdf's copy of the input bytes is not needed to
+    // save (it keeps its own decoded images).
+    drop(xml_options);
     let save_options = PdfSaveOptions {
         image_optimization: Some(image_optimization),
         ..Default::default()
     };
     let mut save_warnings = Vec::new();
     let pdf = doc.save(&save_options, &mut save_warnings);
-    // The layout placed every SVG placeholder as a PNG; swap those for real
-    // vectors now that the document exists (see `vector_pdf`).
-    #[cfg(feature = "vector")]
-    let pdf = vector_pdf::vectorize(pdf, &vector_sources);
-    #[cfg(not(feature = "vector"))]
-    let _ = vector_sources;
-    #[cfg(feature = "jpeg-passthrough")]
-    let pdf = jpeg_passthrough::splice(pdf, &jpegs, raw_placeholders);
+    drop(doc);
+    // The layout placed every vector and passed-through JPEG as a stand-in;
+    // put the real objects in, in one load and one save (see `pdf_xobjects`).
+    #[cfg(any(feature = "vector", feature = "jpeg-passthrough"))]
+    let pdf = pdf_xobjects::finish(
+        pdf,
+        pdf_xobjects::Replacements {
+            #[cfg(feature = "vector")]
+            forms,
+            #[cfg(feature = "jpeg-passthrough")]
+            jpegs,
+            compress_leftovers: raw_placeholders,
+            borrows: std::marker::PhantomData,
+        },
+    );
+    #[cfg(not(any(feature = "vector", feature = "jpeg-passthrough")))]
+    let _ = raw_placeholders;
     Ok(pdf)
 }
 

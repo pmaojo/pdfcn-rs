@@ -14,6 +14,7 @@ by commit; drop an entry from `[patch.crates-io]` once its fix is released.
 | `fix/deterministic-resource-ids` | Name synthesized ExtGState/shading resources from their content instead of at random, so two renders of one document are byte-identical (and equal states are recorded once). | `tests/html_deterministic_ids.rs` |
 | `fix/text-shadow` | Paint `text-shadow` (the bridge ignored `PushTextShadow`/`PopTextShadow`). | `tests/html_text_shadow.rs` |
 | `fix/transform` | Apply CSS `transform` from `PushReferenceFrame` as a PDF `cm` (conjugated by the layout -> PDF mapping). | `reference_frame_tests` (3, point-by-point) |
+| `fix/image-placeholders` | `XmlRenderOptions::image_placeholders` (id -> px size): lay an `<img>` out by size alone, with a 1-px stand-in XObject that declares that size (same `cm`). For callers that write the image stream after saving (JPEG passthrough, SVG Forms); see docs/spikes/006. | `tests/html_image_placeholders.rs` |
 | `fix/img-intrinsic-size` | Pass azul an `ImageCache` naming each embedded image's decoded size (layout only sees a tagged 0x0 placeholder for `<img>`). Needed by azul's object-fit. | `bridge::tests::image_cache_names_each_images_decoded_size` |
 
 Note for the maintainer: an earlier attempt gave `<img>` `width`/`height`

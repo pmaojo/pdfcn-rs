@@ -1,7 +1,9 @@
 //! `%Icon` end to end: a bundled or registered icon ends up as an image in the
 //! PDF, and a mistake is a visible error rather than an empty space.
 
-use pdfcn_core::{icon_names, register_icon, render_html, render_pdf, NoPartials, RenderOptions};
+#[cfg(feature = "vector")]
+use pdfcn_core::{icon_names, register_icon};
+use pdfcn_core::{render_html, render_pdf, NoPartials, RenderOptions};
 use printpdf::{parse_pdf_from_bytes, Op, PdfParseOptions};
 use serde_json::json;
 
@@ -28,6 +30,8 @@ fn images(ops: &[Op]) -> usize {
         .count()
 }
 
+// Drawn only with the `vector` feature (see the test below for without).
+#[cfg(feature = "vector")]
 #[test]
 fn a_bundled_icon_is_drawn_as_an_image() {
     let (html, ops) = render(
@@ -37,6 +41,8 @@ fn a_bundled_icon_is_drawn_as_an_image() {
     assert_eq!(images(&ops), 1);
 }
 
+// Drawn only with the `vector` feature (see the test below for without).
+#[cfg(feature = "vector")]
 #[test]
 fn the_same_icon_twice_is_one_image_resource_used_twice() {
     let (_, ops) = render(concat!(
@@ -48,6 +54,8 @@ fn the_same_icon_twice_is_one_image_resource_used_twice() {
     assert_eq!(images(&ops), 3);
 }
 
+// Drawn only with the `vector` feature (see the test below for without).
+#[cfg(feature = "vector")]
 #[test]
 fn a_registered_icon_is_available_next_to_the_bundled_ones() {
     register_icon(
@@ -75,4 +83,15 @@ fn an_unknown_icon_or_a_bad_colour_is_a_visible_error_and_draws_nothing() {
         assert!(!html.contains("pdfcn-icon:"), "{body}");
         assert_eq!(images(&ops), 0, "{body}");
     }
+}
+
+/// Without `vector` an icon is the explicit "feature disabled" marker, never
+/// an empty space or an unfilled placeholder.
+#[cfg(not(feature = "vector"))]
+#[test]
+fn without_the_vector_feature_an_icon_is_a_visible_marker() {
+    let (html, ops) = render("%DocumentLayout(size=\"a4\")\n  %Icon(name=\"receipt\")\n");
+    assert!(!html.contains("pdfcn-icon:"), "{html}");
+    assert!(html.contains("vector"), "{html}");
+    assert_eq!(images(&ops), 0);
 }

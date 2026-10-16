@@ -11,29 +11,34 @@
 //!
 //! So, the same in-place trick `vector_pdf` uses for SVG:
 //!
-//! - before layout, [`take`] swaps each eligible JPEG for a placeholder PNG of
-//!   the same pixel size (all black greyscale: it decodes and compresses in
-//!   next to no time), so the layout engine sizes the box exactly as before;
-//! - after saving, [`splice`] finds that placeholder's XObject by the name
-//!   printpdf derives from the `src`, and replaces the object in place with a
-//!   `/DCTDecode` image stream carrying the original file. Same object number,
-//!   same unit square, so every resource dictionary and `Do` stays as it is.
+//! - before layout, [`take`] moves each eligible JPEG out of the image map
+//!   and lays it out by size alone (printpdf's `image_placeholders`,
+//!   docs/spikes/006): no pixel is decoded, and printpdf writes a one-pixel
+//!   stand-in that declares the photo's size;
+//! - after saving, `pdf_xobjects::finish` finds that stand-in's XObject by the
+//!   name printpdf derives from the `src`, and replaces the object in place
+//!   with a `/DCTDecode` image stream carrying the original file. Same object
+//!   number, same unit square, so every resource dictionary and `Do` stays as
+//!   it is.
 //!
 //! Never makes a document worse: a file this module cannot vouch for (CMYK,
 //! 12-bit, arithmetic-coded, lossless, an EXIF rotation, a caller asking for
 //! greyscale or another encoding) keeps the old path, and a document lopdf
 //! can't load or save comes back byte-for-byte unchanged -- with the
-//! placeholder in it, which is why [`take`] only runs when the pass will.
+//! stand-in in it, which is why [`take`] only runs when the pass will.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use lopdf::{dictionary, Document, Object, Stream};
+use lopdf::{dictionary, Stream};
 
+use crate::assets::Images;
 use crate::{ImageFormat, ImageOptimization};
 
-/// One JPEG held back from the layout engine.
-pub(crate) struct Jpeg {
-    bytes: Vec<u8>,
+/// One JPEG held back from the layout engine: the caller's own bytes when
+/// nothing changed them.
+pub(crate) struct Jpeg<'a> {
+    bytes: Cow<'a, [u8]>,
     info: JpegInfo,
 }
 
@@ -60,84 +65,40 @@ pub(crate) fn allowed(opts: Option<&ImageOptimization>) -> bool {
         )
 }
 
-/// Replaces every eligible JPEG in `images` with a same-size placeholder and
-/// returns the originals by `src`, for [`splice`] to put back.
-pub(crate) fn take(images: &mut BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Jpeg> {
+/// Moves every eligible JPEG out of `images`, recording its size in
+/// `placeholders` (what the layout engine gets instead), and returns the
+/// originals by `src` for `pdf_xobjects::finish` to put back.
+pub(crate) fn take<'a>(
+    images: &mut Images<'a>,
+    placeholders: &mut BTreeMap<String, (u32, u32)>,
+) -> BTreeMap<String, Jpeg<'a>> {
+    let eligible: Vec<(String, JpegInfo)> = images
+        .iter()
+        .filter_map(|(src, bytes)| {
+            let info = sniff(bytes)?;
+            (!has_orientation(bytes)).then(|| (src.clone(), info))
+        })
+        .collect();
     let mut taken = BTreeMap::new();
-    for (src, bytes) in images.iter_mut() {
-        let Some(info) = sniff(bytes) else {
+    for (src, info) in eligible {
+        let Some(bytes) = images.remove(&src) else {
             continue;
         };
-        if has_orientation(bytes) {
-            continue;
-        }
-        let Some(placeholder) = placeholder_png(info.width, info.height) else {
-            continue;
-        };
-        let original = std::mem::replace(bytes, placeholder);
-        taken.insert(
-            src.clone(),
-            Jpeg {
-                bytes: original,
-                info,
-            },
-        );
+        placeholders.insert(src.clone(), (info.width, info.height));
+        taken.insert(src, Jpeg { bytes, info });
     }
     taken
 }
 
-/// Puts each JPEG [`take`] held back into `pdf` in place of its placeholder.
-/// With `compress_leftovers` (printpdf was told to write placeholders
-/// uncompressed), any image stream still without a filter -- an SVG that
-/// failed to become a vector keeps its raster -- is Flate-compressed here, so
-/// skipping printpdf's compression never leaves a raw image behind.
-pub(crate) fn splice(
-    pdf: Vec<u8>,
-    jpegs: &BTreeMap<String, Jpeg>,
-    compress_leftovers: bool,
-) -> Vec<u8> {
-    if jpegs.is_empty() && !compress_leftovers {
-        return pdf;
-    }
-    let Ok(mut doc) = Document::load_mem(&pdf) else {
-        return pdf;
-    };
-    let targets = crate::pdf_xobjects::image_xobjects(&doc);
-    let mut replaced = 0usize;
-    for (src, jpeg) in jpegs {
-        let Some(&id) = targets.get(&crate::pdf_xobjects::xobject_name(src)) else {
-            continue;
-        };
-        doc.objects.insert(id, Object::Stream(dct_stream(jpeg)));
-        replaced += 1;
-    }
-    if compress_leftovers {
-        for object in doc.objects.values_mut() {
-            if let Object::Stream(stream) = object {
-                let is_image = stream.dict.get(b"Subtype").and_then(Object::as_name).ok()
-                    == Some(&b"Image"[..]);
-                if is_image && !stream.dict.has(b"Filter") {
-                    // Best effort: an uncompressed image is still valid.
-                    let _ = stream.compress();
-                    replaced += 1;
-                }
-            }
-        }
-    }
-    if replaced == 0 {
-        return pdf;
-    }
-    // The placeholders' own streams went with the objects they were; their
-    // `/SMask`s, if printpdf wrote any, are unreferenced now.
-    doc.prune_objects();
-    let mut out = Vec::with_capacity(pdf.len());
-    match doc.save_to(&mut out) {
-        Ok(()) => out,
-        Err(_) => pdf,
+impl Jpeg<'_> {
+    /// Size of the file, which lands in the output as it is.
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.len()
     }
 }
 
-fn dct_stream(jpeg: &Jpeg) -> Stream {
+/// The `/DCTDecode` image XObject for `jpeg`: its own file as the stream.
+pub(crate) fn dct_stream(jpeg: Jpeg<'_>) -> Stream {
     let colour_space = if jpeg.info.components == 1 {
         "DeviceGray"
     } else {
@@ -153,21 +114,10 @@ fn dct_stream(jpeg: &Jpeg) -> Stream {
             "BitsPerComponent" => 8,
             "Filter" => "DCTDecode",
         },
-        jpeg.bytes.clone(),
+        jpeg.bytes.into_owned(),
     )
     // Already compressed; a Flate pass on top only costs time.
     .with_compression(false)
-}
-
-/// A black greyscale PNG of `width` x `height`: what the layout engine sees
-/// instead of the photo. All it needs from an image is its size.
-fn placeholder_png(width: u32, height: u32) -> Option<Vec<u8>> {
-    let pixels = image::GrayImage::new(width, height);
-    let mut out = Vec::new();
-    image::DynamicImage::ImageLuma8(pixels)
-        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-        .ok()?;
-    Some(out)
 }
 
 /// Whether `bytes` carry an EXIF orientation other than "as stored". The
@@ -350,6 +300,7 @@ mod tests {
     }
 
     fn image_streams(pdf: &[u8]) -> Vec<Stream> {
+        use lopdf::{Document, Object};
         let doc = Document::load_mem(pdf).expect("valid PDF");
         doc.objects
             .values()
@@ -415,12 +366,24 @@ mod tests {
     }
 
     #[test]
-    fn nothing_to_splice_returns_the_input_untouched() {
-        let pdf = b"not even a pdf".to_vec();
-        assert_eq!(splice(pdf.clone(), &BTreeMap::new(), false), pdf);
-        assert_eq!(splice(pdf.clone(), &BTreeMap::new(), true), pdf);
-        let mut images = BTreeMap::from([("a.jpg".to_string(), jpeg(4, 4))]);
-        let taken = take(&mut images);
-        assert_eq!(splice(pdf.clone(), &taken, false), pdf);
+    fn take_moves_eligible_jpegs_out_and_records_their_size() {
+        let photo = jpeg(40, 30);
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(2, 2))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let mut images: Images<'_> = BTreeMap::from([
+            ("a.jpg".to_string(), Cow::Borrowed(photo.as_slice())),
+            ("b.png".to_string(), Cow::Owned(png)),
+        ]);
+        let mut placeholders = BTreeMap::new();
+        let taken = take(&mut images, &mut placeholders);
+        assert_eq!(images.keys().collect::<Vec<_>>(), ["b.png"]);
+        assert_eq!(
+            placeholders,
+            BTreeMap::from([("a.jpg".to_string(), (40, 30))])
+        );
+        // Still the caller's bytes: nothing was copied on the way.
+        assert!(matches!(&taken["a.jpg"].bytes, Cow::Borrowed(b) if b.as_ptr() == photo.as_ptr()));
     }
 }
